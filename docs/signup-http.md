@@ -69,3 +69,24 @@ Integration browser fixes: API pages use same-origin Referrer-Policy so Chrome s
 Unmounted signup-preparation-runtime composes an injected delivery callback and explicitly trusted address/waitUntil. It caps active deferred jobs at four, has no pending queue, absorbs rejection without logs, and requires the provider adapter to enforce actual abort timeout. Saturation returns account-independent busy503 with Retry-After and says no new email request was accepted. This is per-isolate safety only, not global edge defense. Host trust, live provider test and source-verified free edge abuse controls remain activation checks. Production worker is unchanged/auth disabled.
 
 Signup-mail-transport supplies a fixed plain-text verification template and the existing Brevo adapter with a maximum ten-second AbortSignal-backed timeout, no retries, fixed provider endpoint and generic private errors. Passing plain text does not promise tracking removal, since Brevo may transform it. No real email is sent by tests or unmounted composition. The exact live template and test destination still need approval before an actual verification send.
+
+## Inactive host composition
+
+`signup-host.js` and `signup-worker-adapter.js` are not mounted by the production
+bootstrap entrypoint. The module adapter preserves four background delivery slots
+per isolate, not a global concurrency cap. It rejects changed configuration in an
+existing instance instead of resetting active counters. Deployment is required to
+replace its immutable configuration. Route allowlisting precedes cached host setup.
+
+Separate address and shared edge bindings are required for signup and verification.
+Address rejection precedes shared budget consumption; preflight bypasses counters.
+Verification should receive a more generous shared budget than signup. Provider
+limits are approximate and location-scoped. Distributed exhaustion remains a
+bounded availability tradeoff, not a strict global guarantee.
+
+The local workerd harness derives the checked-in deployment compatibility date and
+flags, intercepts the default global fetch at the fixed provider endpoint, holds
+four deliveries across six concurrent requests, drains actual waitUntil promises,
+and checks four unconsumed proofs/receipts. A real local edge limiter also denies
+a second request at limit one. It does not establish production ingress provenance,
+account binding availability/cost, observability, delivery or hardware readiness.

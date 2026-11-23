@@ -46,7 +46,7 @@ async function readResponse(response) {
 // into HTML and add tracking. Plain text input does not promise zero tracking.
 export class BrevoMailTransport {
   #key; #sender; #replyTo; #fetch; #timeout;
-  constructor({apiKey, senderEmail, replyToEmail, fetchImpl = globalThis.fetch, timeoutMs = 10000} = {}) {
+  constructor({apiKey, senderEmail, replyToEmail, fetchImpl = (...args) => globalThis.fetch(...args), timeoutMs = 10000} = {}) {
     if (typeof apiKey !== 'string' || !apiKey || apiKey.length > 1024 || /\s/.test(apiKey)) throw new TypeError('Mail configuration required');
     if (typeof fetchImpl !== 'function' || !Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000) throw new TypeError('Mail configuration required');
     this.#key = apiKey;
@@ -70,7 +70,7 @@ export class BrevoMailTransport {
         timer = setTimeout(() => { controller.abort(); reject(new MailSubmissionError()); }, this.#timeout);
       });
       const attempt = (async () => {
-        const response = await this.#fetch(ENDPOINT, {method: 'POST', redirect: 'error', credentials: 'omit', cache: 'no-store', signal: controller.signal, headers: {'api-key': this.#key, accept: 'application/json', 'content-type': 'application/json'}, body: payload});
+        const response = await this.#fetch(ENDPOINT, {method: 'POST', redirect: 'manual', credentials: 'omit', cache: 'no-store', signal: controller.signal, headers: {'api-key': this.#key, accept: 'application/json', 'content-type': 'application/json'}, body: payload});
         if (response.status !== 201) {
           await response.body?.cancel();
           // Any request that reached the provider is not automatically retried.
