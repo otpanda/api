@@ -1,6 +1,6 @@
 # Cloudflare deployment bootstrap
 
-The canonical UI remains https://otpanda.github.io/web/. This Worker serves API hosting only. It is intentionally not the integrated authentication runtime yet: `/health` says `setup-required`, `/ready` checks the migrated DB, and all `/auth` and `/v1` paths fail closed with HTTP 503. No accounts, sources, tokens or encryption keys are created. Do not describe it as the working application.
+The canonical UI remains https://otpanda.github.io/app/. This Worker serves API hosting only. It is intentionally not the integrated authentication runtime yet: `/health` says `setup-required`, `/ready` checks configured keyring format and the migrated DB, and all `/auth` and `/v1` paths fail closed with HTTP 503. No accounts, sources, tokens or encryption keys are created. Do not describe it as the working application.
 
 ## GitHub Actions build and deploy
 
@@ -14,8 +14,10 @@ Run `npm ci`, `npm run build`, and `npm run db:local` before merging. Applying l
 
 ## Deliberate limits
 
-There are no Google credentials, real-source credentials, keyring secrets, asset bindings, custom domains, trusted-IP resolver, or permissive cross-origin headers in this entrypoint. Authentication is held pending reviewed passkey/session design. `environment.js` and the integrated runtime remain tested composition groundwork and are not mounted by this bootstrap. Only change that boundary after the approved browser/native protocol is implemented and tested. All GitHub Pages project paths share an origin, so root, landing and app code are a single client trust boundary.
+Provider-managed Google OAuth and Brevo secrets are installed, with their non-secret client/sender configuration in Wrangler. They are not consumed by this bootstrap for sign-in or email. Initial encryption-key provisioning is unfinished because a supported secure generation-to-recoverable-custody route is unavailable. There are no real-source credentials, asset bindings or custom domains in this entrypoint. Seven approximate rate bindings are deployed but unused by the bootstrap. The public ingress resolver and reviewed browser adapters remain unmounted. Authentication is held for concrete security/configuration/live-flow checks, not a new product-design approval. `environment.js` and the integrated runtime remain tested composition groundwork and are not mounted by this bootstrap. Only change that boundary after the approved browser/native protocol is implemented and tested. All GitHub Pages project paths share an origin, so root, landing and app code are a single client trust boundary.
 
 Logging/observability and workers.dev preview URLs are disabled in the committed configuration. Do not log request headers, query strings, cookies, OAuth responses or credentials when real auth is added. Nonsecret Cloudflare D1 identifiers are configuration, not API credentials.
 
-After the first build, verify the actual workers.dev URL returned by Cloudflare, `/health`, `/ready`, wrong-method behavior and unauthenticated protected routes. Record the deployed commit and build result. A successful Actions deployment and schema check still leave initial working product incomplete until real authentication and source adapters are delivered.
+After the first build, verify the actual workers.dev URL returned by Cloudflare, `/health`, `/ready`, wrong-method behavior and unauthenticated protected routes. Record the deployed commit and build result. A successful Actions deployment and readiness check still leave initial working product incomplete until real authentication and source adapters are delivered.
+
+See [provisional free-tier operations](free-tier-operations.md) for current rate defaults, account-plan evidence, hard-quota outage behavior and cleanup limits. Missing key configuration makes /ready return a generic503; /health stays200 with authentication disabled. A valid-format readiness response would not prove compatibility with existing encrypted rows or clear activation.
