@@ -41,3 +41,27 @@ test('session proof freshness is rechecked after asynchronous token generation',
 test('cleanup retains recent spent-handle replay detection while deleting old history',async()=>{
  const {db,service,proof,setNow}=await setup(),s=await service.issue({proof,clientKind:'web'});setNow(NOW+DAY);const r=await service.rotate(s.refresh);setNow(NOW+29*DAY);const later=await service.rotate(r.refresh);setNow(NOW+32*DAY);await service.cleanup({limit:500});assert.equal((await service.rotate(s.refresh)).status,'denied');assert.ok(await service.authenticate((await service.rotate(later.refresh)).access));assert.equal((await service.rotate(r.refresh)).status,'denied');assert.equal((await service.rotate(later.refresh)).status,'denied');db.sqlite.close();
 });
+
+test('active device ceiling is atomic; revocation frees room',async()=>{
+ const {db,service,proof}=await setup();try {
+ const results=await Promise.all(Array.from({length:55},()=>service.issue({proof,clientKind:'web'})));
+ assert.equal(results.filter(Boolean).length,50);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,50);
+ await service.revoke({ownerId:proof.ownerId,deviceId:results.find(Boolean).deviceId});assert.ok(await service.issue({proof,clientKind:'web'}));
+ }finally{db.sqlite.close();}
+});
+test('active access ceiling denies rotation without spending refresh and expiry frees room',async()=>{
+ const {db,service,proof,setNow}=await setup();try {
+ const s=await service.issue({proof,clientKind:'web'});let refresh=s.refresh;
+ for(let i=0;i<63;i++){const r=await service.rotate(refresh);assert.equal(r.status,'rotated');refresh=r.refresh;}
+ assert.equal((await service.rotate(refresh)).status,'retry');assert.equal(db.sqlite.prepare('SELECT used_at FROM device_refresh_handles ORDER BY created_at DESC,rowid DESC LIMIT 1').get().used_at,null);
+ setNow(NOW+300001);assert.equal((await service.rotate(refresh)).status,'rotated');
+ }finally{db.sqlite.close();}
+});
+
+test('refresh history ceiling fails closed without consuming current handle',async()=>{
+ const {db,service,proof}=await setup();try {
+ const d=await service.issue({proof,clientKind:'web'}),insert=db.sqlite.prepare('INSERT INTO device_refresh_handles(handle_id,secret_digest,device_id,created_at,used_at) VALUES (?,?,?,?,?)');
+ for(let i=0;i<9999;i++)insert.run('synthetic-'+i,'a'.repeat(64),d.deviceId,NOW,NOW);
+ assert.equal((await service.rotate(d.refresh)).status,'retry');assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_refresh_handles').get().n,10000);
+ }finally{db.sqlite.close();}
+});
