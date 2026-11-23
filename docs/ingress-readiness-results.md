@@ -64,3 +64,21 @@ deployed provider configuration remain unresolved. Current key-import helper is
 inactive; configured production format, IDs, cache behavior and workerd/browser
 composition still need verification. Never infer activation clearance from these
 local results. The production bootstrap remains authentication-disabled.
+
+## Proposed pre-D1 identity guards (inactive)
+
+The browser worker adapter separates approximate public-auth and management
+edge global budgets, plus an address budget, before identity key import/D1 work.
+It caches initialization, catches failures and refuses live configuration changes.
+Preflights are pure. Navigation refusals are HTML with a return link. Management
+here includes both reads and organization changes. Distributed unauthenticated
+junk can still exhaust the shared management bucket and starve legitimate users.
+Separating public auth does not remove that availability trade-off. These guards
+are approximate overload controls, not authentication or a strict global cost cap.
+No numerical production configuration or free-plan cost is established here.
+
+Actual local Chromium through this adapter and workerd verifies the synthetic
+signup ceremony, ES256 create/get, completion/exchange and issued-token browser
+CORS reads, including fresh environment copies with unchanged bindings. Explicit
+organization PUT/copy preflights pass. Browser Origin remains pinned to the Pages
+app: extension-origin and absent-Origin management requests are not supported.
