@@ -1,0 +1,16 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "otpanda-api",
+  "main": "src/cloudflare-worker.js",
+  "compatibility_date": "2026-11-23",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {"DEPLOYMENT_STAGE": "bootstrap"},
+  "d1_databases": [{
+    "binding": "DB",
+    "database_name": "otpanda",
+    "database_id": "626cd908-0951-49cf-92a2-9a54cbbb40a8",
+    "migrations_dir": "migrations"
+  }],
+  "observability": {"enabled": false}
+}
