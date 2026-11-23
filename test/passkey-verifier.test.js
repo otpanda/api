@@ -10,15 +10,15 @@ function authenticator() {
  const cose=isoCBOR.encode(new Map([[1,2],[3,-7],[-1,1],[-2,Buffer.from(jwk.x,'base64url')],[-3,Buffer.from(jwk.y,'base64url')]]));
  const id=Buffer.alloc(32,3).toString('base64url');
  const credential={id,publicKey:cose,counter:0,transports:['internal']};
- function registration({origin='https://otpanda.github.io',expected=challenge,flags=0x45,rp='otpanda.github.io'}={}) {
-  const client=Buffer.from(JSON.stringify({type:'webauthn.create',challenge:expected,origin,crossOrigin:false}));
+ function registration({origin='https://otpanda.github.io',expected=challenge,flags=0x45,rp='otpanda.github.io',crossOrigin=false,topOrigin}={}) {
+  const client=Buffer.from(JSON.stringify({type:'webauthn.create',challenge:expected,origin,crossOrigin,topOrigin}));
   const idBytes=Buffer.from(id,'base64url'),len=Buffer.alloc(2);len.writeUInt16BE(idBytes.length);
   const auth=Buffer.concat([hash(rp),Buffer.from([flags]),Buffer.alloc(4),Buffer.alloc(16),len,idBytes,Buffer.from(cose)]);
   const att=isoCBOR.encode(new Map([['fmt','none'],['attStmt',new Map()],['authData',auth]]));
   return {id,rawId:id,type:'public-key',clientExtensionResults:{},response:{clientDataJSON:client.toString('base64url'),attestationObject:Buffer.from(att).toString('base64url'),transports:['internal']}};
  }
- function assertion({origin='https://otpanda.github.io',expected=challenge,flags=5,rp='otpanda.github.io',counter=1,invalidSignature=false}={}) {
-  const client=Buffer.from(JSON.stringify({type:'webauthn.get',challenge:expected,origin,crossOrigin:false})),count=Buffer.alloc(4);count.writeUInt32BE(counter);
+ function assertion({origin='https://otpanda.github.io',expected=challenge,flags=5,rp='otpanda.github.io',counter=1,invalidSignature=false,crossOrigin=false,topOrigin}={}) {
+  const client=Buffer.from(JSON.stringify({type:'webauthn.get',challenge:expected,origin,crossOrigin,topOrigin})),count=Buffer.alloc(4);count.writeUInt32BE(counter);
   const auth=Buffer.concat([hash(rp),Buffer.from([flags]),count]);
   const signature=sign('sha256',Buffer.concat([auth,hash(client)]),privateKey);
   if(invalidSignature)signature[signature.length-1]^=1;
@@ -58,4 +58,17 @@ test('malformed expected challenge and response fail closed',async()=>{
  const v=new PasskeyVerifier();
  for(const c of [undefined,()=>true,'short','A'.repeat(44),'A'.repeat(42)+'B']){await assert.rejects(v.authenticationOptions({challenge:c}));await assert.rejects(v.verifyRegistration({response:{},expectedChallenge:c}));}
  for(const response of [null,{}, {id:'id',response:{}}, {id:'id',rawId:'id',type:'public-key',response:{clientDataJSON:'bad'}}])await assert.rejects(v.verifyRegistration({response,expectedChallenge:challenge}));
+});
+
+test('signed frame contexts rejected while ordinary and native contexts remain valid',async()=>{
+ const a=authenticator(),v=new PasskeyVerifier();
+ for(const frame of [{crossOrigin:true},{crossOrigin:true,topOrigin:'https://evil.test'},{crossOrigin:'false'},{topOrigin:'https://otpanda.github.io'}]) {
+  await assert.rejects(v.verifyRegistration({response:a.registration(frame),expectedChallenge:challenge}));
+  await assert.rejects(v.verifyAuthentication({response:a.assertion(frame),expectedChallenge:challenge,credential:a.credential}));
+ }
+ const origin='android:apk-key-hash:'+Buffer.alloc(32,9).toString('base64url'),native=new PasskeyVerifier({androidOrigins:[origin]});
+ for(const crossOrigin of [false,undefined]) {
+  assert.ok(await v.verifyAuthentication({response:a.assertion({crossOrigin}),expectedChallenge:challenge,credential:a.credential}));
+  assert.ok(await native.verifyAuthentication({response:a.assertion({origin,crossOrigin}),expectedChallenge:challenge,credential:a.credential}));
+ }
 });
