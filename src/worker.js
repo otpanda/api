@@ -12,7 +12,7 @@ const headers = {
 // route stays closed. A real deployment must inject a durable store whose
 // records were minted through a user-authenticated management session, which
 // does not exist yet.
-export function createHandler({ tokenStore } = {}) {
+export function createHandler({ tokenStore, codeStore, clock = Date.now } = {}) {
   const store = tokenStore ?? new MemoryTokenStore();
   return {
     async fetch(request) {
@@ -21,27 +21,29 @@ export function createHandler({ tokenStore } = {}) {
         return Response.json({ service: 'otpanda-api', status: 'foundation-only' }, { headers });
       }
       if (url.pathname === '/v1/auth/check' && request.method === 'GET') {
-        const auth = await authenticateBearer(request, store);
+        const auth = await authenticateBearer(request, store, { now: clock() });
         if (!auth.ok) return auth.response;
         // Echoes the derived grant so a client can inspect its own scope and
         // expiry. No codes or secrets are reachable here.
         return Response.json({ grant: auth.grant }, { headers });
       }
       if (url.pathname === '/v1/codes/latest' && request.method === 'GET') {
-        const auth = await authenticateBearer(request, store);
+        const auth = await authenticateBearer(request, store, { now: clock() });
         if (!auth.ok) return auth.response;
         // Authorization is the foundation's pure policy: owner/client come
         // from the verified grant, the service binding must match the query.
         const permitted = permitsCodeRead(
           auth.grant,
           { ownerId: auth.grant.ownerId, clientId: auth.grant.clientId, serviceId: url.searchParams.get('service') },
-          Date.now(),
+          clock(),
         );
         if (!permitted) {
           return Response.json({ error: 'forbidden' }, { status: 403, headers });
         }
-        // Code collection and storage are still unimplemented by design.
-        return Response.json({ error: 'not_implemented' }, { status: 501, headers });
+        if (!codeStore) return Response.json({ error: 'not_implemented' }, { status: 501, headers });
+        const record = await codeStore.latest(auth.grant.ownerId, auth.grant.serviceId, clock());
+        if (!record) return Response.json({ error: 'not_found' }, { status: 404, headers });
+        return Response.json({ code: record.code, serviceId: record.serviceId, receivedAt: record.receivedAt, expiresAt: record.expiresAt }, { headers });
       }
       if (url.pathname.startsWith('/v1/')) {
         return Response.json({ error: 'not_implemented' }, { status: 501, headers });
