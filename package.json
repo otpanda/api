@@ -14,6 +14,7 @@
     "db:local": "wrangler d1 migrations apply otpanda --local"
   },
   "dependencies": {
+    "@simplewebauthn/server": "14.1.0",
     "oauth4webapi": "3.8.9"
   },
   "devDependencies": {
