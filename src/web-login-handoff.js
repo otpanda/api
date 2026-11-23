@@ -41,10 +41,10 @@ export class WebLoginHandoffService {
  }
  async complete({handoff,binding}={}){
   const parsed=parseAccessToken(handoff);if(!parsed||typeof binding!=='string'||binding.length<32||binding.length>512)return undefined;
-  const now=this.now(),row=await this.db.prepare('DELETE FROM web_login_handoffs WHERE handoff_id=?1 AND secret_digest=?2 AND binding_digest=?3 AND created_at<=?4 AND expires_at>?4 RETURNING owner_id,credential_id,generation,verified_at,challenge,state,expires_at').bind(parsed.tokenId,digestToHex(await digestSecret(parsed.secret)),await hashText(binding),now).first();
+  const now=this.now(),row=await this.db.prepare('DELETE FROM web_login_handoffs WHERE handoff_id=?1 AND secret_digest=?2 AND binding_digest=?3 AND created_at<=?4 AND expires_at>?4 RETURNING owner_id,credential_id,generation,verified_at,challenge,state,expires_at,binding_digest').bind(parsed.tokenId,digestToHex(await digestSecret(parsed.secret)),await hashText(binding),now).first();
   if(!row||this.now()>=row.expires_at)return undefined;
   const proof={ownerId:row.owner_id,credentialId:row.credential_id,generation:row.generation,verifiedAt:row.verified_at,purpose:'authenticate'};
-  const device=await this.sessions.issue({proof,clientKind:'web'});if(!device)return undefined;
+  const device=await this.sessions.issue({proof,clientKind:'web',browserBindingDigest:row.binding_digest});if(!device)return undefined;
   let completed=false;
   try{
    const grant=await this.exchanges.mint({deviceId:device.deviceId,challenge:row.challenge,redirectUri:REDIRECT});
@@ -54,4 +54,4 @@ export class WebLoginHandoffService {
   }finally{if(!completed)await this.sessions.revoke({ownerId:row.owner_id,deviceId:device.deviceId});}
  }
  async cleanup({limit=100}={}){if(!Number.isSafeInteger(limit)||limit<1||limit>500)throw new TypeError('Bounded cleanup required');const now=this.now(),results=await this.db.batch([this.db.prepare('DELETE FROM web_login_handoffs WHERE handoff_id IN (SELECT handoff_id FROM web_login_handoffs WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(now,limit),this.db.prepare('DELETE FROM web_login_starts WHERE ceremony_id IN (SELECT ceremony_id FROM web_login_starts WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(now,limit)]);return results[0].meta.changes;}
-    }
+}
