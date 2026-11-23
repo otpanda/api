@@ -72,3 +72,31 @@ test('atomic rate buckets reset and isolate keys', async () => {
   assert.equal((await takeRateLimit(db, 'a', { now: NOW + 60000, limit: 1 })).allowed, true);
   db.sqlite.close();
 });
+
+test('denied rate requests saturate without mutation and preserve stored reset under clock rollback', async () => {
+ const {db}=await setup();try{
+ const now=120000;
+ assert.equal((await takeRateLimit(db,'saturate',{now,limit:2})).allowed,true);
+ assert.equal((await takeRateLimit(db,'saturate',{now,limit:2})).allowed,true);
+ const before=db.sqlite.prepare('SELECT * FROM rate_buckets').all();
+ for(let i=0;i<10;i++)assert.deepEqual(await takeRateLimit(db,'saturate',{now,limit:2}),{allowed:false,retryAfter:60});
+ assert.deepEqual(db.sqlite.prepare('SELECT * FROM rate_buckets').all(),before);
+ assert.deepEqual(await takeRateLimit(db,'saturate',{now:60000,limit:2}),{allowed:false,retryAfter:120});
+ assert.equal((await takeRateLimit(db,'saturate',{now:180000,limit:2})).allowed,true);
+ assert.equal(db.sqlite.prepare('SELECT count FROM rate_buckets').get().count,1);
+ }finally{db.sqlite.close();}
+});
+
+test('rate limiter rejects invalid configuration before D1 and permits explicit limit changes safely',async()=>{
+ const {db}=await setup();try{
+ for(const limit of [0,-1,1.5,NaN,Infinity,'3',null])await assert.rejects(takeRateLimit(db,'invalid',{now:120000,limit}),TypeError);
+ for(const windowMs of [0,-1,1.5,Infinity])await assert.rejects(takeRateLimit(db,'invalid',{now:120000,windowMs}),TypeError);
+ for(const now of [-1,NaN,Infinity,Number.MAX_SAFE_INTEGER])await assert.rejects(takeRateLimit(db,'invalid',{now}),TypeError);
+ assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM rate_buckets').get().n,0);
+ assert.equal((await takeRateLimit(db,'change',{now:120000,limit:1})).allowed,true);
+ assert.equal((await takeRateLimit(db,'change',{now:120000,limit:1})).allowed,false);
+ assert.equal((await takeRateLimit(db,'change',{now:120000,limit:2})).allowed,true);
+ assert.equal((await takeRateLimit(db,'change',{now:120000,limit:1})).allowed,false);
+ assert.equal(db.sqlite.prepare('SELECT count FROM rate_buckets').get().count,2);
+ }finally{db.sqlite.close();}
+});
