@@ -14,7 +14,7 @@ async function setup(){
  const personal=await store.createEntry('a','google','Private Google',NOW);
  for(const [entryId,eventId,code] of [[shared,'shared','123456'],[personal,'private','999999']]){
   await store.receive('a',{sourceId:source,eventId,code,receivedAt:NOW,expiresAt:NOW+1000});
-  await store.confirm('a',source,eventId,entryId);
+  await store.confirm('a',source,eventId,entryId,NOW);
  }
  return {db,store,access:new EntryAccess(db,store),source,shared,personal};
 }
