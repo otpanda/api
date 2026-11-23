@@ -62,16 +62,17 @@ export class SourceEntryStore {
     const r=await this.db.prepare('INSERT INTO incoming_codes (owner_id,event_id,source_id,entry_id,envelope,received_at,expires_at,assignment) SELECT ?1,?2,?3,?4,?5,?6,?7,?8 WHERE EXISTS (SELECT 1 FROM sources WHERE owner_id = ?1 AND source_id = ?3 AND revoked_at IS NULL) ON CONFLICT(owner_id,source_id,event_id) DO NOTHING').bind(ownerId,eventId,sourceId,entryId,JSON.stringify(envelope),receivedAt,expiresAt,entryId?'rule':'unassigned').run();
     return {inserted:r.meta.changes===1,entryId};
   }
-  async confirm(ownerId, sourceId, eventId, entryId) {
+  async confirm(ownerId, sourceId, eventId, entryId, now=Date.now()) {
+    if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
     // Explicit owner confirmation only, no source/entry ownership inferred.
     [ownerId,sourceId,eventId,entryId].forEach(id);
-    const row=await this.db.prepare('SELECT envelope,received_at,expires_at FROM incoming_codes WHERE owner_id = ?1 AND source_id = ?2 AND event_id = ?3 AND entry_id IS NULL').bind(ownerId,sourceId,eventId).first();
+    const row=await this.db.prepare('SELECT c.envelope,c.received_at,c.expires_at FROM incoming_codes c JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.owner_id = ?1 AND c.source_id = ?2 AND c.event_id = ?3 AND c.entry_id IS NULL AND c.received_at<=?4 AND c.expires_at>?4 AND s.revoked_at IS NULL').bind(ownerId,sourceId,eventId,now).first();
     const entry=await this.db.prepare('SELECT entry_id FROM entries WHERE owner_id = ?1 AND entry_id = ?2').bind(ownerId,entryId).first();
     if(!row||!entry)return false;
     const context={ownerId,recordId:await hashText(JSON.stringify([sourceId,eventId])),serviceId:'unassigned',receivedAt:row.received_at,expiresAt:row.expires_at};
     const code=await this.cipher.decrypt(JSON.parse(row.envelope),context);
     const envelope=await this.cipher.encrypt(code,{...context,serviceId:entryId});
-    const r=await this.db.prepare("UPDATE incoming_codes SET entry_id = ?1, assignment = 'confirmed', envelope = ?2 WHERE owner_id = ?3 AND source_id = ?4 AND event_id = ?5 AND entry_id IS NULL AND envelope = ?6 AND EXISTS (SELECT 1 FROM entries WHERE owner_id = ?3 AND entry_id = ?1)").bind(entryId,JSON.stringify(envelope),ownerId,sourceId,eventId,row.envelope).run();
+    const r=await this.db.prepare("UPDATE incoming_codes SET entry_id = ?1, assignment = 'confirmed', envelope = ?2 WHERE owner_id = ?3 AND source_id = ?4 AND event_id = ?5 AND entry_id IS NULL AND envelope = ?6 AND received_at<=?7 AND expires_at>?7 AND EXISTS (SELECT 1 FROM sources WHERE owner_id=?3 AND source_id=?4 AND revoked_at IS NULL) AND EXISTS (SELECT 1 FROM entries WHERE owner_id = ?3 AND entry_id = ?1)").bind(entryId,JSON.stringify(envelope),ownerId,sourceId,eventId,row.envelope,now).run();
     return r.meta.changes===1;
   }
 
