@@ -1,0 +1,7 @@
+# Browser HTTP restoration boundary, not live sign-in
+
+The first-party API host serves an explicit Continue form. A top-level GET never rotates a session. A same-origin form POST needs its HttpOnly CSRF cookie and a matching hidden value. The refresh cookie is host-only, Secure, HttpOnly, SameSite=Lax and has a sliding30-day lifetime. A verified web refresh is rotated before the browser exchange is minted, and no request-selected device ID is accepted. Native/extension refresh handles are denied without consumption.
+
+A303 redirects only to https://otpanda.github.io/app/ with the one-use code and state in the fragment, not query or response body. The tab must compare state, immediately remove the fragment and redeem with its stored PKCE verifier. The exact app Origin can redeem through POST JSON CORS without credentials; no refresh secret is returned. Incorrect Origin, duplicate redirect/state parameters, unsupported body fields and oversized streamed bodies deny. Trusted runtime client address drives the shared database rate limit; forwarded request headers are not authority.
+
+The Continue tap is deliberate, matching browser privacy caveats. This does not claim silent or permanent persistence. Actual browser cookie/redirect tests, client callback cleanup and login ceremony-to-session issuance are still required. This handler is not mounted into the deployment worker yet, and cannot create sessions. The deployed auth remains disabled. Existing same-origin legacy session routes are not the new cross-origin protocol.
