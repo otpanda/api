@@ -21,3 +21,5 @@ Logging/observability and workers.dev preview URLs are disabled in the committed
 After the first build, verify the actual workers.dev URL returned by Cloudflare, `/health`, `/ready`, wrong-method behavior and unauthenticated protected routes. Record the deployed commit and build result. A successful Actions deployment and readiness check still leave initial working product incomplete until real authentication and source adapters are delivered.
 
 See [provisional free-tier operations](free-tier-operations.md) for current rate defaults, account-plan evidence, hard-quota outage behavior and cleanup limits. Missing key configuration makes /ready return a generic503; /health stays200 with authentication disabled. A valid-format readiness response would not prove compatibility with existing encrypted rows or clear activation.
+
+Operational state was verified November24,2026 against API65 main de03c4ee2fd4a1080bc3b3136440e9a34a7d77e6, successful deployment https://github.com/otpanda/api/actions/runs/45290741183 and the production Worker settings. This dated observation is not activation clearance.
