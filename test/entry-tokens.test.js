@@ -6,7 +6,7 @@ import { EntryTokenStore,createEntryReadHandler } from '../src/entry-tokens.js';
 const NOW=1800000000000;
 async function setup(){
  const db=database();for(const id of ['a','b','c'])await db.prepare('INSERT INTO accounts VALUES (?,?)').bind(id,NOW).run();
- for(const [entry,owner] of [['shared','a'],['private','a'],['other','c']])await db.prepare('INSERT INTO entries VALUES (?,?,?,?,?)').bind(entry,owner,'google',entry,NOW).run();
+ for(const [entry,owner] of [['shared','a'],['private','a'],['other','c']])await db.prepare('INSERT INTO entries (entry_id,owner_id,service_id,label,created_at) VALUES (?,?,?,?,?)').bind(entry,owner,'google',entry,NOW).run();
  const access=new EntryAccess(db,{async latestOwned(ownerId,entryId){return {entryId,code:'123456',receivedAt:NOW,expiresAt:NOW+1000};}});
  const tokens=new EntryTokenStore(db,access);
  return {db,access,tokens};
