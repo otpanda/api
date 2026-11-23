@@ -31,7 +31,7 @@ test('every authentication failure produces the identical 401 response', async (
   const failures = [
     await authenticateBearer(request('/v1/auth/check'), store, { now: NOW }), // no header
     await authenticateBearer(request('/v1/auth/check', 'not-a-token'), store, { now: NOW }), // malformed
-    await authenticateBearer(request('/v1/auth/check', good.token.slice(0, -2) + 'AA'), store, { now: NOW }), // unknown/tampered
+    await authenticateBearer(request('/v1/auth/check', good.token.slice(0, -2) + (good.token.at(-2) === 'A' ? 'B' : 'A') + good.token.at(-1)), store, { now: NOW }), // unknown/tampered
     await authenticateBearer(request('/v1/auth/check', expired.token), store, { now: NOW + 50 }), // expired
     await authenticateBearer(request('/v1/auth/check', revoked.token), store, { now: NOW }), // revoked
   ];
