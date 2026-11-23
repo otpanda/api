@@ -5,7 +5,14 @@ import { readFileSync, readdirSync } from 'node:fs';
 // This is not a substitute for a pre-deployment D1 runtime smoke test.
 export function database(path = ':memory:') {
   const sqlite = new DatabaseSync(path);
-  for (const file of readdirSync(new URL('../migrations/', import.meta.url)).sort()) sqlite.exec(readFileSync(new URL('../migrations/' + file, import.meta.url), 'utf8'));
+  sqlite.exec('PRAGMA foreign_keys = ON');
+  sqlite.exec('CREATE TABLE IF NOT EXISTS _test_migrations (name TEXT PRIMARY KEY)');
+  for (const file of readdirSync(new URL('../migrations/', import.meta.url)).sort()) {
+    if(sqlite.prepare('SELECT name FROM _test_migrations WHERE name = ?').get(file))continue;
+    sqlite.exec('BEGIN');
+    try { sqlite.exec(readFileSync(new URL('../migrations/' + file, import.meta.url), 'utf8')); sqlite.prepare('INSERT INTO _test_migrations VALUES (?)').run(file); sqlite.exec('COMMIT'); }
+    catch(error){sqlite.exec('ROLLBACK');throw error;}
+  }
   return {
     sqlite,
     async batch(statements) {
