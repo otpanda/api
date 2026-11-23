@@ -75,6 +75,22 @@ export class SourceEntryStore {
     return r.meta.changes===1;
   }
 
+  // Owner-private review surface. Never return source labels, sender metadata,
+  // raw envelopes or messages. A bounded active-only page limits decrypt work.
+  async unassignedForOwner(ownerId, now) {
+    id(ownerId);if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
+    const rows=(await this.db.prepare('SELECT c.source_id,c.event_id,c.envelope,c.received_at,c.expires_at FROM incoming_codes c JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.owner_id=?1 AND c.entry_id IS NULL AND c.received_at<=?2 AND c.expires_at>?2 AND s.revoked_at IS NULL ORDER BY c.received_at DESC,c.event_id DESC LIMIT 20').bind(ownerId,now).all()).results;
+    const result=[];
+    for(const row of rows){
+      const code=await this.cipher.decrypt(JSON.parse(row.envelope),{ownerId,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:'unassigned',receivedAt:row.received_at,expiresAt:row.expires_at});
+      // A concurrent assignment or source revocation must remove it from this
+      // private review response rather than return stale assignment context.
+      const current=await this.db.prepare('SELECT c.event_id FROM incoming_codes c JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.owner_id=?1 AND c.source_id=?2 AND c.event_id=?3 AND c.entry_id IS NULL AND c.envelope=?4 AND s.revoked_at IS NULL').bind(ownerId,row.source_id,row.event_id,row.envelope).first();
+      if(current)result.push({sourceId:row.source_id,eventId:row.event_id,code,receivedAt:row.received_at,expiresAt:row.expires_at});
+    }
+    return result;
+  }
+
   async latestOwned(ownerId, entryId, now) {
     if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
     const row=await this.db.prepare('SELECT c.event_id,c.source_id,c.envelope,c.received_at,c.expires_at FROM incoming_codes c JOIN entries e ON e.owner_id = c.owner_id AND e.entry_id = c.entry_id WHERE c.owner_id = ?1 AND c.entry_id = ?2 AND c.received_at <= ?3 AND c.expires_at > ?3 ORDER BY c.received_at DESC, c.event_id DESC LIMIT 1').bind(id(ownerId),id(entryId),now).first();
