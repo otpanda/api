@@ -7,7 +7,7 @@ import { createOidcSignIn } from '../src/oidc.js';
 import { CodeCipher } from '../src/code-cipher.js';
 import { base64urlEncode } from '../src/tokens.js';
 const encoder = new TextEncoder();
-async function setup({ wrongNonce = false, wrongAudience = false, tamperSignature = false } = {}) {
+async function setup({ wrongNonce = false, wrongAudience = false, tamperSignature = false, wrongIssuer = false, expiredToken = false, missingIdToken = false } = {}) {
   const db = database();
   const sessions = new SessionService(db, { origin: 'https://app.test' });
   const encryptionKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
@@ -25,10 +25,10 @@ async function setup({ wrongNonce = false, wrongAudience = false, tamperSignatur
     assert.equal(body.get('redirect_uri'), 'https://app.test/auth/callback');
     const now = Math.floor(Date.now() / 1000);
     const header = base64urlEncode(encoder.encode(JSON.stringify({ alg: 'RS256', kid: 'key-1' })));
-    const payload = base64urlEncode(encoder.encode(JSON.stringify({ iss: server.issuer, sub: 'person-1', aud: wrongAudience ? 'wrong' : 'client', iat: now, exp: now + 300, nonce: wrongNonce ? 'wrong' : nonce })));
+    const payload = base64urlEncode(encoder.encode(JSON.stringify({ iss: wrongIssuer ? 'https://evil.test' : server.issuer, sub: 'person-1', aud: wrongAudience ? 'wrong' : 'client', iat: now, exp: expiredToken ? now - 600 : now + 300, nonce: wrongNonce ? 'wrong' : nonce })));
     const signature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', signing.privateKey, encoder.encode(header + '.' + payload)));
     if (tamperSignature) signature[0] ^= 1;
-    return Response.json({ access_token: 'synthetic-provider-token', token_type: 'Bearer', id_token: header + '.' + payload + '.' + base64urlEncode(signature) });
+    return Response.json({ access_token: 'synthetic-provider-token', token_type: 'Bearer', ...(missingIdToken ? {} : { id_token: header + '.' + payload + '.' + base64urlEncode(signature) }) });
   };
   const flow = createOidcSignIn({ db, sessions, cipher, server, client: { client_id: 'client', id_token_signed_response_alg: 'RS256' }, clientAuthentication: oauth.None(), oauthOptions: { [oauth.customFetch]: mockedFetch } });
   const start = await flow.start(new Request('https://app.test/auth/start', { method: 'POST', headers: { origin: 'https://app.test' } }));
@@ -55,11 +55,26 @@ test('OIDC signs in using S256 PKCE, state, nonce and verified signature; one-ti
   assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM accounts').get().n, 1);
   db.sqlite.close();
 });
-for (const flag of ['wrongNonce', 'wrongAudience', 'tamperSignature']) test('OIDC rejects ' + flag, async () => {
+for (const flag of ['wrongNonce', 'wrongAudience', 'tamperSignature', 'wrongIssuer', 'expiredToken', 'missingIdToken']) test('OIDC rejects ' + flag, async () => {
   const { db, flow, callback } = await setup({ [flag]: true });
   const response = await flow.callback(callback());
   assert.equal(response.status, 400);
   assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM accounts').get().n, 0);
   assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM sessions').get().n, 0);
+  db.sqlite.close();
+});
+
+test('OIDC rejects expired transaction, duplicate state, cross-origin start and callback', async () => {
+  const { db, flow, callback, tokenCalls } = await setup();
+  assert.equal((await flow.start(new Request('https://app.test/auth/start', {method:'POST',headers:{origin:'https://evil.test'}}))).status,403);
+  const duplicate = callback();
+  const duplicateUrl = new URL(duplicate.url); duplicateUrl.searchParams.append('state','extra');
+  assert.equal((await flow.callback(new Request(duplicateUrl,{headers:duplicate.headers}))).status,400);
+  const cross = callback();
+  assert.equal((await flow.callback(new Request(cross.url.replace('https://app.test','https://evil.test'),{headers:cross.headers}))).status,400);
+  db.sqlite.prepare('UPDATE oauth_transactions SET created_at = ?, expires_at = ?').run(Date.now()-2000,Date.now()-1000);
+  assert.equal((await flow.callback(callback())).status,400);
+  assert.equal(tokenCalls(),0);
+  assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM sessions').get().n,0);
   db.sqlite.close();
 });
