@@ -35,6 +35,7 @@ export class EntryAccess {
     if(!await this.canRead(actorId,entryId,{automation}))return undefined;
     return result;
   }
+  async activeRecent(actorId,now){return this.store.activeForActor(actorId,now);}
   async updateEntry(actorId,entryId,label) {
     if(typeof label!=='string'||!label.trim()||label.length>120)throw new TypeError('Bounded label required');
     const r=await this.db.prepare('UPDATE entries SET label = ?1 WHERE entry_id = ?2 AND owner_id = ?3').bind(label,entryId,actorId).run();return r.meta.changes===1;

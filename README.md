@@ -1,2 +1,4 @@
 # api
 OTPanda cloud service and API for collecting and accessing verification codes.
+
+The authenticated browser session can read `GET /v1/manage/active-codes`. This returns at most 20 unexpired assigned codes, one latest code per currently readable entry, ordered newest first. It is not available with automation bearer tokens. Responses contain only entry ID, code and receipt/expiry timestamps, never source identifiers or owner IDs. Unassigned codes use the separate owner-private review route. Source revocation and current sharing permissions are checked after decryption; the session and expiry are checked again before the response. This is a refresh-driven snapshot, not polling or a real-time subscription. No extra freshness duration is assumed beyond source expiry. Direct assigned reads now also exclude revoked sources.
