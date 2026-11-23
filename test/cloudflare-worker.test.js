@@ -39,3 +39,15 @@ test('all authentication and data paths remain closed, no redirects or CORS bypa
  assert.equal((await worker.fetch(new Request('https://api.test/'))).status,404);
  assert.equal((await worker.fetch(new Request('https://api.test/health',{method:'POST'}))).status,404);
 });
+test('scheduled housekeeping is mounted and bounded without opening auth',async()=>{
+ const db=database();try {
+ const now=Date.now();for(let i=0;i<105;i++)await db.prepare('INSERT INTO browser_logout_bindings VALUES (?,?)').bind('synthetic-'+i,now-1).run();
+ let job;await worker.scheduled({}, {DB:db,DEPLOYMENT_STAGE:'bootstrap'},{waitUntil(p){job=p;}});assert.ok(job);await job;
+ assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM browser_logout_bindings').get().n,5);
+ await worker.scheduled({}, {DB:db,DEPLOYMENT_STAGE:'bootstrap'});assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM browser_logout_bindings').get().n,0);
+ assert.equal((await worker.fetch(new Request('https://api.test/auth/login/start'),{DB:db,DEPLOYMENT_STAGE:'bootstrap'})).status,503);
+ }finally{db.sqlite.close();}
+});
+test('scheduled housekeeping rejects wrong deployment stage without touching DB',async()=>{
+ for(const env of [undefined,{}, {DEPLOYMENT_STAGE:'active',DB:{prepare(){throw Error('must not run');}}}])await worker.scheduled({},env);
+});
