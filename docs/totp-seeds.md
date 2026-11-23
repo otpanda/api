@@ -1,0 +1,9 @@
+# Internal encrypted TOTP seeds
+
+One seed per entry, owner-only storage/replace/removal. A dedicated AES-256-GCM envelope binds purpose, key ID, owner and entry, separate from delivered-code encryption. Encryption keys are injected; no new production key or enrollment is created. The migration stores only the encrypted envelope and timestamps, and entry deletion cascades to its seed.
+
+Entry-scoped reads follow existing owner/share permissions. Shared recipients get generated codes only; automation additionally needs the existing per-share automation permission. The read checks permission before decrypt and after generation, and rechecks the stored envelope so a rotation/removal during generation does not release the obsolete result. Generated codes are not persisted. Internal callers supply explicit Unix seconds. An eventual HTTP adapter must use a trusted server clock, bounded requests and authenticated caller context, not a caller-provided timestamp or owner ID.
+
+The parser accepts provisioning URIs already supported by `parseTotpUri`. Raw inputs are copied before byte wiping so the caller's array is unchanged. Best-effort byte clearing does not guarantee erasure of JavaScript strings or cryptographic engine copies. Do not claim guaranteed memory zeroization. No seed export API exists; no seed is returned by generated-code reads or error text.
+
+Tests use synthetic RFC6238 seeds only. Coverage includes SHA1/256/512, encrypted-at-rest values, owner/entry/purpose binding, owner-only mutations, shared versus automation permissions, revocation/rotation/removal during reads, entry deletion, malformed payloads and validity-window overflow. There is no mounted route, account enrollment, real secret connection, UI support, authentication activation or change to the paused durable-device work.
