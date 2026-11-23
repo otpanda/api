@@ -5,5 +5,9 @@ The authenticated browser session can read `GET /v1/manage/active-codes`. This r
 
 `src/runtime.js` now explicitly composes the integrated browser/entry runtime
 from injected dependencies. See [runtime composition](docs/runtime-composition.md)
-for deployment prerequisites. The legacy default `worker.js` is not the
-integrated deployment entrypoint; no real backend has been deployed.
+for deployment prerequisites. The legacy default `worker.js` is not the deployment entrypoint. The current
+Cloudflare bootstrap is deployed with D1 migrations, but real authentication and
+connected-account use remain disabled. Reviewed signup, browser sessions and
+organization modules are published as inactive source. Local synthetic checks
+do not establish real-account readiness. See [ingress readiness](docs/ingress-readiness-results.md)
+for observed boundary checks and remaining work.
