@@ -28,3 +28,21 @@ test('malformed PKCE and nonweb sessions cannot mint browser restore grants',asy
 test('code expiration is rechecked after claim and asynchronous handle generation',async()=>{
  const f=await fixture(),challenge=await pkceChallenge(verifier),x=await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri});let calls=0;const service=new BrowserExchangeService(f.db,{redirectUri,clock:()=>++calls===1?NOW+59999:NOW+60000});assert.equal(await service.exchange({code:x.code,verifier,redirectUri}),undefined);assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM device_access_handles').get().n,1);f.db.sqlite.close();
 });
+
+test('outstanding exchange ceiling is atomic and per-device; expiry frees capacity',async()=>{
+ const f=await fixture();try {
+ const challenge=await pkceChallenge(verifier),issued=await Promise.all(Array.from({length:36},()=>f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri})));
+ assert.equal(issued.filter(Boolean).length,32);assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM browser_exchanges').get().n,32);
+ const second=await f.service.issue({proof:f.proof,clientKind:'web'});assert.ok(await f.exchange.mint({deviceId:second.deviceId,challenge,redirectUri}));
+ f.setTime(NOW+60000);assert.ok(await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri}));
+ }finally{f.db.sqlite.close();}
+});
+test('access ceiling applies to browser exchange and cannot leak a new token',async()=>{
+ const f=await fixture();try {
+ const challenge=await pkceChallenge(verifier);let refresh=f.d.refresh;
+ for(let i=0;i<63;i++){const r=await f.service.rotate(refresh);assert.equal(r.status,'rotated');refresh=r.refresh;}
+ const x=await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri});assert.equal(await f.exchange.exchange({code:x.code,verifier,redirectUri}),undefined);
+ assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM device_access_handles').get().n,64);assert.equal(await f.exchange.exchange({code:x.code,verifier,redirectUri}),undefined);
+ f.setTime(NOW+300001);const y=await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri});assert.ok(await f.exchange.exchange({code:y.code,verifier,redirectUri}));
+ }finally{f.db.sqlite.close();}
+});
