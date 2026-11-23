@@ -7,7 +7,7 @@ test('fixed HTTP contract, one recipient and acceptance not delivery', async()=>
  let calls=0;
  const transport=new BrevoMailTransport({...options,fetchImpl:async(url,request)=>{
   calls++;assert.equal(url,'https://api.brevo.com/v3/smtp/email');
-  assert.equal(request.method,'POST');assert.equal(request.redirect,'error');assert.equal(request.credentials,'omit');assert.equal(request.cache,'no-store');
+  assert.equal(request.method,'POST');assert.equal(request.redirect,'manual');assert.equal(request.credentials,'omit');assert.equal(request.cache,'no-store');
   assert.equal(request.headers['api-key'],options.apiKey);assert.ok(request.signal instanceof AbortSignal);
   assert.deepEqual(JSON.parse(request.body),{sender:{email:options.senderEmail,name:'OTPanda'},replyTo:{email:options.replyToEmail},to:[{email:mail.to}],subject:mail.subject,textContent:mail.text});
   return Response.json({messageId:'<synthetic@example.test>'},{status:201});
