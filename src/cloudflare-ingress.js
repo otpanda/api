@@ -13,6 +13,7 @@ export function resolveCloudflareDirectIngress(request){
  const cf=request.cf;
  if(!cf||typeof cf.colo!=='string'||!cf.colo||typeof cf.httpProtocol!=='string'||!cf.httpProtocol||typeof cf.tlsVersion!=='string'||!cf.tlsVersion.startsWith('TLS'))return;
  const raw=request.headers.get('CF-Connecting-IP'),address=canonicalClientAddress(raw);
- if(!address||address===canonicalClientAddress('2a06:98c0:3600::103'))return;
- return address;
+ if(typeof raw!=='string'||raw.includes('/')||!address||address===canonicalClientAddress('2a06:98c0:3600::103'))return;
+ // Consumers canonicalize once into quota keys. Never return a bucket CIDR.
+ return raw;
 }

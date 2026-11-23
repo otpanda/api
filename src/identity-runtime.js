@@ -14,6 +14,7 @@ import {createBrowserLogoutHttp} from './browser-logout-http.js';
 import {createDeviceReadHttp} from './device-read-http.js';
 import {cleanupIdentity} from './identity-cleanup.js';
 import {json} from './sessions.js';
+import {canonicalClientAddress} from './client-address.js';
 import {PersonalOrganizationStore} from './personal-organization.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
 export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,clock=Date.now}={}) {
@@ -36,7 +37,8 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,clo
    else if(readPaths.has(url.pathname))handler=reads;
    else if(['/v1/manage/organization','/v1/manage/organization-copy'].includes(url.pathname))handler=organization;
    else return json({error:'not_found'},404);
-   const clientAddress=await trustedRequestKey(request);
+   const clientAddress=canonicalClientAddress(await trustedRequestKey(request));
+   if(!clientAddress)return json({error:'unavailable'},503);
    return await handler.fetch(request,{clientAddress});
   }catch{return json({error:'unavailable'},503);}
  },async cleanup(){return cleanupIdentity({db,clock,limit:100});}};
