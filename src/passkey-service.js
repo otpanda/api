@@ -57,7 +57,7 @@ export class PasskeyService {
     const now = this.now();
     // Exactly one attempt with the correctly bound ceremony. Verification failure
     // consumes it too, avoiding concurrent/repeated signature attempts.
-    return (await this.db.prepare('DELETE FROM passkey_ceremonies WHERE ceremony_id = ?1 AND secret_digest = ?2 AND binding_digest = ?3 AND purpose = ?4 AND owner_id IS ?5 AND action_digest IS ?6 AND created_at <= ?7 AND expires_at > ?7 RETURNING challenge, owner_id, generation, purpose, action_digest')
+    return (await this.db.prepare('DELETE FROM passkey_ceremonies WHERE ceremony_id = ?1 AND secret_digest = ?2 AND binding_digest = ?3 AND purpose = ?4 AND owner_id IS ?5 AND action_digest IS ?6 AND created_at <= ?7 AND expires_at > ?7 RETURNING challenge, owner_id, generation, purpose, action_digest, created_at, expires_at')
       .bind(parsed.tokenId, digestToHex(await digestSecret(parsed.secret)), await hashText(binding), purpose, ownerId, action === null ? null : await hashText(bounded(action)), now).first()) ?? undefined;
   }
   async finishRegistration({ token, ownerId, binding, action, response }) {
@@ -66,6 +66,7 @@ export class PasskeyService {
     const record = await verifiedRegistration(this.verifier, response, ceremony.challenge);
     if (!record) return false;
     const { c, transports, deviceType, backedUp } = record, now = this.now();
+    if (now < ceremony.created_at || now >= ceremony.expires_at) return false;
     // Uniqueness never overwrites another credential, including a revoked one.
     const result = await this.db.prepare('INSERT INTO passkey_credentials (credential_id, owner_id, public_key, counter, transports, device_type, backed_up, created_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS (SELECT 1 FROM account_security WHERE owner_id = ?2 AND generation = ?9) ON CONFLICT(credential_id) DO NOTHING')
       .bind(c.id, ownerId, Array.from(c.publicKey), c.counter, JSON.stringify(transports), deviceType, backedUp, now, ceremony.generation).run();
@@ -88,6 +89,7 @@ export class PasskeyService {
     // Revision also serializes authenticators whose signature counter stays 0.
     // A revoke or security-generation change during verification wins the race.
     const now = this.now();
+    if (now < ceremony.created_at || now >= ceremony.expires_at) return undefined;
     const updated = await this.db.prepare('UPDATE passkey_credentials SET counter = ?1, revision = revision + 1, last_used_at = ?2, backed_up = ?3 WHERE credential_id = ?4 AND revision = ?5 AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM account_security WHERE owner_id = ?6 AND generation = ?7)')
       .bind(info.newCounter, now, info.credentialBackedUp ? 1 : 0, row.credential_id, row.revision, row.owner_id, row.generation).run();
     if (updated.meta.changes !== 1) return undefined;
@@ -107,4 +109,4 @@ export class PasskeyService {
     const result = await this.db.prepare('UPDATE passkey_credentials SET revoked_at = ?1, revision = revision + 1 WHERE credential_id = ?2 AND owner_id = ?3 AND revoked_at IS NULL').bind(this.now(), id, ownerId).run();
     return result.meta.changes === 1;
   }
-                                       }
+}
