@@ -1,6 +1,8 @@
 // Internal persistent-session store. No cookie, CORS or token exchange endpoint.
 // Only this server may pass results of cryptographic verification to issue().
 import { generateAccessToken, parseAccessToken, digestSecret, digestToHex } from './tokens.js';
+// Storage safety ceilings are checked inside the write, not a racy preflight.
+const MAX_DEVICES=50,MAX_ACCESS=64,MAX_REFRESH=10000;
 const IDLE=30*24*60*60*1000,ACCESS=5*60*1000,PROOF=120_000,GRACE=10_000;
 async function tokenDigest(token) { const p=parseAccessToken(token);return p?{id:p.tokenId,digest:digestToHex(await digestSecret(p.secret))}:undefined; }
 async function freshHandle() { const h=generateAccessToken();return {...h,digest:digestToHex(await digestSecret(h.secret))}; }
@@ -18,7 +20,7 @@ export class DeviceSessionService {
     // The final write checks generation and revocation, closing the race after
     // signature verification. Child inserts require that exact device row.
     await this.db.batch([
-      this.db.prepare('INSERT INTO device_sessions (device_id,owner_id,credential_id,generation,client_kind,created_at,last_used_at,expires_at,browser_binding_digest) SELECT ?1,?2,?3,?4,?5,?6,?6,?7,?8 WHERE NOT EXISTS (SELECT 1 FROM browser_logout_bindings WHERE binding_digest=?8 AND expires_at>?6) AND EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?3 AND p.owner_id=?2 AND p.revoked_at IS NULL AND s.generation=?4)').bind(deviceId,proof.ownerId,proof.credentialId,proof.generation,clientKind,now,now+IDLE,browserBindingDigest),
+      this.db.prepare(`INSERT INTO device_sessions (device_id,owner_id,credential_id,generation,client_kind,created_at,last_used_at,expires_at,browser_binding_digest) SELECT ?1,?2,?3,?4,?5,?6,?6,?7,?8 WHERE (SELECT count(*) FROM device_sessions WHERE owner_id=?2 AND revoked_at IS NULL AND expires_at>?6)<${MAX_DEVICES} AND NOT EXISTS (SELECT 1 FROM browser_logout_bindings WHERE binding_digest=?8 AND expires_at>?6) AND EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?3 AND p.owner_id=?2 AND p.revoked_at IS NULL AND s.generation=?4)`).bind(deviceId,proof.ownerId,proof.credentialId,proof.generation,clientKind,now,now+IDLE,browserBindingDigest),
       this.db.prepare('INSERT INTO device_refresh_handles (handle_id,secret_digest,device_id,created_at) SELECT ?1,?2,?3,?4 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(refresh.tokenId,refresh.digest,deviceId,now),
       this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(access.tokenId,access.digest,deviceId,now,now+ACCESS),
     ]);
@@ -43,7 +45,7 @@ export class DeviceSessionService {
     // A random successor handle is the transaction's unique winner marker.
     // INSERT..SELECT only wins while the parent handle is unused and active.
     const results=await this.db.batch([
-      this.db.prepare(`INSERT INTO device_refresh_handles (handle_id,secret_digest,device_id,created_at) SELECT ?4,?5,d.device_id,?3 FROM device_refresh_handles r JOIN device_sessions d ON d.device_id=r.device_id JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE r.handle_id=?1 AND r.secret_digest=?2 AND r.used_at IS NULL AND ${ACTIVE}`).bind(t.id,t.digest,now,next.tokenId,next.digest),
+      this.db.prepare(`INSERT INTO device_refresh_handles (handle_id,secret_digest,device_id,created_at) SELECT ?4,?5,d.device_id,?3 FROM device_refresh_handles r JOIN device_sessions d ON d.device_id=r.device_id JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE r.handle_id=?1 AND r.secret_digest=?2 AND r.used_at IS NULL AND (SELECT count(*) FROM device_refresh_handles WHERE device_id=d.device_id)<${MAX_REFRESH} AND (SELECT count(*) FROM device_access_handles WHERE device_id=d.device_id AND expires_at>?3)<${MAX_ACCESS} AND ${ACTIVE}`).bind(t.id,t.digest,now,next.tokenId,next.digest),
       this.db.prepare('UPDATE device_refresh_handles SET used_at=?1 WHERE handle_id=?2 AND used_at IS NULL AND EXISTS (SELECT 1 FROM device_refresh_handles WHERE handle_id=?3)').bind(now,t.id,next.tokenId),
       this.db.prepare('UPDATE device_sessions SET last_used_at=?1,expires_at=?2 WHERE device_id=?3 AND EXISTS (SELECT 1 FROM device_refresh_handles WHERE handle_id=?4)').bind(now,now+IDLE,row.device_id,next.tokenId),
       this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS (SELECT 1 FROM device_refresh_handles WHERE handle_id=?6)').bind(access.tokenId,access.digest,row.device_id,now,now+ACCESS,next.tokenId),
@@ -74,4 +76,4 @@ export class DeviceSessionService {
   }
   async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes===1;}
   async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL').bind(this.now(),ownerId).run();return r.meta.changes;}
-      }
+                                                                                                                          }
