@@ -46,3 +46,13 @@ test('server-held browser context needs no readable cookie or context claims at 
 test('another browser cannot complete stolen ceremony response under its cookie',async()=>{
  const x=await setup(),cookieBinding='c'.repeat(43),c=await x.login.beginBrowser({...x.context,cookieBinding}),h=await x.login.verifyBrowser({token:c.token,response:x.assertion(c)});assert.equal(await x.login.completeBrowser({handoff:h.handoff,cookieBinding:'d'.repeat(43)}),undefined);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,0);assert.ok(await x.login.completeBrowser({handoff:h.handoff,cookieBinding}));x.db.sqlite.close();
 });
+test('logout tombstone wins before or during cookie-bound completion',async()=>{
+ for(const phase of ['before','during']) {
+ const x=await setup();try {const cookieBinding='c'.repeat(43),c=await x.login.beginBrowser({...x.context,cookieBinding}),h=await x.login.verifyBrowser({token:c.token,response:x.assertion(c)}),row=x.db.sqlite.prepare('SELECT binding_digest FROM web_login_handoffs').get();
+ if(phase==='before')await x.sessions.logoutBrowser(undefined,row.binding_digest);
+ else {const mint=x.exchanges.mint.bind(x.exchanges);x.exchanges.mint=async args=>{const r=await mint(args);await x.sessions.logoutBrowser(undefined,row.binding_digest);return r;};}
+ assert.equal(await x.login.completeBrowser({handoff:h.handoff,cookieBinding}),undefined);
+ assert.equal(x.db.sqlite.prepare('SELECT count(*) AS n FROM device_sessions WHERE revoked_at IS NULL').get().n,0);
+ }finally{x.db.sqlite.close();}
+ }
+});
