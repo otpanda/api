@@ -82,9 +82,13 @@ export async function ownerForIdentity(db, issuer, subject, now) {
 // Atomic per-key fixed-window limiter. Call before expensive operations.
 // bucketKey must be server-derived (never a user-selected owner/IP string).
 export async function takeRateLimit(db, bucketKey, { now = Date.now(), limit = 30, windowMs = 60_000 } = {}) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || !Number.isSafeInteger(windowMs) || windowMs < 1 || !Number.isSafeInteger(now) || now < 0 || !Number.isSafeInteger(now + windowMs)) throw new TypeError('Invalid rate limit configuration');
   const window = Math.floor(now / windowMs) * windowMs;
   const key = await hashText(bucketKey);
-  const row = await db.prepare('INSERT INTO rate_buckets (bucket_key, count, resets_at) VALUES (?1, 1, ?2) ON CONFLICT(bucket_key) DO UPDATE SET count = CASE WHEN resets_at <= ?3 THEN 1 ELSE count + 1 END, resets_at = CASE WHEN resets_at <= ?3 THEN ?2 ELSE resets_at END RETURNING count, resets_at')
-    .bind(key, window + windowMs, now).first();
-  return { allowed: row.count <= limit, retryAfter: Math.max(1, Math.ceil((row.resets_at - now) / 1000)) };
-    }
+  const row = await db.prepare('INSERT INTO rate_buckets (bucket_key, count, resets_at) VALUES (?1, 1, ?2) ON CONFLICT(bucket_key) DO UPDATE SET count = CASE WHEN resets_at <= ?3 THEN 1 ELSE count + 1 END, resets_at = CASE WHEN resets_at <= ?3 THEN ?2 ELSE resets_at END WHERE resets_at <= ?3 OR count < ?4 RETURNING count, resets_at')
+    .bind(key, window + windowMs, now, limit).first();
+  // A denied request must not write again. Read the stored reset time so
+  // clock rollback or an existing longer window cannot shorten Retry-After.
+  const reset = row ?? await db.prepare('SELECT resets_at FROM rate_buckets WHERE bucket_key = ?1').bind(key).first();
+  return { allowed: row != null && row.count <= limit, retryAfter: Math.max(1, Math.ceil(((reset?.resets_at ?? window + windowMs) - now) / 1000)) };
+}
