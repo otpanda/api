@@ -69,3 +69,9 @@ test('bounded cleanup removes only expired ceremonies and leaves live attempts',
  setNow(NOW+120000);await service.begin({purpose:'authenticate',binding});
  assert.equal(await service.cleanupExpired({limit:2}),2);assert.equal(await service.cleanupExpired({limit:2}),1);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM passkey_ceremonies').get().n,1);await assert.rejects(service.cleanupExpired({limit:501}));db.sqlite.close();
 });
+
+test('ceremony expiration during signature verification denies authentication',async()=>{
+ const {db,service,enroll,assertion,setNow}=await setup(),a=await enroll(),args=await assertion(a),actual=new PasskeyVerifier();
+ service.verifier={verifyAuthentication:async v=>{const result=await actual.verifyAuthentication(v);setNow(NOW+120000);return result;}};
+ assert.equal(await service.finishAuthentication(args),undefined);assert.equal(db.sqlite.prepare('SELECT revision FROM passkey_credentials').get().revision,0);db.sqlite.close();
+});
