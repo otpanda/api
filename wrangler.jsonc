@@ -26,5 +26,63 @@
   },
   "observability": {
     "enabled": false
-  }
+  },
+  "ratelimits": [
+    {
+      "name": "SIGNUP_ADDRESS_LIMIT",
+      "namespace_id": "68022001",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "SIGNUP_GLOBAL_LIMIT",
+      "namespace_id": "68022002",
+      "simple": {
+        "limit": 10,
+        "period": 60
+      }
+    },
+    {
+      "name": "SIGNUP_VERIFY_ADDRESS_LIMIT",
+      "namespace_id": "68022003",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "SIGNUP_VERIFY_GLOBAL_LIMIT",
+      "namespace_id": "68022004",
+      "simple": {
+        "limit": 15,
+        "period": 60
+      }
+    },
+    {
+      "name": "IDENTITY_ADDRESS_LIMIT",
+      "namespace_id": "68022005",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "IDENTITY_AUTH_GLOBAL_LIMIT",
+      "namespace_id": "68022006",
+      "simple": {
+        "limit": 15,
+        "period": 60
+      }
+    },
+    {
+      "name": "IDENTITY_READ_GLOBAL_LIMIT",
+      "namespace_id": "68022007",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    }
+  ]
 }
