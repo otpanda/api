@@ -17,14 +17,15 @@ export class SourceEntryStore {
     await this.db.prepare('INSERT INTO sources (source_id, owner_id, kind, label, created_at) VALUES (?1,?2,?3,?4,?5)').bind(sourceId,id(ownerId),kind,label(name),now).run();
     return sourceId;
   }
-  async createEntry(ownerId, serviceId, name, now) {
+  async createEntry(ownerId, serviceId, name, now, {accountName=null}={}) {
     const entryId=crypto.randomUUID();
     // Unknown services work immediately. The generic display name is the
     // service identifier, never a caller-controlled overwrite of a catalog.
     [ownerId,serviceId].forEach(id); label(name);
+    if(accountName!==null)label(accountName);
     await this.db.batch([
       this.db.prepare('INSERT INTO services (service_id,name) VALUES (?1,?1) ON CONFLICT(service_id) DO NOTHING').bind(serviceId),
-      this.db.prepare('INSERT INTO entries (entry_id, owner_id, service_id, label, created_at) VALUES (?1,?2,?3,?4,?5)').bind(entryId,ownerId,serviceId,name,now),
+      this.db.prepare('INSERT INTO entries (entry_id, owner_id, service_id, label, created_at, account_name) VALUES (?1,?2,?3,?4,?5,?6)').bind(entryId,ownerId,serviceId,name,now,accountName),
     ]);
     return entryId;
   }
@@ -81,4 +82,4 @@ export class SourceEntryStore {
     const code=await this.cipher.decrypt(JSON.parse(row.envelope),{ownerId,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:entryId,receivedAt:row.received_at,expiresAt:row.expires_at});
     return {code,entryId,receivedAt:row.received_at,expiresAt:row.expires_at};
   }
-        }
+}

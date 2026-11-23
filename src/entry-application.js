@@ -1,11 +1,14 @@
 import { json,takeRateLimit } from './sessions.js';
 import { createEntryReadHandler } from './entry-tokens.js';
+import { createEntryManagement } from './entry-management.js';
 
 // The integrated entry application does not mount service-only foundation
 // routes or accept provider events from public HTTP callers. Connectors must
 // authenticate and normalize events before calling sources.receive internally.
-export function createEntryApplication({db,sessions,access,tokens,signIn,trustedRequestKey,clock=Date.now}){
+export function createEntryApplication({db,sessions,sources,metadata,access,tokens,signIn,trustedRequestKey,clock=Date.now}){
+ if(!db||!sessions||!access||!tokens||!signIn||typeof trustedRequestKey!=='function')throw new TypeError('Complete entry dependencies required');
  const reads=createEntryReadHandler({tokens,access,clock});
+ const management=createEntryManagement({db,sessions,sources,metadata,access,tokens,clock});
  return {async fetch(request){
   try{
    const url=new URL(request.url);
@@ -33,7 +36,7 @@ export function createEntryApplication({db,sessions,access,tokens,signIn,trusted
    if(url.pathname==='/v1/manage/logout'&&request.method==='POST'){
     await sessions.revoke(auth.sessionId);const response=json({ok:true});sessions.clearCookies(response.headers);return response;
    }
-   return json({error:'not_found'},404);
+   return await management.fetch(request,auth);
   }catch{return json({error:'unavailable'},503);}
  }};
 }
