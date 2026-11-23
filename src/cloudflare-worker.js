@@ -1,7 +1,5 @@
 import {json} from './sessions.js';
 import {cleanupIdentity} from './identity-cleanup.js';
-import {createIngressReadinessProbe,INGRESS_PROBE_PATH} from './ingress-readiness-probe.js';
-const ingressProbe=createIngressReadinessProbe();
 
 // Deployment bootstrap only. Authentication intentionally stays unavailable
 // until the separately reviewed cross-origin/passkey protocol is integrated.
@@ -16,7 +14,6 @@ export function createDeploymentWorker() {
     },
     async fetch(request, env) {
       const url = new URL(request.url);
-      if(url.pathname.startsWith(INGRESS_PROBE_PATH))return ingressProbe.fetch(request,env);
       if (url.pathname === '/health' && ['GET', 'HEAD'].includes(request.method)) {
         return json({service: 'otpanda-api', status: 'setup-required', authentication: 'disabled'}, 200);
       }
