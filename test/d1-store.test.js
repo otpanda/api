@@ -67,7 +67,7 @@ test('AES-GCM rejects ciphertext, tenant and metadata substitution; supports rea
     const value = typeof context[field] === 'number' ? context[field] + 1 : 'other';
     await assert.rejects(cipher.decrypt(envelope, { ...context, [field]: value }));
   }
-  await assert.rejects(cipher.decrypt({ ...envelope, ciphertext: 'A' + envelope.ciphertext.slice(1) }, context));
+  await assert.rejects(cipher.decrypt({ ...envelope, ciphertext: (envelope.ciphertext[0] === 'A' ? 'B' : 'A') + envelope.ciphertext.slice(1) }, context));
   const newKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
   const rotated = new CodeCipher({ keys: new Map([['v1', key], ['v2', newKey]]), activeKeyId: 'v2' });
   assert.equal(await rotated.decrypt(envelope, context), '123456');
