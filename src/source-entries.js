@@ -17,6 +17,11 @@ export class SourceEntryStore {
     await this.db.prepare('INSERT INTO sources (source_id, owner_id, kind, label, created_at) VALUES (?1,?2,?3,?4,?5)').bind(sourceId,id(ownerId),kind,label(name),now).run();
     return sourceId;
   }
+  async revokeSource(ownerId,sourceId,now){
+    [ownerId,sourceId].forEach(id);if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
+    const result=await this.db.prepare('UPDATE sources SET revoked_at=COALESCE(revoked_at,?1) WHERE owner_id=?2 AND source_id=?3').bind(now,ownerId,sourceId).run();
+    return result.meta.changes===1;
+  }
   async createEntry(ownerId, serviceId, name, now, {accountName=null}={}) {
     const entryId=crypto.randomUUID();
     // Unknown services work immediately. The generic display name is the

@@ -29,6 +29,10 @@ export function createEntryManagement({db,sessions,sources,metadata,access,token
    body=await bodyOf(request);
    // A session may expire while its body streams.
    if(!await sessions.authenticate(request,{mutation:true}))return json({error:'unauthorized'},401);
+   if(url.pathname==='/v1/manage/revoke-source'&&request.method==='POST'){
+    fields(body,['sourceId']);text(body.sourceId);
+    return await sources.revokeSource(auth.ownerId,body.sourceId,clock())?json({ok:true}):json({error:'not_found'},404);
+   }
    if(url.pathname==='/v1/manage/confirm-assignment'&&request.method==='POST'){
     fields(body,['sourceId','eventId','entryId']);for(const key of ['sourceId','eventId','entryId'])text(body[key]);
     return await sources.confirm(auth.ownerId,body.sourceId,body.eventId,body.entryId,clock())?json({ok:true}):json({error:'not_found'},404);
