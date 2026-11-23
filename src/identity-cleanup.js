@@ -2,7 +2,7 @@
 // No legacy session/OIDC path is mounted by this module.
 const TABLES=Object.freeze([
  ['browser_logout_bindings','expires_at'],['auth_challenges','expires_at'],['passkey_ceremonies','expires_at'],
- ['passkey_signups','expires_at'],['web_login_starts','expires_at'],
+ ['passkey_signups','expires_at'],['web_signup_starts','expires_at'],['signup_mail_bindings','expires_at'],['web_login_starts','expires_at'],
  ['web_login_handoffs','expires_at'],['browser_exchanges','expires_at'],
  ['device_access_handles','expires_at'],['incoming_codes','expires_at'],
  ['entry_tokens','expires_at'],['rate_buckets','resets_at'],
