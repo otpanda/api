@@ -1,16 +1,20 @@
-name: test
+name: API checks and deploy
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
-permissions: {}
+permissions:
+  contents: read
+concurrency:
+  group: api-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
   node-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - run: npm ci
@@ -18,3 +22,27 @@ jobs:
       - run: npm run build
       - run: npm run db:local
       - run: npm run db:local
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: node-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - name: Apply migrations and deploy API bootstrap
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo '::error::Cloudflare deployment secret is not provisioned.'
+            exit 1
+          fi
+          npm run deploy
