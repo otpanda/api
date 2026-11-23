@@ -5,13 +5,26 @@
   "compatibility_date": "2026-11-23",
   "workers_dev": true,
   "preview_urls": false,
-  "vars": {"DEPLOYMENT_STAGE": "bootstrap"},
-  "d1_databases": [{
-    "binding": "DB",
-    "database_name": "otpanda",
-    "database_id": "626cd908-0951-49cf-92a2-9a54cbbb40a8",
-    "migrations_dir": "migrations"
-  }],
-  "triggers": {"crons": ["*/15 * * * *"]},
-  "observability": {"enabled": false}
+  "vars": {
+    "DEPLOYMENT_STAGE": "bootstrap",
+    "GOOGLE_CLIENT_ID": "367143149550-560r90pmkqr71qp1tid3amck2a053rdg.apps.googleusercontent.com",
+    "BREVO_SENDER_EMAIL": "otpanda.app@gmail.com",
+    "BREVO_REPLY_TO_EMAIL": "otpanda.app@gmail.com"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "otpanda",
+      "database_id": "626cd908-0951-49cf-92a2-9a54cbbb40a8",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    "crons": [
+      "*/15 * * * *"
+    ]
+  },
+  "observability": {
+    "enabled": false
+  }
 }
