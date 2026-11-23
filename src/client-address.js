@@ -36,6 +36,10 @@ function ipv6(value) {
 // else; callers must treat that as unavailable, not as a shared bucket.
 export function canonicalClientAddress(value) {
   if (typeof value !== 'string') return undefined;
+  if (value.endsWith('/64')) {
+    const raw = value.slice(0, -3), canonical = canonicalClientAddress(raw);
+    return canonical === value ? canonical : undefined;
+  }
   if (!value || value.length > 45 || value !== value.trim() || /[\s%]/.test(value)) return undefined;
   if (value.includes('.')) {
     const mapped = /^::ffff:([^:]+)$/.exec(value.toLowerCase());
