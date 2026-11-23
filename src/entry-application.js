@@ -38,5 +38,14 @@ export function createEntryApplication({db,sessions,sources,metadata,access,toke
    }
    return await management.fetch(request,auth);
   }catch{return json({error:'unavailable'},503);}
- }};
+ },
+ async cleanup(){
+  const now=clock();
+  // Fixed identifiers only. Bounded batches prevent expiry work from taking
+  // unbounded time and make repeated housekeeping safe.
+  for(const [table,column] of [['incoming_codes','expires_at'],['sessions','expires_at'],['oauth_transactions','expires_at'],['entry_tokens','expires_at'],['rate_buckets','resets_at']]){
+   await db.prepare(`DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${column} <= ?1 LIMIT 100)`).bind(now).run();
+  }
+ }
+ };
 }
