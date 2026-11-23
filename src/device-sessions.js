@@ -8,7 +8,8 @@ const ACTIVE=`d.revoked_at IS NULL AND d.created_at <= ?3 AND d.expires_at > ?3 
 export class DeviceSessionService {
   constructor(db,{clock=Date.now}={}){this.db=db;this.clock=clock;}
   now(){const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw new TypeError('Valid instant required');return n;}
-  async issue({proof,clientKind}) {
+  async issue({proof,clientKind,browserBindingDigest=null}) {
+    if(browserBindingDigest!==null&&(clientKind!=='web'||!/^([a-f0-9]{64})$/.test(browserBindingDigest)))return undefined;
     let now=this.now();
     if(!['web','android','extension'].includes(clientKind)||!proof||proof.purpose!=='authenticate'||!Number.isSafeInteger(proof.verifiedAt)||proof.verifiedAt>now||now-proof.verifiedAt>=PROOF||!Number.isSafeInteger(proof.generation)||typeof proof.ownerId!=='string'||typeof proof.credentialId!=='string')return undefined;
     const deviceId=crypto.randomUUID(),refresh=await freshHandle(),access=await freshHandle();
@@ -17,7 +18,7 @@ export class DeviceSessionService {
     // The final write checks generation and revocation, closing the race after
     // signature verification. Child inserts require that exact device row.
     await this.db.batch([
-      this.db.prepare('INSERT INTO device_sessions (device_id,owner_id,credential_id,generation,client_kind,created_at,last_used_at,expires_at) SELECT ?1,?2,?3,?4,?5,?6,?6,?7 WHERE EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?3 AND p.owner_id=?2 AND p.revoked_at IS NULL AND s.generation=?4)').bind(deviceId,proof.ownerId,proof.credentialId,proof.generation,clientKind,now,now+IDLE),
+      this.db.prepare('INSERT INTO device_sessions (device_id,owner_id,credential_id,generation,client_kind,created_at,last_used_at,expires_at,browser_binding_digest) SELECT ?1,?2,?3,?4,?5,?6,?6,?7,?8 WHERE NOT EXISTS (SELECT 1 FROM browser_logout_bindings WHERE binding_digest=?8 AND expires_at>?6) AND EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?3 AND p.owner_id=?2 AND p.revoked_at IS NULL AND s.generation=?4)').bind(deviceId,proof.ownerId,proof.credentialId,proof.generation,clientKind,now,now+IDLE,browserBindingDigest),
       this.db.prepare('INSERT INTO device_refresh_handles (handle_id,secret_digest,device_id,created_at) SELECT ?1,?2,?3,?4 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(refresh.tokenId,refresh.digest,deviceId,now),
       this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(access.tokenId,access.digest,deviceId,now,now+ACCESS),
     ]);
@@ -50,6 +51,17 @@ export class DeviceSessionService {
     if(results[0].meta.changes!==1)return {status:'retry'};
     return {status:'rotated',deviceId:row.device_id,refresh:next.token,access:access.token,accessExpiresAt:now+ACCESS,refreshExpiresAt:now+IDLE};
   }
+  async logoutBrowser(refresh,browserBindingDigest=null) {
+    if(browserBindingDigest!==null&&!/^[a-f0-9]{64}$/.test(browserBindingDigest))throw new TypeError('Invalid browser binding');
+    const t=await tokenDigest(refresh),now=this.now();
+    // The tombstone and revocation share a transaction with device issuance.
+    // Either completion loses to the tombstone, or this revokes its device.
+    const results=await this.db.batch([
+      this.db.prepare('INSERT INTO browser_logout_bindings (binding_digest,expires_at) SELECT ?1,?2 WHERE ?1 IS NOT NULL ON CONFLICT(binding_digest) DO UPDATE SET expires_at=excluded.expires_at').bind(browserBindingDigest,now+300000),
+      this.db.prepare(`UPDATE device_sessions SET revoked_at=?3 WHERE revoked_at IS NULL AND client_kind='web' AND (browser_binding_digest=?4 OR device_id IN (SELECT device_id FROM device_refresh_handles WHERE handle_id=?1 AND secret_digest=?2 AND created_at<=?3))`).bind(t?.id??'',t?.digest??'',now,browserBindingDigest),
+    ]);
+    return results[1].meta.changes>0;
+  }
   async cleanup({limit=100}={}){
     if(!Number.isSafeInteger(limit)||limit<1||limit>500)throw new TypeError('Bounded cleanup required');const now=this.now();
     // Old spent handles beyond the inactivity window may be forgotten. Replay
@@ -62,4 +74,4 @@ export class DeviceSessionService {
   }
   async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes===1;}
   async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL').bind(this.now(),ownerId).run();return r.meta.changes;}
-                      }
+      }
