@@ -34,3 +34,19 @@ configurations.
 
 Native login, SMS enrollment and mail providers are not mounted by this module.
 GitHub Pages remains the isolated fictional-data UI preview, not an auth origin.
+
+## Host adapter
+
+`createHost` in `src/host.js` wraps an injected runtime initializer and optional
+asset binding. Each host instance has a separate initialization cache. Concurrent
+API requests share initialization; rejection clears that attempt for a later
+retry. The adapter checks the exact origin before routing. Reserved auth/API
+paths never fall through to static assets or an SPA. Static responses accept
+GET/HEAD only and do not initialize Google discovery just to load the UI.
+
+The host's scheduled method awaits bounded application cleanup and propagates
+failure to the scheduler. HTTP exceptions return only a generic no-store 503.
+This is still not a deployed Worker entrypoint: approved binding/key mapping,
+trusted metadata extraction, scheduled trigger and static-asset configuration
+are not invented here. A real deployment must ensure Cloudflare routes the
+reserved paths to the Worker first, rather than serving an SPA fallback.
