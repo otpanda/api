@@ -1,10 +1,17 @@
 import {json} from './sessions.js';
+import {cleanupIdentity} from './identity-cleanup.js';
 
 // Deployment bootstrap only. Authentication intentionally stays unavailable
 // until the separately reviewed cross-origin/passkey protocol is integrated.
 // No keys, identities, tokens or synthetic data are created by this handler.
 export function createDeploymentWorker() {
   return {
+    async scheduled(event,env,ctx) {
+      if(env?.DEPLOYMENT_STAGE!=='bootstrap'||!env?.DB?.prepare)return;
+      // Housekeeping only, no auth routes are enabled. Fixed per-table cap.
+      const work=cleanupIdentity({db:env.DB,limit:100});
+      if(ctx?.waitUntil)ctx.waitUntil(work);else await work;
+    },
     async fetch(request, env) {
       const url = new URL(request.url);
       if (url.pathname === '/health' && ['GET', 'HEAD'].includes(request.method)) {
