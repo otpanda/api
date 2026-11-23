@@ -10,7 +10,7 @@ function label(value) {
   return value;
 }
 export class SourceEntryStore {
-  constructor(db, cipher) { this.db=db; this.cipher=cipher; }
+  constructor(db, cipher, { matcher } = {}) { this.db=db; this.cipher=cipher; this.matcher=matcher; }
   async createSource(ownerId, kind, name, now) {
     if(!['gmail','outlook','sms'].includes(kind))throw new TypeError('Unsupported source kind');
     const sourceId=crypto.randomUUID();
@@ -19,7 +19,13 @@ export class SourceEntryStore {
   }
   async createEntry(ownerId, serviceId, name, now) {
     const entryId=crypto.randomUUID();
-    await this.db.prepare('INSERT INTO entries (entry_id, owner_id, service_id, label, created_at) VALUES (?1,?2,?3,?4,?5)').bind(entryId,id(ownerId),id(serviceId),label(name),now).run();
+    // Unknown services work immediately. The generic display name is the
+    // service identifier, never a caller-controlled overwrite of a catalog.
+    [ownerId,serviceId].forEach(id); label(name);
+    await this.db.batch([
+      this.db.prepare('INSERT INTO services (service_id,name) VALUES (?1,?1) ON CONFLICT(service_id) DO NOTHING').bind(serviceId),
+      this.db.prepare('INSERT INTO entries (entry_id, owner_id, service_id, label, created_at) VALUES (?1,?2,?3,?4,?5)').bind(entryId,ownerId,serviceId,name,now),
+    ]);
     return entryId;
   }
   async sourcesForOwner(ownerId) {
@@ -35,13 +41,16 @@ export class SourceEntryStore {
     await this.db.prepare('INSERT INTO assignment_rules (rule_id, owner_id, source_id, entry_id, sender, account_hint, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7)').bind(ruleId,id(ownerId),id(sourceId),id(entryId),id(sender),id(accountHint),now).run();
     return ruleId;
   }
-  async receive(ownerId, {sourceId,eventId,code,receivedAt,expiresAt,sender,accountHint}) {
+  async receive(ownerId, {sourceId,eventId,code,receivedAt,expiresAt,sender,receiver,accountHint}) {
     [ownerId,sourceId,eventId].forEach(id);
     if(typeof code!=='string' || !/^[A-Za-z0-9-]{4,32}$/.test(code) || !Number.isSafeInteger(receivedAt) || receivedAt<0 || !Number.isSafeInteger(expiresAt) || expiresAt<=receivedAt || expiresAt-receivedAt>86400000)throw new TypeError('Bounded code lifetime required');
     const source=await this.db.prepare('SELECT source_id FROM sources WHERE owner_id = ?1 AND source_id = ?2 AND revoked_at IS NULL').bind(ownerId,sourceId).first();
     if(!source)throw new Error('Source unavailable');
     let matches=[];
-    if(typeof sender==='string' && sender.length>0 && sender.length<=256 && typeof accountHint==='string' && accountHint.length>0 && accountHint.length<=256) {
+    if(this.matcher) {
+      const matched=await this.matcher.match(ownerId,{sourceId,receiver,sender,accountHint});
+      if(matched.entryId)matches=[{entry_id:matched.entryId}];
+    } else if(typeof sender==='string' && sender.length>0 && sender.length<=256 && typeof accountHint==='string' && accountHint.length>0 && accountHint.length<=256) {
       matches=(await this.db.prepare('SELECT DISTINCT entry_id FROM assignment_rules WHERE owner_id = ?1 AND source_id = ?2 AND sender = ?3 AND account_hint = ?4 LIMIT 2').bind(ownerId,sourceId,sender,accountHint).all()).results;
     }
     // A tie between entries is not a ranking problem. Keep it private and
@@ -72,4 +81,4 @@ export class SourceEntryStore {
     const code=await this.cipher.decrypt(JSON.parse(row.envelope),{ownerId,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:entryId,receivedAt:row.received_at,expiresAt:row.expires_at});
     return {code,entryId,receivedAt:row.received_at,expiresAt:row.expires_at};
   }
-  }
+        }
