@@ -33,6 +33,11 @@ export function createEntryApplication({db,sessions,sources,metadata,access,toke
     if(!await sessions.authenticate(request))return json({error:'unauthorized'},401);
     return json({records:records.filter(record=>record.expiresAt>clock())});
    }
+   if(url.pathname==='/v1/manage/active-codes'&&request.method==='GET'){
+    const records=await access.activeRecent(auth.ownerId,clock());
+    if(!await sessions.authenticate(request))return json({error:'unauthorized'},401);
+    return json({records:records.filter(record=>record.receivedAt<=clock()&&record.expiresAt>clock())});
+   }
    if(url.pathname==='/v1/manage/entry-code'&&request.method==='GET'){
     const record=await access.latest(auth.ownerId,url.searchParams.get('entry'),clock());
     if(!await sessions.authenticate(request))return json({error:'unauthorized'},401);
