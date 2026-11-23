@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import worker from '../src/cloudflare-worker.js';
+import worker,{createDeploymentWorker} from '../src/cloudflare-worker.js';
 import {database} from './sqlite-helper.js';
 
 test('deployment health reports setup status without claiming working auth',async()=>{
@@ -15,7 +15,7 @@ test('deployment health reports setup status without claiming working auth',asyn
 test('deployment readiness checks migrated database and never creates records',async()=>{
  const db=database();
  try{
-  assert.equal((await worker.fetch(new Request('https://api.test/ready'),{DB:db,DEPLOYMENT_STAGE:'bootstrap'})).status,200);
+  assert.equal((await worker.fetch(new Request('https://api.test/ready'),{DB:db,DEPLOYMENT_STAGE:'bootstrap',ACTIVE_KEY_ID:'synthetic',ENCRYPTION_KEYRING:JSON.stringify([{id:'synthetic',key:'CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws'}])})).status,200);
   for(const table of ['accounts','identities','sources','entries','entry_shares','entry_tokens','service_routes']){
    assert.equal(db.sqlite.prepare(`SELECT count(*) AS n FROM ${table}`).get().n,0);
   }
@@ -52,3 +52,7 @@ test('scheduled housekeeping rejects wrong deployment stage without touching DB'
  for(const env of [undefined,{}, {DEPLOYMENT_STAGE:'active',DB:{prepare(){throw Error('must not run');}}}])await worker.scheduled({},env);
 });
 test('removed ingress probe stays404 and auth remains disabled',async()=>{for(const path of ['/setup-check/471ab8b4-f3c0-44e9-9ffb-dff4d6ab90ea/direct','/setup-check/471ab8b4-f3c0-44e9-9ffb-dff4d6ab90ea/subrequest'])assert.equal((await worker.fetch(new Request('https://otpanda-api.abrahammurciano.workers.dev'+path),{DEPLOYMENT_STAGE:'bootstrap'})).status,404);});
+
+test('readiness validates key import generically without replacement persistence or health dependency',async()=>{const valid={ACTIVE_KEY_ID:'synthetic',ENCRYPTION_KEYRING:JSON.stringify([{id:'synthetic',key:'CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws'}])};for(const c of [{},valid,{...valid,ACTIVE_KEY_ID:'missing'},{...valid,ENCRYPTION_KEYRING:'private-synthetic-malformed'}]){const db=database(),w=createDeploymentWorker(),env={DB:db,DEPLOYMENT_STAGE:'bootstrap',...c};try{const r=await w.fetch(new Request('https://api.test/ready'),env);assert.equal(r.status,c===valid?200:503);const result=await r.json();assert.equal(JSON.stringify(result).includes('synthetic'),false);if(c!==valid)assert.deepEqual(result,{error:'unavailable'});assert.equal((await w.fetch(new Request('https://api.test/health'),env)).status,200);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM accounts').get().n,0);assert.equal((await w.fetch(new Request('https://api.test/auth/login/start'),env)).status,503);}finally{db.sqlite.close();}}});
+test('changed readiness key configuration fails closed until deployment, health unaffected',async()=>{const w=createDeploymentWorker(),db=database(),env={DB:db,DEPLOYMENT_STAGE:'bootstrap',ACTIVE_KEY_ID:'synthetic',ENCRYPTION_KEYRING:JSON.stringify([{id:'synthetic',key:'CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws'}])};try{assert.equal((await w.fetch(new Request('https://api.test/ready'),env)).status,200);assert.equal((await w.fetch(new Request('https://api.test/ready'),{...env,ACTIVE_KEY_ID:'changed'})).status,503);assert.equal((await w.fetch(new Request('https://api.test/health'))).status,200);}finally{db.sqlite.close();}});
+test('missing value does not poison readiness snapshot when valid config later arrives',async()=>{const db=database(),w=createDeploymentWorker(),env={DB:db,DEPLOYMENT_STAGE:'bootstrap',ACTIVE_KEY_ID:'synthetic',ENCRYPTION_KEYRING:JSON.stringify([{id:'synthetic',key:'CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws'}])};env.ENCRYPTION_KEYRING=JSON.stringify([{id:'synthetic',key:Buffer.alloc(32,11).toString('base64url')}]);try{assert.equal((await w.fetch(new Request('https://api.test/ready'),{DB:db,DEPLOYMENT_STAGE:'bootstrap'})).status,503);const r=await w.fetch(new Request('https://api.test/ready'),env);assert.equal(r.status,200);assert.equal((await r.json()).keyring,'valid-format');}finally{db.sqlite.close();}});
