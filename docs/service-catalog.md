@@ -18,3 +18,11 @@ Expired/future evidence is ignored. The snapshot is copied so caller mutations c
 - Show suggestions in the owner-private unassigned-code workflow, distinct from provider authentication and explicit per-source account routing.
 
 Neither public crawling nor suggestion UI/data collection is enabled by this module. Existing source authentication, account discrimination and selected-entry sharing remain unchanged.
+
+## Offline directory adapter
+
+`importDirectoryV3` consumes a previously fetched UTF-8 JSON snapshot, at most4MiB/5000rows. It extracts only service names and ASCII website hosts. Contact emails, documentation text/URLs, notes and alternate domains are deliberately ignored, so the import creates zero sender mappings. Invalid rows are reported by index without echoing text. Conflicting duplicate identities stop the import. Output uses bounded1000-service shards without dropping overflow records, stable ordering, attribution, fixed source URL and supplied fetch timestamp/SHA-256. The caller must compute the supplied hash from those bytes. It is provenance, not a signature-validation claim; `signatureVerified` remains false.
+
+The official API guidance at https://2fa.directory/api documents supported v3 (names included) and v4 (names removed), MIT attribution, caching and signed datasets. A live unsigned v3 snapshot from https://2fa.directory/api/v3/all.json was locally imported on23November2026:2575 services,0 rejected rows,3shards. This was a development smoke test, not a bundled live catalog, background refresh or signature-verified source. No official-support sender mappings were inferred from it.
+
+SMS format reference: https://www.twilio.com/docs/messaging/services/alphanumeric-sender-ids-in-messaging-services. The engine accepts a conservative ASCII subset rather than guessing carrier rewriting or fuzzy-equivalent names.
