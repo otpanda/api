@@ -45,10 +45,10 @@ test('cross-owner source, rules, confirmation and code reads fail closed',async(
  await assert.rejects(store.receive('b',incoming));
  await assert.rejects(store.addRule('a',{sourceId:phone,entryId:foreign,sender:'sender',accountHint:'personal'},NOW));
  await store.receive('a',incoming);
- assert.equal(await store.confirm('b',phone,incoming.eventId,foreign),false);
- assert.equal(await store.confirm('a',phone,incoming.eventId,foreign),false);
- assert.equal(await store.confirm('a',phone,incoming.eventId,personal),true);
- assert.equal(await store.confirm('a',phone,incoming.eventId,personal),false);
+ assert.equal(await store.confirm('b',phone,incoming.eventId,foreign,NOW),false);
+ assert.equal(await store.confirm('a',phone,incoming.eventId,foreign,NOW),false);
+ assert.equal(await store.confirm('a',phone,incoming.eventId,personal,NOW),true);
+ assert.equal(await store.confirm('a',phone,incoming.eventId,personal,NOW),false);
  assert.equal(await store.latestOwned('b',personal,NOW),undefined);
  assert.equal((await store.latestOwned('a',personal,NOW)).code,'123456');
  db.sqlite.close();
@@ -56,7 +56,7 @@ test('cross-owner source, rules, confirmation and code reads fail closed',async(
 test('provider-event replay cannot overwrite or reassign a code; revocation blocks new ingestion',async()=>{
  const {db,store,phone,personal,incoming}=await setup();
  await store.receive('a',incoming);
- assert.equal(await store.confirm('a',phone,incoming.eventId,personal),true);
+ assert.equal(await store.confirm('a',phone,incoming.eventId,personal,NOW),true);
  assert.equal((await store.receive('a',{...incoming,code:'999999'})).inserted,false);
  assert.equal((await store.latestOwned('a',personal,NOW)).code,'123456');
  assert.equal(await store.latestOwned('a',personal,NOW+1000),undefined);
