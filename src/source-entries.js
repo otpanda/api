@@ -92,11 +92,25 @@ export class SourceEntryStore {
     return result;
   }
 
+  // Bounded session feed. Decrypt first, then validate each exact envelope,
+  // source and current entry permission. At most 21 DB queries for 20 codes.
+  async activeForActor(actorId,now){
+    id(actorId);if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
+    const permitted='(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
+    const rows=(await this.db.prepare(`SELECT * FROM (SELECT c.owner_id,c.entry_id,c.source_id,c.event_id,c.envelope,c.received_at,c.expires_at,ROW_NUMBER() OVER (PARTITION BY c.entry_id ORDER BY c.received_at DESC,c.event_id DESC) AS position FROM incoming_codes c JOIN entries e ON e.entry_id=c.entry_id AND e.owner_id=c.owner_id JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.received_at<=?2 AND c.expires_at>?2 AND s.revoked_at IS NULL AND ${permitted}) WHERE position=1 ORDER BY received_at DESC,entry_id LIMIT 20`).bind(actorId,now).all()).results;
+    const decoded=[];
+    for(const row of rows){const code=await this.cipher.decrypt(JSON.parse(row.envelope),{ownerId:row.owner_id,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:row.entry_id,receivedAt:row.received_at,expiresAt:row.expires_at});decoded.push({row,code});}
+    const records=[];
+    for(const {row,code} of decoded){const current=await this.db.prepare(`SELECT c.event_id FROM incoming_codes c JOIN entries e ON e.entry_id=c.entry_id AND e.owner_id=c.owner_id JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.owner_id=?2 AND c.source_id=?3 AND c.event_id=?4 AND c.entry_id=?5 AND c.envelope=?6 AND s.revoked_at IS NULL AND ${permitted}`).bind(actorId,row.owner_id,row.source_id,row.event_id,row.entry_id,row.envelope).first();if(current)records.push({entryId:row.entry_id,code,receivedAt:row.received_at,expiresAt:row.expires_at});}
+    return records;
+  }
+
   async latestOwned(ownerId, entryId, now) {
     if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
-    const row=await this.db.prepare('SELECT c.event_id,c.source_id,c.envelope,c.received_at,c.expires_at FROM incoming_codes c JOIN entries e ON e.owner_id = c.owner_id AND e.entry_id = c.entry_id WHERE c.owner_id = ?1 AND c.entry_id = ?2 AND c.received_at <= ?3 AND c.expires_at > ?3 ORDER BY c.received_at DESC, c.event_id DESC LIMIT 1').bind(id(ownerId),id(entryId),now).first();
+    const row=await this.db.prepare('SELECT c.event_id,c.source_id,c.envelope,c.received_at,c.expires_at FROM incoming_codes c JOIN entries e ON e.owner_id = c.owner_id AND e.entry_id = c.entry_id JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.owner_id = ?1 AND c.entry_id = ?2 AND c.received_at <= ?3 AND c.expires_at > ?3 AND s.revoked_at IS NULL ORDER BY c.received_at DESC, c.event_id DESC LIMIT 1').bind(id(ownerId),id(entryId),now).first();
     if(!row)return undefined;
     const code=await this.cipher.decrypt(JSON.parse(row.envelope),{ownerId,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:entryId,receivedAt:row.received_at,expiresAt:row.expires_at});
-    return {code,entryId,receivedAt:row.received_at,expiresAt:row.expires_at};
+    const current=await this.db.prepare('SELECT c.event_id FROM incoming_codes c JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.owner_id=?1 AND c.source_id=?2 AND c.event_id=?3 AND c.entry_id=?4 AND c.envelope=?5 AND s.revoked_at IS NULL').bind(ownerId,row.source_id,row.event_id,entryId,row.envelope).first();
+    return current?{code,entryId,receivedAt:row.received_at,expiresAt:row.expires_at}:undefined;
   }
 }
