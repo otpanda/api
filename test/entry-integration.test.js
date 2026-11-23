@@ -1,0 +1,68 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {database} from './sqlite-helper.js';
+import {CodeCipher} from '../src/code-cipher.js';
+import {SourceEntryStore} from '../src/source-entries.js';
+import {ServiceMetadata} from '../src/service-metadata.js';
+import {EntryAccess} from '../src/entry-access.js';
+import {EntryTokenStore} from '../src/entry-tokens.js';
+import {SessionService,SESSION_COOKIE} from '../src/sessions.js';
+import {createEntryApplication} from '../src/entry-application.js';
+const NOW=1800000000000;
+test('synthetic multi-source to shared entry to browser/API flow, with no legacy-route bypass',async()=>{
+ const db=database();for(const owner of ['a','b'])await db.prepare('INSERT INTO accounts VALUES (?,?)').bind(owner,NOW).run();
+ const key=await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+ const metadata=new ServiceMetadata(db);
+ const sources=new SourceEntryStore(db,new CodeCipher({keys:new Map([['test',key]]),activeKeyId:'test'}),{matcher:metadata});
+ const access=new EntryAccess(db,sources),tokens=new EntryTokenStore(db,access);
+ const sessions=new SessionService(db,{origin:'https://app.test',clock:()=>NOW});
+ const app=createEntryApplication({db,sessions,sources,access,tokens,signIn:{},trustedRequestKey:()=> 'test-platform',clock:()=>NOW});
+ const entry=await sources.createEntry('a','new-service.test','Household',NOW);
+ assert.equal(db.sqlite.prepare('SELECT name FROM services WHERE service_id=?').get('new-service.test').name,'new-service.test');
+ await metadata.setEntryAccount('a',entry,'Shared account');
+ const phone=await sources.createSource('a','sms','Phone',NOW);
+ await metadata.setReceiver('a',phone,'+12025550199');
+ await metadata.addRoute('a',{serviceId:'new-service.test',sourceId:phone,originKind:'sms_number',originValue:'+12025550123',entryId:entry});
+ const event={sourceId:phone,eventId:'one',code:'123456',receivedAt:NOW,expiresAt:NOW+1000,receiver:'+12025550199',sender:'+12025550123'};
+ await sources.receive('a',event);
+ // A legacy rule cannot rescue an event rejected by the typed receiver route.
+ await sources.addRule('a',{sourceId:phone,entryId:entry,sender:'+12025550123',accountHint:'legacy'},NOW);
+ assert.equal((await sources.receive('a',{...event,eventId:'wrong-receiver',receiver:'+12025550198',accountHint:'legacy'})).entryId,null);
+ // Creating another entry cannot overwrite curated service presentation.
+ await metadata.putService('new-service.test',{name:'Known service',iconKey:'known'});
+ await sources.createEntry('a','new-service.test','Second account',NOW);
+ assert.equal(db.sqlite.prepare('SELECT name FROM services WHERE service_id=?').get('new-service.test').name,'Known service');
+ await access.share('a',entry,'b',{},NOW);
+ const session=await sessions.issue('b');
+ const browser=path=>new Request('https://app.test'+path,{headers:{cookie:SESSION_COOKIE+'='+session.session}});
+ const entries=await(await app.fetch(browser('/v1/manage/entries'))).json();
+ assert.equal(entries.entries[0].account_name,'Shared account');
+ assert.equal(JSON.stringify(entries).includes('+12025550199'),false);
+ assert.equal((await app.fetch(browser('/v1/manage/entry-code?entry='+entry))).status,200);
+ assert.equal(await tokens.mint('b',entry,'agent',1000,NOW),undefined);
+ await access.share('a',entry,'b',{allowAutomation:true},NOW);
+ const token=await tokens.mint('b',entry,'agent',1000,NOW);
+ const api=path=>new Request('https://app.test'+path,{headers:{authorization:'Bearer '+token.token}});
+ assert.equal((await app.fetch(api('/v1/entries/code?entry='+entry))).status,200);
+ assert.equal((await app.fetch(api('/v1/codes/latest?service=new-service.test'))).status,404);
+ await access.revoke('a',entry,'b',NOW);
+ assert.equal((await app.fetch(api('/v1/entries/code?entry='+entry))).status,401);
+ assert.equal((await app.fetch(browser('/v1/manage/entry-code?entry='+entry))).status,404);
+ assert.equal((await(await app.fetch(browser('/v1/manage/entries'))).json()).entries.length,0);
+ db.sqlite.close();
+});
+
+test('integrated application rejects cross-origin, anonymous and CSRF-less requests',async()=>{
+ const db=database();await db.prepare('INSERT INTO accounts VALUES (?,?)').bind('a',NOW).run();
+ const sessions=new SessionService(db,{origin:'https://app.test',clock:()=>NOW});
+ const app=createEntryApplication({db,sessions,access:{},tokens:{},signIn:{},trustedRequestKey:()=> 'boundary',clock:()=>NOW});
+ const issued=await sessions.issue('a');
+ assert.equal((await app.fetch(new Request('https://other.test/v1/manage/entries'))).status,404);
+ assert.equal((await app.fetch(new Request('https://app.test/v1/manage/entries'))).status,401);
+ assert.equal((await app.fetch(new Request('https://app.test/v1/manage/logout',{method:'POST',headers:{cookie:SESSION_COOKIE+'='+issued.session}}))).status,401);
+ const logout=await app.fetch(new Request('https://app.test/v1/manage/logout',{method:'POST',headers:{cookie:SESSION_COOKIE+'='+issued.session,origin:'https://app.test','x-otpanda-csrf':issued.csrf}}));
+ assert.equal(logout.status,200);assert.equal(await sessions.authenticate(new Request('https://app.test/',{headers:{cookie:SESSION_COOKIE+'='+issued.session}})),undefined);
+ const unavailable=createEntryApplication({db,sessions,access:{},tokens:{},signIn:{},trustedRequestKey:()=>null,clock:()=>NOW});
+ assert.equal((await unavailable.fetch(new Request('https://app.test/health'))).status,503);
+ db.sqlite.close();
+});
