@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { database } from './sqlite-helper.js';
 import { AccountIdentityService } from '../src/account-identity.js';
 import { PasskeySignupService } from '../src/passkey-signup.js';
+import { PasskeyVerifier } from '../src/passkey-verifier.js';
 import { authenticator } from './passkey-fixture.js';
 const NOW=1_800_000_000_000,binding='signup-browser-binding';
 function setup(){const db=database();let now=NOW;const identity=new AccountIdentityService(db,{clock:()=>now}),service=new PasskeySignupService(db,{clock:()=>now});async function begin(email='a@example.com'){const {token}=await identity.issueEmailChallenge({purpose:'signup-email',email});return service.begin({email,emailToken:token,binding});}return {db,service,identity,begin,setNow:v=>now=v};}
@@ -31,4 +32,10 @@ test('duplicate email or credential rolls back every candidate account row',asyn
 test('storage failure mid-batch rolls back account/email/security and consumes signup',async()=>{
  const {db,service,begin}=setup(),c=await begin();db.sqlite.exec("CREATE TRIGGER reject_credential BEFORE INSERT ON passkey_credentials BEGIN SELECT RAISE(ABORT, 'test storage failure'); END;");
  const args={token:c.token,binding,response:response(authenticator(),c)};assert.equal(await service.finish(args),undefined);assert.deepEqual(counts(db),[0,0,0,0]);assert.equal(await service.finish(args),undefined);db.sqlite.close();
+});
+
+test('signup expiration during verification creates no account',async()=>{
+ const {db,service,begin,setNow}=setup(),c=await begin(),a=authenticator(),actual=new PasskeyVerifier();
+ service.verifier={verifyRegistration:async args=>{const result=await actual.verifyRegistration(args);setNow(NOW+120000);return result;}};
+ assert.equal(await service.finish({token:c.token,binding,response:response(a,c)}),undefined);assert.deepEqual(counts(db),[0,0,0,0]);db.sqlite.close();
 });
