@@ -12,13 +12,17 @@ const paths=new Set([
  '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session',
 ]);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
- let owner,configured=false,invalid=false;
- const signupAllowed=email=>!invalid&&configured&&email===owner;
+ let owner,mode,configured=false,invalid=false;
+ const signupAllowed=email=>!invalid&&configured&&(mode==='public'||email===owner);
  const configure=env=>{
-  let current;try{current=canonicalAccountEmail(env.AUTH_ONLY_SIGNUP_EMAIL);}catch{invalid=true;}
-  if(!current||(configured&&current!==owner))invalid=true;
+  const currentMode=env.AUTH_ONLY_SIGNUP_MODE??'owner';
+  let current;
+  if(currentMode==='owner'){try{current=canonicalAccountEmail(env.AUTH_ONLY_SIGNUP_EMAIL);}catch{invalid=true;}}
+  else if(currentMode==='public'){if(env.AUTH_ONLY_SIGNUP_EMAIL!==undefined)invalid=true;}
+  else invalid=true;
+  if((currentMode==='owner'&&!current)||(configured&&(currentMode!==mode||current!==owner)))invalid=true;
   if(invalid)return false;
-  if(!configured){owner=current;configured=true;}
+  if(!configured){owner=current;mode=currentMode;configured=true;}
   return true;
  };
  const browser=createBrowserWorkerAdapter({resolveTrustedIngress:resolveCloudflareDirectIngress,fetchImpl,clock,signupAllowed});
@@ -39,8 +43,8 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
     }catch{return json({error:'unavailable'},503);}
    }
    if(!paths.has(url.pathname))return json({error:'not_found'},404);
-   // No implicit public-registration mode. Existing isolates latch configuration
-   // and refuse changes instead of silently changing the allowed identity.
+   // Public registration requires an explicit mode with no owner binding.
+   // Existing isolates latch policy and refuse runtime scope changes.
    if(url.pathname.startsWith('/auth/signup/')&&request.method!=='OPTIONS') {
     if(!configure(env))return json({error:'setup_required'},503);
    }
