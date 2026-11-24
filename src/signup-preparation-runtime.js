@@ -1,3 +1,4 @@
+import {createAppSignupHttp} from './app-signup-http.js';
 // Unmounted composition. Runtime owner must supply trusted provider address and
 // waitUntil. No request header is promoted to trusted metadata here.
 import{SignupEmailService}from'./signup-email.js';import{PasskeySignupService}from'./passkey-signup.js';import{SignupHandoffService}from'./signup-handoff.js';import{WebLoginHandoffService}from'./web-login-handoff.js';import{DeviceSessionService}from'./device-sessions.js';import{BrowserExchangeService}from'./browser-exchanges.js';import{createSignupHttp}from'./signup-http.js';
@@ -16,6 +17,6 @@ export function createSignupPreparationRuntime({db,deliver,clock=Date.now,maxDef
    active++;const pending=Promise.resolve().then(work).catch(()=>{}).finally(()=>{active--;});
    try{waitUntil(pending);}catch{ /* Work already scheduled remains bounded. */ }
   };
-  return createSignupHttp({db,signupEmail,handoff,clock,defer}).fetch(request,{clientAddress});
+  const factory=new URL(request.url).pathname==='/auth/signup/app'?createAppSignupHttp:createSignupHttp;return factory({db,signupEmail,handoff,clock,defer}).fetch(request,{clientAddress});
  }};
 }
