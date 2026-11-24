@@ -12,7 +12,7 @@ async function setup(){
  const db=database();for(const owner of ['a','b'])await db.prepare('INSERT INTO accounts VALUES (?,?)').bind(owner,NOW).run();
  const sessions=new SessionService(db,{origin:'https://app.test',clock:()=>NOW});
  const sources=new SourceEntryStore(db,{}),metadata=new ServiceMetadata(db),access=new EntryAccess(db,sources),tokens=new EntryTokenStore(db,access);
- const app=createEntryApplication({db,sessions,sources,metadata,access,tokens,signIn:{},trustedRequestKey:()=> 'management',clock:()=>NOW});
+ const app=createEntryApplication({db,sessions,sources,metadata,access,tokens,trustedRequestKey:()=> 'management',clock:()=>NOW});
  const issued={a:await sessions.issue('a'),b:await sessions.issue('b')};
  const req=(actor,path,method='GET',body,extra={})=>new Request('https://app.test/v1/manage/'+path,{method,headers:{cookie:SESSION_COOKIE+'='+issued[actor].session,origin:'https://app.test','x-otpanda-csrf':issued[actor].csrf,'content-type':'application/json',...extra},body:body===undefined?undefined:JSON.stringify(body)});
  return {db,sessions,sources,metadata,access,tokens,app,req};
