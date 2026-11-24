@@ -47,6 +47,9 @@ test('expired/future ceremonies and failed registration fail closed without cred
 test('revocation during signature verification wins and revoked IDs cannot enroll again',async()=>{
  const {db,owner,other,service,enroll,assertion}=await setup(),a=await enroll();
  assert.equal(await service.revoke({ownerId:other,credentialId:a.credential.id}),false);
+ // The last passkey is only revocable while a Google link remains (no lockout).
+ assert.equal(await service.revoke({ownerId:owner,credentialId:a.credential.id}),false);
+ db.sqlite.prepare("INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) VALUES('g',?,'google','https://accounts.google.com','s','x@example.com',1)").run(owner);
  const actual=new PasskeyVerifier();service.verifier={verifyAuthentication:async args=>{const result=await actual.verifyAuthentication(args);await service.revoke({ownerId:owner,credentialId:a.credential.id});return result;},authenticationOptions:args=>actual.authenticationOptions(args)};
  assert.equal(await service.finishAuthentication(await assertion(a)),undefined);assert.deepEqual(await service.active(owner),[]);
  service.verifier=actual;const c=await service.begin({purpose:'register',ownerId:owner,binding,action:'add-passkey'});assert.equal(await service.finishRegistration({token:c.token,ownerId:owner,binding,action:'add-passkey',response:a.registration({expected:c.options.challenge})}),false);db.sqlite.close();
