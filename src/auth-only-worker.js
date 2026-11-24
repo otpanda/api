@@ -1,5 +1,9 @@
 // Public auth-only deployment entry. Interactive screens belong to the app.
 // Auth-only is deliberately smaller than the complete browser adapter.
+import {deliverRecoveryNotifications,drainRecoveryCodeJobs,recoveryDeliveryHealth,expireRecoveryCodeJobs} from './recovery-notifier.js';
+import {CodeCipher} from './code-cipher.js';
+import {importBrowserKeyring} from './browser-keyring.js';
+import {createRecoveryNotificationDelivery,createRecoveryMailDelivery} from './recovery-mail-transport.js';
 import {createBrowserWorkerAdapter} from './browser-worker-adapter.js';
 import {resolveCloudflareDirectIngress} from './cloudflare-ingress.js';
 import {cleanupIdentity} from './identity-cleanup.js';
@@ -7,7 +11,7 @@ import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
 import {appFailure} from './silent-bridge.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
-const paths=new Set([...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
+const paths=new Set([...['status','begin','finish','request-change','approve-begin','approve-change','consume-change','cancel-request'].map(p=>'/v1/manage/recovery/'+p),...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>'/auth/recovery/email/'+p),...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
  '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
  '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
@@ -33,14 +37,15 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
    if(url.origin!==API)return json({error:'not_found'},404);
    // Stage must be deliberate; no flag value can widen the route list.
    if(env?.DEPLOYMENT_STAGE!=='auth-only')return json({error:'setup_required'},503);
-   if(url.pathname==='/health'&&['GET','HEAD'].includes(request.method))return json({service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-read-only',sources:'authenticated-read-only',recovery:'unavailable'},200);
+   if(url.pathname==='/health'&&['GET','HEAD'].includes(request.method))return json({service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-read-only',sources:'authenticated-read-only',recovery:'email-escape-opt-in',enrolledClientApproval:'unavailable'},200);
    if(url.pathname==='/ready'&&request.method==='GET') {
     try {
      if(!env.DB?.prepare || !['SIGNUP_ADDRESS_LIMIT','SIGNUP_GLOBAL_LIMIT','SIGNUP_VERIFY_ADDRESS_LIMIT','SIGNUP_VERIFY_GLOBAL_LIMIT','IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT'].every(k=>typeof env[k]?.limit==='function'))throw Error();
      if(!configure(env))throw Error();
      if(typeof env.BREVO_API_KEY!=='string'||!env.BREVO_API_KEY||env.BREVO_SENDER_EMAIL!=='otpanda.app@gmail.com'||env.BREVO_REPLY_TO_EMAIL!=='otpanda.app@gmail.com')throw Error();
      await env.DB.prepare('SELECT c.challenge_id FROM auth_challenges c LEFT JOIN device_sessions d ON d.owner_id=c.owner_id LEFT JOIN signup_mail_bindings s ON s.proof_id=c.challenge_id WHERE 0').all();
-     return json({service:'otpanda-api',stage:'auth-only',database:'available',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged'},200);
+     const recoveryDelivery=await recoveryDeliveryHealth({db:env.DB,clock});
+     return json({service:'otpanda-api',stage:'auth-only',database:'available',recoveryDelivery:(recoveryDelivery.deadNotifications+recoveryDelivery.deadCodeJobs)>0?'attention':'ok',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged'},200);
     }catch{return json({error:'unavailable'},503);}
    }
    if(!paths.has(url.pathname))return json({error:'not_found'},404);
@@ -58,7 +63,9 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
   },
   async scheduled(event,env,ctx) {
    if(env?.DEPLOYMENT_STAGE!=='auth-only'||!env.DB?.prepare)return;
-   const work=cleanupIdentity({db:env.DB,clock,limit:100});
+   // Classify lapsed jobs as expired failures BEFORE cleanup can delete them,
+   // then log counts only (no ids, addresses or codes) when anything is dead.
+   const work=(async()=>{await expireRecoveryCodeJobs({db:env.DB,clock}).catch(()=>{});const h=await recoveryDeliveryHealth({db:env.DB,clock}).catch(()=>undefined);if(h&&(h.deadNotifications||h.deadCodeJobs))console.warn('recovery-delivery-attention',JSON.stringify(h));return Promise.all([cleanupIdentity({db:env.DB,clock,limit:100}),env.BREVO_API_KEY?deliverRecoveryNotifications({db:env.DB,clock,deliver:createRecoveryNotificationDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10}):undefined,env.BREVO_API_KEY?(async()=>{try{await drainRecoveryCodeJobs({db:env.DB,clock,cipher:new CodeCipher(await importBrowserKeyring(env)),deliver:createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10});}catch{}})():undefined]);})();
    if(ctx?.waitUntil)ctx.waitUntil(work);else await work;
   },
  };
