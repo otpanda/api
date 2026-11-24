@@ -57,11 +57,12 @@ export class BrevoMailTransport {
   }
   toString() { return 'BrevoMailTransport(redacted)'; }
   toJSON() { return {transport: 'brevo', configuration: 'redacted'}; }
-  async submit({to, subject, text} = {}) {
+  async submit({to, subject, text, html} = {}) {
     const recipient = canonicalAccountEmail(to);
     subject = boundedText(subject, 160);
     text = boundedText(text, 16000, true);
-    const payload = JSON.stringify({sender: {email: this.#sender, name: 'OTPanda'}, replyTo: {email: this.#replyTo}, to: [{email: recipient}], subject, textContent: text});
+    if (html !== undefined) html = boundedText(html, 20000, true);
+    const payload = JSON.stringify({sender: {email: this.#sender, name: 'OTPanda'}, replyTo: {email: this.#replyTo}, to: [{email: recipient}], subject, textContent: text, ...(html === undefined ? {} : {htmlContent: html})});
     if (new TextEncoder().encode(payload).byteLength > 32768) throw new TypeError('Email payload too large');
     const controller = new AbortController();
     let timer;
