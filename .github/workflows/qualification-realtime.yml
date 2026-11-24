@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: 37cebd42a71e707e69e72c40ed3f3227fc61a006
+          ref: 4e9cf4f643eccfbdafb4e1492f9ff77f90beb295
           path: harness
           persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
