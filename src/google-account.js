@@ -10,9 +10,10 @@ export class GoogleAccountService {
   if(existing)return {status:'linked',ownerId:existing.owner_id,generation:existing.generation};
   const legacy=await this.db.prepare('SELECT owner_id FROM identities WHERE issuer=?1 AND subject=?2').bind(identity.issuer,identity.subject).first();if(legacy)return {status:'legacy-account'};
   const owner=await this.db.prepare('SELECT owner_id FROM account_mailbox_keys WHERE mailbox_key=?1').bind(mailboxKey(email)).first();if(owner){const raced=await this.db.prepare('SELECT i.owner_id,s.generation FROM provider_identities i JOIN account_security s ON s.owner_id=i.owner_id WHERE i.revoked_at IS NULL AND i.issuer=?1 AND i.subject=?2 AND i.owner_id=?3').bind(identity.issuer,identity.subject,owner.owner_id).first();return raced?{status:'linked',ownerId:raced.owner_id,generation:raced.generation}:{status:'existing-account'};}
-  // External mailbox ownership is not current merely because Google once
-  // verified it. Return app email verification, not a silent signup.
-  if(!identity.authoritative)return{status:'verify-email'};
+  // Product policy accepts the validated Google identity's verified-email
+  // claim for new account signup, including external Google mailboxes.
+  // Existing-email collisions above still require exact-owner linking proof.
+  // Provider subject, never email, remains the login credential.
   const ownerId=crypto.randomUUID(),now=this.clock();if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid instant required');
   try{
    await this.db.batch([
