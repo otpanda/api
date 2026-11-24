@@ -52,7 +52,7 @@ export class PersonalOrganizationStore {
    this.#db.prepare(`INSERT INTO personal_organization(viewer_id,revision,document,updated_at) SELECT ?1,0,'{"tags":[],"entries":[]}',?2 WHERE ${sessionGuard(3,2)} ON CONFLICT(viewer_id) DO NOTHING`).bind(viewerId,now,guardValue),
    this.#db.prepare(`UPDATE personal_organization SET revision=revision+1,document=?2,updated_at=?3 WHERE viewer_id=?1 AND revision=?4 AND ${sessionGuard(5,3)} AND NOT EXISTS(SELECT 1 FROM json_each(?2,'$.entries') p WHERE NOT ${ACCESS})`).bind(viewerId,document,now,expectedRevision,guardValue)
   ]);
-  return result[1].meta.changes===1 ? {ok:true,revision:expectedRevision+1} : {ok:false};
+  return result[1].meta.changes>=1 ? {ok:true,revision:expectedRevision+1} : {ok:false};
  }
  async recordSuccessfulCopy(viewerId,{entryId,receiptId,createdAt},guard) {
   identifier(viewerId);identifier(entryId);
