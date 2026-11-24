@@ -1,0 +1,41 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {DeviceSessionService} from '../src/device-sessions.js';import {PasskeyService} from '../src/passkey-service.js';import {database} from './sqlite-helper.js';import {authenticator} from './passkey-fixture.js';
+import {AddPasskeyEnrollment,ADD_ACTION,MAX_PASSKEYS} from '../src/additional-passkey.js';import {hashText} from '../src/sessions.js';
+import {PasskeySignupService} from '../src/passkey-signup.js';import {AccountIdentityService} from '../src/account-identity.js';import {createAddPasskeyHttp} from '../src/additional-passkey-http.js';
+const NOW=1800000000000,API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
+const insertKey=(db,a)=>db.sqlite.prepare('INSERT INTO passkey_credentials(credential_id,owner_id,public_key,counter,transports,device_type,backed_up,created_at) VALUES(?,?,?,?,?,?,?,?)').run(a.credential.id,'owner',a.credential.publicKey,0,'[]','singleDevice',0,NOW);
+async function setup(){const db=database(),t={now:NOW},clock=()=>t.now;
+ db.sqlite.prepare('INSERT INTO accounts(owner_id,created_at) VALUES(?,?)').run('owner',NOW);db.sqlite.prepare('INSERT INTO account_emails VALUES(?,?,?,?)').run('owner','a@gmail.com',NOW,NOW);db.sqlite.prepare('INSERT INTO account_security(owner_id) VALUES(?)').run('owner');db.sqlite.prepare("INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) VALUES('one','owner','google','https://accounts.google.com','one','a@gmail.com',?)").run(NOW);
+ const existing=authenticator();insertKey(db,existing);
+ const sessions=new DeviceSessionService(db,{clock}),p={authMethod:'google',issuer:'https://accounts.google.com',subject:'one',ownerId:'owner',generation:0,purpose:'authenticate',verifiedAt:NOW};
+ const dev=async()=>({ownerId:'owner',deviceId:(await sessions.issue({proof:p,clientKind:'web'})).deviceId,generation:0});
+ const passkeys=new PasskeyService(db,{clock}),service=new AddPasskeyEnrollment(db,{clock,passkeys});
+ const proof=async(o={})=>({purpose:'step-up',ownerId:'owner',credentialId:existing.credential.id,generation:0,verifiedAt:t.now,actionDigest:await hashText(ADD_ACTION),...o});
+ return{db,t,existing,sessions,dev,service,passkeys,proof,user:await dev()};}
+const count=db=>db.sqlite.prepare('SELECT count(*) n FROM passkey_credentials WHERE revoked_at IS NULL').get().n;
+test('authorization expiry is enforced at finish even while the register ceremony is still valid',async()=>{const x=await setup();
+ const g=await x.service.authorize({user:x.user,proof:await x.proof({verifiedAt:NOW-100000})});assert.ok(g);assert.equal(g.expiresAt,NOW+20000);
+ const c=await x.service.begin({user:x.user,grant:g.token});assert.ok(c);assert.ok(c.expiresAt>NOW+30000);
+ x.t.now=NOW+30000;assert.equal(await x.service.finish({user:x.user,grant:g.token,token:c.token,response:authenticator().registration({expected:c.options.challenge})}),false);assert.equal(count(x.db),1);});
+test('revoking only the approving key after step-up blocks the add even though another key stays active',async()=>{const x=await setup();insertKey(x.db,authenticator());
+ const g=await x.service.authorize({user:x.user,proof:await x.proof()}),c=await x.service.begin({user:x.user,grant:g.token});
+ x.db.sqlite.prepare('UPDATE passkey_credentials SET revoked_at=1 WHERE credential_id=?').run(x.existing.credential.id);assert.equal(count(x.db),1);
+ assert.equal(await x.service.finish({user:x.user,grant:g.token,token:c.token,response:authenticator().registration({expected:c.options.challenge})}),false);assert.equal(count(x.db),1);});
+test('concurrent finishes on one grant add at most one key, even with two begun ceremonies',async()=>{const x=await setup();
+ const g=await x.service.authorize({user:x.user,proof:await x.proof()}),c1=await x.service.begin({user:x.user,grant:g.token}),c2=await x.service.begin({user:x.user,grant:g.token});
+ const r=await Promise.all([x.service.finish({user:x.user,grant:g.token,token:c1.token,response:authenticator().registration({expected:c1.options.challenge})}),x.service.finish({user:x.user,grant:g.token,token:c2.token,response:authenticator().registration({expected:c2.options.challenge})})]);
+ assert.equal(r.filter(Boolean).length,1);assert.equal(count(x.db),2);});
+test('two devices racing at the count cap never exceed the cap',async()=>{const x=await setup();for(let i=2;i<MAX_PASSKEYS;i++)insertKey(x.db,authenticator());assert.equal(count(x.db),MAX_PASSKEYS-1);
+ const u2=await x.dev(),g1=await x.service.authorize({user:x.user,proof:await x.proof()}),g2=await x.service.authorize({user:u2,proof:await x.proof()});
+ const c1=await x.service.begin({user:x.user,grant:g1.token}),c2=await x.service.begin({user:u2,grant:g2.token});
+ const r=await Promise.all([x.service.finish({user:x.user,grant:g1.token,token:c1.token,response:authenticator().registration({expected:c1.options.challenge})}),x.service.finish({user:u2,grant:g2.token,token:c2.token,response:authenticator().registration({expected:c2.options.challenge})})]);
+ assert.equal(r.filter(Boolean).length,1);assert.equal(count(x.db),MAX_PASSKEYS);});
+test('HTTP: another device of the same owner cannot finish a step-up begun on this device, nor use its authorization',async()=>{
+ const db=database(),clock=()=>NOW,identity=new AccountIdentityService(db,{clock}),signup=new PasskeySignupService(db,{clock}),e=await identity.issueEmailChallenge({purpose:'signup-email',email:'a@example.com'}),c=await signup.begin({email:'a@example.com',emailToken:e.token,binding:'binding'}),a=authenticator(),account=await signup.finish({token:c.token,binding:'binding',response:a.registration({expected:c.options.challenge})}),sessions=new DeviceSessionService(db,{clock}),passkeys=new PasskeyService(db,{clock});
+ const proof={ownerId:account.ownerId,credentialId:a.credential.id,generation:account.generation??0,purpose:'authenticate',verifiedAt:NOW},d1=await sessions.issue({proof,clientKind:'web'}),d2=await sessions.issue({proof,clientKind:'web'});
+ const http=createAddPasskeyHttp({db,sessions,clock,passkeys}),call=(step,value,access,grant)=>http.fetch(new Request(API+'/v1/manage/passkey/add/'+step,{method:'POST',headers:{Origin:APP,'Content-Type':'application/json',Authorization:'Bearer '+access,...(grant?{'X-OTPanda-Enrollment':grant}:{})},body:JSON.stringify(value)}),{clientAddress:'t'});
+ try{const b=await (await call('verify-begin',{},d1.access)).json(),resp=a.assertion({expected:b.options.challenge});
+  assert.equal((await call('verify-finish',{token:b.token,response:resp},d2.access)).status,403);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM passkey_add_authorizations').get().n,0);
+  const ok=await call('verify-finish',{token:b.token,response:a.assertion({expected:b.options.challenge,counter:2})},d1.access);
+  if(ok.status!==200){assert.fail('same-device finish should work on a fresh ceremony');}
+ }finally{db.sqlite.close();}});
