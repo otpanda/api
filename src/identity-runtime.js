@@ -26,8 +26,13 @@ import {json} from './sessions.js';
 import {canonicalClientAddress} from './client-address.js';
 import {PersonalOrganizationStore} from './personal-organization.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
-export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,clock=Date.now}={}) {
- if(!db||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
+import {createRealtimeHttp} from './realtime-http.js';
+import {createForegroundDrain} from './realtime-foreground.js';
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,clock=Date.now}={}) {
+ if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
+ // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
+ // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
+ const foreground=createForegroundDrain({db:rawDb,realtime,clock}),db=foreground.db;
  const sessions=new DeviceSessionService(db,{clock}),exchanges=new BrowserExchangeService(db,{clock,redirectUri:'https://otpanda.github.io/app/'}),passkeys=new PasskeyService(db,{clock});
  const login=new WebLoginHandoffService(db,{sessions,exchanges,passkeys,clock});
  // Authentication and metadata do not need code encryption. Import code keys
@@ -49,10 +54,12 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  const overview=createAccountOverviewHttp({db,sessions,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
+ // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
+ const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,clock}):undefined;
  const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));
  const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
  const loginPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete']);
- return {async fetch(request,{waitUntil}={}) {
+ const inner=async(request,{waitUntil}={})=>{
   try {
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
@@ -69,10 +76,14 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    else if(readPaths.has(url.pathname))handler=reads;
    else if(assignmentPaths.has(url.pathname))handler=assignment;
    else if(['/v1/manage/organization','/v1/manage/organization-copy'].includes(url.pathname))handler=organization;
+   else if(realtimeHttp&&['/auth/realtime/ticket','/auth/realtime'].includes(url.pathname))handler=realtimeHttp;
    else return json({error:'not_found'},404);
    const clientAddress=canonicalClientAddress(await trustedRequestKey(request));
    if(!clientAddress)return json({error:'unavailable'},503);
-   return await handler.fetch(request,{clientAddress,waitUntil});
+   const response=await handler.fetch(request,{clientAddress,waitUntil});
+   return response;
   }catch{return json({error:'unavailable'},503);}
- },async cleanup(){return cleanupIdentity({db,clock,limit:100});}};
+ };
+ // A committed write already has its outbox row; deliver bounded and best effort after the response. Failures stay for cron.
+ return {fetch:foreground.wrap(inner),async cleanup(){return cleanupIdentity({db,clock,limit:100});}};
 }
