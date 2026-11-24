@@ -16,7 +16,7 @@ function parameters(data){
  return {challenge,state,redirectUri};
 }
 async function boundedText(request,max){const reader=request.body?.getReader();if(!reader)return '';const chunks=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();return undefined;}chunks.push(value);}return new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(chunks.flatMap(c=>Array.from(c))));}catch{return undefined;}finally{reader.releaseLock();}}
-function html(body,status=200,extra={}){return new Response(body,{status,headers:{...securityHeaders,'Referrer-Policy':'same-origin','Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https://otpanda.github.io/app/; frame-ancestors 'none'; base-uri 'none'",...extra}});}
+function html(body,status=200,extra={}){return json({error:'restart'},status);}
 export function createBrowserSessionHttp({sessions,exchanges,db,clock=Date.now}={}){
  if(!sessions||!exchanges||!db)throw new TypeError('Session dependencies required');
  return {async fetch(request,{clientAddress}={}){
