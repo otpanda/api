@@ -1,5 +1,7 @@
-// New read-only browser identity composition. Never mounts legacy mutations,
+// Inactive browser identity composition. Never mounts legacy mutations,
 // OIDC, signup delivery or automatic account creation. Deployment stays gated.
+import {AssignmentIntents} from './assignment-intents.js';
+import {createAssignmentIntentHttp} from './assignment-intent-http.js';
 import {CodeCipher} from './code-cipher.js';
 import {SourceEntryStore} from './source-entries.js';
 import {ServiceMetadata} from './service-metadata.js';
@@ -26,8 +28,8 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  let codeDependencies;
  const encrypted=()=>codeDependencies??=Promise.resolve().then(async()=>{
   const configuration=loadCodeKeys?await loadCodeKeys():{keys,activeKeyId};
-  const metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,new CodeCipher(configuration),{matcher:metadata});
-  return{sources,access:new EntryAccess(db,sources)};
+  const cipher=new CodeCipher(configuration),metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,cipher,{matcher:metadata});
+  return{cipher,sources,access:new EntryAccess(db,sources)};
  });
  const sources={
   unassignedForOwner:async(...args)=>(await encrypted()).sources.unassignedForOwner(...args),
@@ -36,6 +38,8 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
  const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
+ const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
+ const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));
  const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
  const loginPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete']);
  return {async fetch(request) {
@@ -47,6 +51,7 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    else if(['/auth/restore','/auth/exchange'].includes(url.pathname))handler=sessionHttp;
    else if(url.pathname==='/auth/device/logout')handler=logoutHttp;
    else if(readPaths.has(url.pathname))handler=reads;
+   else if(assignmentPaths.has(url.pathname))handler=assignment;
    else if(['/v1/manage/organization','/v1/manage/organization-copy'].includes(url.pathname))handler=organization;
    else return json({error:'not_found'},404);
    const clientAddress=canonicalClientAddress(await trustedRequestKey(request));
