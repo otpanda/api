@@ -1,0 +1,10 @@
+import {writeFileSync} from 'node:fs';
+const name=process.env.QUALIFICATION_NAME,id=process.env.QUALIFICATION_DB_ID;
+if(!/^otpanda-realtime-qualification-[0-9]+$/.test(name||''))throw Error('isolated name required');
+if(!/^[0-9a-f-]{36}$/.test(id||''))throw Error('temporary D1 id required');
+if(id==='626cd908-0951-49cf-92a2-9a54cbbb40a8')throw Error('production database forbidden');
+const key=process.env.QUALIFICATION_KEY;if(!/^[a-f0-9]{32}$/.test(key||''))throw Error('per-run key required');
+const config={name,vars:{QUALIFICATION_KEY:key},main:'worker.mjs',compatibility_date:'2026-11-23',workers_dev:true,preview_urls:false,durable_objects:{bindings:[{name:'HUB',class_name:'QualificationHub'}]},migrations:[{tag:'qualification-v1',new_sqlite_classes:['QualificationHub']}],d1_databases:[{binding:'DB',database_name:name,database_id:id,migrations_dir:'../../migrations'}],observability:{enabled:false}};
+writeFileSync('tool/platform/wrangler.json',JSON.stringify(config,null,2));
+writeFileSync('tool/platform/cleanup.json',JSON.stringify({...config,main:'cleanup.mjs',durable_objects:{bindings:[]},migrations:[...config.migrations,{tag:'qualification-v2',deleted_classes:['QualificationHub']}]},null,2));
+writeFileSync('tool/platform/cleanup.mjs','export default {fetch(){return new Response("qualification completed",{status:410});}};\n');
