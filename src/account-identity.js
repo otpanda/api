@@ -13,8 +13,7 @@ function identifier(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(value)) throw new TypeError('Bounded identifier required');
   return value;
 }
-// Deliberate product policy: ASCII mailbox addresses, lowercased for uniqueness,
-// no dot removal or plus-alias folding. Reject rather than guess unsupported input.
+// Display/delivery address stays lowercased and otherwise unchanged.
 export function canonicalAccountEmail(value) {
   if (typeof value !== 'string' || value.length > 254 || value !== value.trim() || /[^\x21-\x7e]/.test(value)) throw new TypeError('Supported email required');
   const parts = value.split('@');
@@ -25,6 +24,7 @@ export function canonicalAccountEmail(value) {
   if (labels.length < 2 || labels.some(v => !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/.test(v))) throw new TypeError('Supported email required');
   return value.toLowerCase();
 }
+export function mailboxKey(value){const email=canonicalAccountEmail(value),[local,domain]=email.split('@');return ['gmail.com','googlemail.com'].includes(domain)?local.split('+')[0].replaceAll('.','')+'@gmail.com':email;}
 function providerIdentity(identity) {
   if (!identity || identity.issuer !== 'https://accounts.google.com' || typeof identity.subject !== 'string' || !identity.subject || identity.subject.length > 256 || /[\u0000-\u001f\u007f]/.test(identity.subject)) throw new TypeError('Validated supported provider identity required');
   return { issuer: identity.issuer, subject: identity.subject, email: canonicalAccountEmail(identity.email) };
@@ -91,16 +91,16 @@ export class AccountIdentityService {
     // HTTP orchestration must separately require action-bound fresh step-up.
     // Challenge proves current mailbox and binds exact provider issuer+subject.
     if (!await this.claim({ token, purpose: 'link-provider', email: provider.email, ownerId, identity })) return false;
-    await this.db.prepare('INSERT INTO identities (issuer, subject, owner_id) SELECT ?1, ?2, ?3 WHERE EXISTS (SELECT 1 FROM account_emails WHERE owner_id = ?3 AND email = ?4) ON CONFLICT(issuer, subject) DO NOTHING')
-      .bind(provider.issuer, provider.subject, ownerId, provider.email).run();
-    const row = await this.db.prepare('SELECT owner_id FROM identities WHERE issuer = ?1 AND subject = ?2').bind(provider.issuer, provider.subject).first();
+    await this.db.prepare(`INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) SELECT ?5,?3,'google',?1,?2,?4,?6 WHERE EXISTS (SELECT 1 FROM account_emails WHERE owner_id = ?3 AND email = ?4) ON CONFLICT(issuer, subject) DO NOTHING`)
+      .bind(provider.issuer, provider.subject, ownerId, provider.email,crypto.randomUUID(),instant(this.clock())).run();
+    const row = await this.db.prepare('SELECT owner_id FROM provider_identities WHERE issuer = ?1 AND subject = ?2 AND revoked_at IS NULL').bind(provider.issuer, provider.subject).first();
     return row?.owner_id === ownerId;
   }
   async ownerForProvider(identity) {
     const provider = providerIdentity(identity);
-    // Email drift fails closed. Matching an email NEVER links a new subject.
-    const row = await this.db.prepare('SELECT i.owner_id FROM identities i JOIN account_emails e ON e.owner_id = i.owner_id WHERE i.issuer = ?1 AND i.subject = ?2 AND e.email = ?3')
-      .bind(provider.issuer, provider.subject, provider.email).first();
+    // Stable provider subject signs in. Email matching never links a new subject.
+    const row = await this.db.prepare('SELECT i.owner_id FROM provider_identities i WHERE i.issuer = ?1 AND i.subject = ?2 AND i.revoked_at IS NULL')
+      .bind(provider.issuer, provider.subject).first();
     return row?.owner_id;
   }
 }
