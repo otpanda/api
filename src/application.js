@@ -4,8 +4,8 @@ import { json, takeRateLimit, hashText } from './sessions.js';
 
 // Explicit composition only. No environment is auto-provisioned and no
 // credentials or identity providers are silently selected.
-export function createApplication({ db, tokenStore, codeStore, sessions, signIn, trustedRequestKey, clock = Date.now }) {
-  if (!db || !tokenStore || !codeStore || !sessions || !signIn || typeof trustedRequestKey !== 'function') throw new TypeError('Complete application dependencies required');
+export function createApplication({ db, tokenStore, codeStore, sessions, trustedRequestKey, clock = Date.now }) {
+  if (!db || !tokenStore || !codeStore || !sessions || typeof trustedRequestKey !== 'function') throw new TypeError('Complete application dependencies required');
   const api = createHandler({ tokenStore, codeStore, clock });
   const management = createManagementHandler({ db, sessions, tokenStore, clock });
   return {
@@ -20,8 +20,6 @@ export function createApplication({ db, tokenStore, codeStore, sessions, signIn,
         const bucket = 'request:' + await hashText(requestKey);
         const rate = await takeRateLimit(db, bucket, { now: clock(), limit: 60 });
         if (!rate.allowed) return json({ error: 'rate_limited' }, 429, { 'Retry-After': String(rate.retryAfter) });
-        if (url.pathname === '/auth/start') return await signIn.start(request);
-        if (url.pathname === '/auth/callback') return await signIn.callback(request);
         if (url.pathname.startsWith('/v1/manage/')) return await management.fetch(request);
         return await api.fetch(request);
       } catch {
