@@ -53,7 +53,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
    const result=await browser.fetch(request,env,ctx);
    // Top-level GET failures return to the app. API/fetch and POST denials keep
    // their status, so this changes presentation, never authentication decisions.
-   if(request.method==='GET'&&['/auth/restore','/auth/device/logout','/auth/login/start','/auth/login/complete','/auth/signup/app'].includes(url.pathname)&&result.status>=400)return appFailure(url.searchParams.get('state')??'');
+   if(request.method==='GET'&&['/auth/restore','/auth/device/logout','/auth/login/start','/auth/login/complete','/auth/signup/app'].includes(url.pathname)&&result.status>=400)return appFailure(url.searchParams.get('state')??'',url.pathname==='/auth/device/logout'?'logout-incomplete':'restart');
    return result;
   },
   async scheduled(event,env,ctx) {
