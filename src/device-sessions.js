@@ -70,10 +70,10 @@ export class DeviceSessionService {
       this.db.prepare('INSERT INTO recognized_browsers (recognition_id,secret_digest,owner_id,provider_identity_id,generation,created_at) SELECT ?1,?2,d.owner_id,d.provider_identity_id,d.generation,?4 FROM device_sessions d WHERE length(?1)>0 AND d.device_id=?3 AND d.provider_identity_id IS NOT NULL').bind(fresher?.id??'',fresher?.digest??'',deviceId,now),
     ]);
     const needsConsume=!!pend,needsRec=!!fresher&&method.credentialId===null;
-    if(results.slice(0,4).some(r=>r.meta.changes!==1)||(needsConsume&&results[5].meta.changes!==1)||(needsRec&&results[6].meta.changes!==1)) {
+    if(results.slice(0,4).some(r=>r/*exact-count-ok*/.meta.changes!==1)||(needsConsume&&results[5].meta.changes!==1)||(needsRec&&results[6].meta.changes!==1)) {
       // Guarded insert denial is a no-op. An unexpected child no-op must not
       // leave a usable provisional device; retirement also requires children.
-      if(results[0].meta.changes===1)await this.revoke({ownerId:proof.ownerId,deviceId});
+      if(results[0]/*exact-count-ok*/.meta.changes===1)await this.revoke({ownerId:proof.ownerId,deviceId});
       return undefined;
     }
     return {deviceId,refresh:refresh.token,refreshExpiresAt:now+IDLE,code:exchange.token};
@@ -101,7 +101,7 @@ export class DeviceSessionService {
       this.db.prepare('UPDATE device_sessions SET last_used_at=?1,expires_at=?2 WHERE device_id=?3 AND EXISTS (SELECT 1 FROM device_refresh_handles WHERE handle_id=?4)').bind(now,now+IDLE,row.device_id,next.tokenId),
       this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS (SELECT 1 FROM device_refresh_handles WHERE handle_id=?6)').bind(access.tokenId,access.digest,row.device_id,now,now+ACCESS,next.tokenId),
     ]);
-    if(results[0].meta.changes!==1)return {status:'retry'};
+    if(results[0]/*exact-count-ok*/.meta.changes!==1)return {status:'retry'};
     return {status:'rotated',deviceId:row.device_id,refresh:next.token,access:access.token,accessExpiresAt:now+ACCESS,refreshExpiresAt:now+IDLE};
   }
   async logoutBrowser(refresh,browserBindingDigest=null) {
@@ -125,6 +125,7 @@ export class DeviceSessionService {
       this.db.prepare('DELETE FROM device_sessions WHERE device_id IN (SELECT device_id FROM device_sessions WHERE expires_at<=?1 OR revoked_at IS NOT NULL ORDER BY expires_at LIMIT ?2)').bind(now,limit),
     ]);return results.map(r=>r.meta.changes);
   }
-  async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes===1;}
-  async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL').bind(this.now(),ownerId).run();return r.meta.changes;}
+  async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes>=1;}
+  async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL RETURNING device_id').bind(this.now(),ownerId).all();return r.results.length;}
   }
+export const ACCESS_TTL_MS=ACCESS;
