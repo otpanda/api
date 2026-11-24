@@ -141,4 +141,4 @@ export class EmailRecovery {
   return r[9]/*exact-count-ok*/.meta.changes===1;
  }
  async cleanup({limit=100}={}){const r=await this.db.prepare('DELETE FROM email_recovery_grants WHERE grant_id IN(SELECT grant_id FROM email_recovery_grants WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(this.clock(),limit).run();return r.meta.changes;}
- }
+}
