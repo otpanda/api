@@ -8,7 +8,7 @@ import{hashText,json,securityHeaders}from'./sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
 const paths=new Set(['/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify']);
 const cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
-function failure(verify,status){const headers={...securityHeaders,'Retry-After':'60',...(verify?cors:{})};return verify?json({error:status===429?'busy':'unavailable'},status,headers):new Response('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OTPanda signup</title><main><h1>Signup is busy.</h1><p>No new request was accepted. Wait a moment, then return to the signup form in this browser and try again.</p></main></html>',{status,headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"}});}
+function failure(verify,status){return json({error:status===429?'busy':'unavailable'},status,{'Retry-After':'60',...(verify?cors:{})});}
 export function createSignupHost({db,mail,edgeAddress,edgeGlobal,edgeVerifyAddress,edgeVerifyGlobal,resolveTrustedIngress,clock=Date.now,signupAllowed}={}){
  let runtime;
  return{async fetch(request,ctx){
