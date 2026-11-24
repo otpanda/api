@@ -47,7 +47,7 @@ export function createWebLoginHttp({db,login,clock=Date.now}={}){
   if(origin!==API||request.headers.get('content-type')!=='application/x-www-form-urlencoded')return invalid(403);
   const raw=await text(request,512);if(raw===undefined)return invalid();const q=new URLSearchParams(raw),csrf=readCookie(request,CSRF),binding=readCookie(request,BIND);
   if([...q.keys()].sort().join(',')!=='csrf,handoff'||!csrf||q.get('csrf')!==csrf||!binding)return invalid(403);
-  const result=await login.completeBrowser({handoff:q.get('handoff'),cookieBinding:binding});if(!result)return invalid(401);
+  const result=await login.completeBrowser({handoff:q.get('handoff'),cookieBinding:binding,priorRefresh:readCookie(request,REFRESH_COOKIE)});if(!result)return invalid(401);
   const target=new URL(REDIRECT);target.hash=new URLSearchParams({code:result.code,state:result.state});
   const headers=new Headers({...securityHeaders,Location:target.href});headers.append('Set-Cookie',cookie(REFRESH_COOKIE,result.refresh,Math.max(0,Math.floor((result.refreshExpiresAt-clock())/1000))));headers.append('Set-Cookie',cookie(BIND,'',0));headers.append('Set-Cookie',cookie(CSRF,'',0));return new Response(null,{status:303,headers});
  }};
