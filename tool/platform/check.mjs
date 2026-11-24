@@ -1,0 +1,22 @@
+import assert from 'node:assert/strict';
+import {setTimeout as pause} from 'node:timers/promises';
+const key=process.env.QUALIFICATION_KEY;if(!/^[a-f0-9]{32}$/.test(key||''))throw Error('per-run key required');
+const base=process.env.QUALIFICATION_URL;if(!base?.startsWith('https://otpanda-realtime-qualification-'))throw Error('isolated URL required');
+const json=async path=>{const r=await fetch(base+path,{headers:{authorization:'Bearer '+key},signal:AbortSignal.timeout(20000)});assert.equal(r.status,200,await r.clone().text());return r.json();};
+const open=async ttl=>{
+ const ws=new WebSocket(base.replace('https:','wss:')+'/connect?ttl='+ttl,['otpanda.v1','qualification.'+key]);const messages=[];let closed;
+ ws.addEventListener('message',e=>messages.push(e.data));ws.addEventListener('close',e=>{closed=e.code;});
+ await Promise.race([new Promise((ok,no)=>{ws.addEventListener('open',ok,{once:true});ws.addEventListener('error',no,{once:true});}),pause(20000).then(()=>{throw Error('socket open timeout');})]);
+ return {ws,messages,closed:()=>closed};
+};
+const until=async test=>{for(let n=0;n<100;n++){if(test())return;await pause(100);}throw Error('event timeout');};
+console.log('health',await json('/health'));console.log('prepare',await json('/prepare'));
+const one=await open(120000),before=await json('/inspection');
+const write=await json('/write');assert.equal(write.written.ok,true);assert.ok(write.hubCalls>=1);assert.ok(write.combined<=45);assert.ok(write.drainD1<=20);assert.ok(write.hubCalls<=10);
+await until(()=>one.messages.length>0);assert.equal(one.messages[0],'{"v":1,"t":"changed"}');console.log('writer_drain',write);
+console.log('close',await json('/close'));await until(()=>one.closed()!==undefined);assert.equal(one.closed(),4401);
+const two=await open(90000),preIdle=await json('/inspection');await pause(65000);const postIdle=await json('/inspection');
+console.log('hibernation_observation',{preIdle,postIdle,evictionObserved:preIdle.instance!==postIdle.instance});
+const second=await json('/write');await until(()=>two.messages.length>0);assert.equal(two.messages[0],'{"v":1,"t":"changed"}');assert.ok(second.combined<=45);
+await pause(27000);await until(()=>two.closed()!==undefined);assert.equal(two.closed(),4408);
+console.log('PASS actual HTTP writer/outbox, websocket hint, idle wake, hub-close and alarm expiry; hibernation eviction only if explicitly observed',before);
