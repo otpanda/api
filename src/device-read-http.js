@@ -23,6 +23,7 @@ export function createDeviceReadHttp({db,sessions,sources,access,clock=Date.now}
   const limit=await takeRateLimit(db,'device-read:'+clientAddress,{now:clock(),limit:60});
   if(!limit.allowed)return json({error:'rate_limited'},429,{...cors,'Retry-After':String(limit.retryAfter)});
   const user=await auth.authenticate(request);if(!user)return json({error:'unauthorized'},401,cors);
+  try {
   let result;
   if(url.pathname==='/v1/manage/session')result={ownerId:user.ownerId,expiresAt:user.expiresAt};
   else if(url.pathname==='/v1/manage/entries'){
@@ -35,5 +36,6 @@ export function createDeviceReadHttp({db,sessions,sources,access,clock=Date.now}
   if(!await auth.authenticate(request))return json({error:'unauthorized'},401,cors);
   if(result.records)result.records=result.records.filter(r=>r.receivedAt<=clock()&&r.expiresAt>clock());
   return json(result,200,cors);
+  }catch{return json({error:'unavailable'},503,cors);}
  }};
 }

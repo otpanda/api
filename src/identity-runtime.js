@@ -17,11 +17,23 @@ import {json} from './sessions.js';
 import {canonicalClientAddress} from './client-address.js';
 import {PersonalOrganizationStore} from './personal-organization.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
-export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,clock=Date.now}={}) {
+export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loadCodeKeys,clock=Date.now}={}) {
  if(!db||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  const sessions=new DeviceSessionService(db,{clock}),exchanges=new BrowserExchangeService(db,{clock,redirectUri:'https://otpanda.github.io/app/'}),passkeys=new PasskeyService(db,{clock});
  const login=new WebLoginHandoffService(db,{sessions,exchanges,passkeys,clock});
- const metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,new CodeCipher({keys,activeKeyId}),{matcher:metadata}),access=new EntryAccess(db,sources);
+ // Authentication and metadata do not need code encryption. Import code keys
+ // only after authorization on a key-dependent read. Cache failures as well.
+ let codeDependencies;
+ const encrypted=()=>codeDependencies??=Promise.resolve().then(async()=>{
+  const configuration=loadCodeKeys?await loadCodeKeys():{keys,activeKeyId};
+  const metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,new CodeCipher(configuration),{matcher:metadata});
+  return{sources,access:new EntryAccess(db,sources)};
+ });
+ const sources={
+  unassignedForOwner:async(...args)=>(await encrypted()).sources.unassignedForOwner(...args),
+  sourcesForOwner:async(...args)=>(await encrypted()).sources.sourcesForOwner(...args),
+ };
+ const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
  const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
  const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
