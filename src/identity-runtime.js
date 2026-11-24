@@ -17,6 +17,7 @@ import {DeviceSessionService} from './device-sessions.js';
 import {BrowserExchangeService} from './browser-exchanges.js';
 import {WebLoginHandoffService} from './web-login-handoff.js';
 import {createBrowserSessionHttp} from './browser-session-http.js';
+import {AccessRenewal} from './access-renewal.js';
 import {createWebLoginHttp} from './web-login-http.js';
 import {createBrowserLogoutHttp} from './browser-logout-http.js';
 import {createDeviceReadHttp} from './device-read-http.js';
@@ -42,7 +43,7 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
   sourcesForOwner:async(...args)=>(await encrypted()).sources.sourcesForOwner(...args),
  };
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
- const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
+ const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
  const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
  const overview=createAccountOverviewHttp({db,sessions,clock});
@@ -63,7 +64,7 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    else if(url.pathname.startsWith('/auth/recovery/email/'))handler=emailRecovery;
    else if(url.pathname==='/v1/manage/account')handler=overview;
    else if(loginPaths.has(url.pathname))handler=loginHttp;
-   else if(['/auth/restore','/auth/exchange'].includes(url.pathname))handler=sessionHttp;
+   else if(['/auth/restore','/auth/exchange','/auth/renew'].includes(url.pathname))handler=sessionHttp;
    else if(url.pathname==='/auth/device/logout')handler=logoutHttp;
    else if(readPaths.has(url.pathname))handler=reads;
    else if(assignmentPaths.has(url.pathname))handler=assignment;
