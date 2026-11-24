@@ -1,12 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "otpanda-api",
-  "main": "src/cloudflare-worker.js",
+  "main": "src/auth-only-worker.js",
   "compatibility_date": "2026-11-23",
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
-    "DEPLOYMENT_STAGE": "bootstrap",
+    "DEPLOYMENT_STAGE": "auth-only",
+    "AUTH_ONLY_SIGNUP_MODE": "public",
     "GOOGLE_CLIENT_ID": "367143149550-560r90pmkqr71qp1tid3amck2a053rdg.apps.googleusercontent.com",
     "BREVO_SENDER_EMAIL": "otpanda.app@gmail.com",
     "BREVO_REPLY_TO_EMAIL": "otpanda.app@gmail.com"

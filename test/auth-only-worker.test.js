@@ -9,8 +9,8 @@ function request(path,{method='GET',headers={},body}={}) {
  Object.defineProperty(r,'cf',{value:{colo:'LHR',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'}});return r;
 }
 function config(db) {return {DEPLOYMENT_STAGE:'auth-only',AUTH_ONLY_SIGNUP_EMAIL:'owner@example.test',DB:db,BREVO_API_KEY:'synthetic',BREVO_SENDER_EMAIL:'project@example.test',BREVO_REPLY_TO_EMAIL:'project@example.test',SIGNUP_ADDRESS_LIMIT:yes,SIGNUP_GLOBAL_LIMIT:yes,SIGNUP_VERIFY_ADDRESS_LIMIT:yes,SIGNUP_VERIFY_GLOBAL_LIMIT:yes,IDENTITY_ADDRESS_LIMIT:yes,IDENTITY_AUTH_GLOBAL_LIMIT:yes,IDENTITY_READ_GLOBAL_LIMIT:yes};}
-test('staged entry is not deployment target; explicit auth-only stage required',async()=>{
- const fs=await import('node:fs/promises');assert.match(await fs.readFile('wrangler.jsonc','utf8'),/"main": "src\/cloudflare-worker.js"/);
+test('deployment explicitly selects bounded public auth-only stage; other stages refused',async()=>{
+ const fs=await import('node:fs/promises');const deployment=JSON.parse(await fs.readFile('wrangler.jsonc','utf8'));assert.equal(deployment.main,'src/auth-only-worker.js');assert.equal(deployment.vars.DEPLOYMENT_STAGE,'auth-only');assert.equal(deployment.vars.AUTH_ONLY_SIGNUP_MODE,'public');assert.equal(deployment.vars.AUTH_ONLY_SIGNUP_EMAIL,undefined);
  for(const env of [undefined,{}, {DEPLOYMENT_STAGE:'bootstrap'},{DEPLOYMENT_STAGE:'active'}])assert.equal((await createAuthOnlyWorker().fetch(request('/auth/signup/start'),env)).status,503);
 });
 test('auth-only stage cannot mount code source mutation recovery legacy or unknown paths',async()=>{
