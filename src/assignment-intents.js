@@ -5,7 +5,7 @@ const TTL=120000,RECEIPT=600000,MAX_PENDING=5;
 const active=`EXISTS(SELECT 1 FROM device_sessions d JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=i.device_id AND d.owner_id=i.owner_id AND d.generation=i.generation AND s.generation=i.generation AND d.client_kind='web' AND d.revoked_at IS NULL AND p.revoked_at IS NULL AND p.owner_id=i.owner_id AND d.created_at<=?2 AND d.expires_at>?2)`;
 function id(v){return typeof v==='string'&&v.length>0&&v.length<=256;}
 export class AssignmentIntents {
- constructor({db,passkeys,cipher,clock=Date.now}={}){if(!db||!passkeys||!cipher)throw new TypeError('Assignment dependencies required');Object.assign(this,{db,passkeys,cipher,clock});}
+ constructor({db,passkeys,cipher,prepare=async()=>{},clock=Date.now}={}){if(!db||!passkeys||!cipher)throw new TypeError('Assignment dependencies required');Object.assign(this,{db,passkeys,cipher,prepare,clock});}
  now(){const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw new TypeError('Valid instant required');return n;}
  async context(auth,sourceId,eventId,entryId){
   const now=this.now();
@@ -14,6 +14,8 @@ export class AssignmentIntents {
  }
  async begin(auth,{sourceId,eventId,entryId}={}){
   const row=await this.context(auth,sourceId,eventId,entryId);if(!row)return;
+  // Dependency readiness after owner authorization, before intent/gesture.
+  await this.prepare();
   const now=this.now(),intentId=crypto.randomUUID(),expiresAt=Math.min(now+TTL,row.expires_at);
   const action=JSON.stringify(['otpanda-assignment',1,intentId,auth.ownerId,auth.deviceId,auth.generation,sourceId,eventId,entryId,row.mutation_revision,await hashText(row.envelope),row.received_at,row.expires_at,row.recipients,row.automation_recipients,true]);
   const inserted=await this.db.prepare(`INSERT INTO assignment_intents(intent_id,owner_id,device_id,generation,source_id,event_id,entry_id,entry_revision,envelope,received_at,code_expires_at,action_digest,created_at,expires_at,result_expires_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15 WHERE (SELECT count(*) FROM assignment_intents WHERE owner_id=?2 AND consumed_at IS NULL AND expires_at>?13)<${MAX_PENDING} AND EXISTS(SELECT 1 FROM device_sessions d JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?3 AND d.owner_id=?2 AND d.generation=?4 AND s.generation=?4 AND d.client_kind='web' AND d.revoked_at IS NULL AND p.revoked_at IS NULL AND p.owner_id=?2 AND d.created_at<=?13 AND d.expires_at>?13)`).bind(intentId,auth.ownerId,auth.deviceId,auth.generation,sourceId,eventId,entryId,row.mutation_revision,row.envelope,row.received_at,row.expires_at,await hashText(action),now,expiresAt,now+RECEIPT).run();
