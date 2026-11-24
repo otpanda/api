@@ -7,6 +7,10 @@ import {createRecoveryNotificationDelivery,createRecoveryMailDelivery} from './r
 import {createBrowserWorkerAdapter} from './browser-worker-adapter.js';
 import {resolveCloudflareDirectIngress} from './cloudflare-ingress.js';
 import {cleanupIdentity} from './identity-cleanup.js';
+import {drainSome,Budget,CRON_QUERY_MAX,CRON_DELIVERY_MAX,REALTIME_CRON} from './realtime-outbox.js';
+import {hubDeliver} from './realtime-hub.js';
+export {RealtimeHub} from './realtime-hub.js';
+import {realtimeConfiguration} from './browser-worker-adapter.js';
 import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
 import {appFailure} from './silent-bridge.js';
@@ -16,6 +20,7 @@ const paths=new Set([...['status','begin','finish','request-change','approve-beg
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
  '/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
+const realtimePaths=new Set(['/auth/realtime/ticket','/auth/realtime']);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
  const signupAllowed=email=>!invalid&&configured&&(mode==='public'||email===owner);
@@ -48,7 +53,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
      return json({service:'otpanda-api',stage:'auth-only',database:'available',recoveryDelivery:(recoveryDelivery.deadNotifications+recoveryDelivery.deadCodeJobs)>0?'attention':'ok',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged'},200);
     }catch{return json({error:'unavailable'},503);}
    }
-   if(!paths.has(url.pathname))return json({error:'not_found'},404);
+   if(!paths.has(url.pathname)&&!(realtimePaths.has(url.pathname)&&realtimeConfiguration(env)))return json({error:'not_found'},404);
    // Public registration requires an explicit mode with no owner binding.
    // Existing isolates latch policy and refuse runtime scope changes.
    if(url.pathname.startsWith('/auth/signup/')&&request.method!=='OPTIONS') {
@@ -63,6 +68,8 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
   },
   async scheduled(event,env,ctx) {
    if(env?.DEPLOYMENT_STAGE!=='auth-only'||!env.DB?.prepare)return;
+   // Realtime delivery runs in its OWN cron invocation (its own 50 query allowance), never next to the identity cleanup.
+   if(event?.cron===REALTIME_CRON){if(!env.REALTIME_HUB)return;const drain=drainSome({db:env.DB,deliver:hubDeliver(env.REALTIME_HUB),clock,budget:new Budget(CRON_QUERY_MAX),sends:new Budget(CRON_DELIVERY_MAX)}).catch(()=>{});if(ctx?.waitUntil)ctx.waitUntil(drain);else await drain;return;}
    // Classify lapsed jobs as expired failures BEFORE cleanup can delete them,
    // then log counts only (no ids, addresses or codes) when anything is dead.
    const work=(async()=>{await expireRecoveryCodeJobs({db:env.DB,clock}).catch(()=>{});const h=await recoveryDeliveryHealth({db:env.DB,clock}).catch(()=>undefined);if(h&&(h.deadNotifications||h.deadCodeJobs))console.warn('recovery-delivery-attention',JSON.stringify(h));return Promise.all([cleanupIdentity({db:env.DB,clock,limit:100}),env.BREVO_API_KEY?deliverRecoveryNotifications({db:env.DB,clock,deliver:createRecoveryNotificationDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10}):undefined,env.BREVO_API_KEY?(async()=>{try{await drainRecoveryCodeJobs({db:env.DB,clock,cipher:new CodeCipher(await importBrowserKeyring(env)),deliver:createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10});}catch{}})():undefined]);})();
