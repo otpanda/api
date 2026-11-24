@@ -1,5 +1,6 @@
 import {createExtraVerificationHttp} from './extra-verification-http.js';
 import {createFirstPasskeyHttp} from './first-passkey-http.js';
+import {createAddPasskeyHttp} from './additional-passkey-http.js';
 import {createAccountOverviewHttp} from './account-overview-http.js';
 // Inactive browser identity composition. Never mounts legacy mutations,
 // OIDC, signup delivery or automatic account creation. Deployment stays gated.
@@ -41,7 +42,7 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
  const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
- const firstPasskey=createFirstPasskeyHttp({db,sessions,clock});
+ const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys});
  const overview=createAccountOverviewHttp({db,sessions,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
@@ -55,6 +56,7 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    let handler;
    if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;
+   else if(url.pathname.startsWith('/v1/manage/passkey/add/'))handler=addPasskey;
    else if(url.pathname==='/v1/manage/account')handler=overview;
    else if(loginPaths.has(url.pathname))handler=loginHttp;
    else if(['/auth/restore','/auth/exchange'].includes(url.pathname))handler=sessionHttp;
