@@ -7,7 +7,7 @@ export function createSignupWorkerAdapter({resolveTrustedIngress,fetchImpl=(...a
  let host,configuration;
  return{async fetch(request,env,ctx){
   const url=new URL(request.url);
-  if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev'||!['/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify'].includes(url.pathname))return createSignupHost().fetch(request,ctx);
+  if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev'||!['/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify'].includes(url.pathname))return createSignupHost().fetch(request,ctx);
   if(!env||typeof env!=='object')return createSignupHost().fetch(request,ctx);
   // A new deployment creates a new module. A changed live config fails closed
   // in an existing isolate instead of resetting an active delivery counter.

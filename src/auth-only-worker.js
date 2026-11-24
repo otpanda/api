@@ -1,15 +1,16 @@
-// INACTIVE entry candidate. wrangler still selects cloudflare-worker.js.
+// Public auth-only deployment entry. Interactive screens belong to the app.
 // Auth-only is deliberately smaller than the complete browser adapter.
 import {createBrowserWorkerAdapter} from './browser-worker-adapter.js';
 import {resolveCloudflareDirectIngress} from './cloudflare-ingress.js';
 import {cleanupIdentity} from './identity-cleanup.js';
 import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
+import {appFailure} from './silent-bridge.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
-const paths=new Set([
- '/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
+const paths=new Set([...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
+ '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
- '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session',
+ '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
@@ -48,7 +49,12 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
    if(url.pathname.startsWith('/auth/signup/')&&request.method!=='OPTIONS') {
     if(!configure(env))return json({error:'setup_required'},503);
    }
-   return browser.fetch(request,env,ctx);
+   if(['/auth/signup/start','/auth/signup/email','/auth/signup/begin'].includes(url.pathname))return new Response(null,{status:303,headers:{Location:'https://otpanda.github.io/app/','Cache-Control':'no-store'}});
+   const result=await browser.fetch(request,env,ctx);
+   // Top-level GET failures return to the app. API/fetch and POST denials keep
+   // their status, so this changes presentation, never authentication decisions.
+   if(request.method==='GET'&&['/auth/restore','/auth/device/logout','/auth/login/start','/auth/login/complete','/auth/signup/app'].includes(url.pathname)&&result.status>=400)return appFailure(url.searchParams.get('state')??'',url.pathname==='/auth/device/logout'?'logout-incomplete':'restart');
+   return result;
   },
   async scheduled(event,env,ctx) {
    if(env?.DEPLOYMENT_STAGE!=='auth-only'||!env.DB?.prepare)return;

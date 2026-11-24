@@ -1,5 +1,6 @@
+import {issueHumanCode} from './human-email-code.js';
 // Internal orchestration only. No provider, HTTP route, runtime mount or send.
-import {AccountIdentityService,canonicalAccountEmail} from './account-identity.js';
+import {AccountIdentityService,canonicalAccountEmail,mailboxKey} from './account-identity.js';
 import {takeRateLimit,hashText} from './sessions.js';
 import {parseAccessToken,digestSecret,digestToHex} from './tokens.js';
 const TTL=10*60*1000;
@@ -9,7 +10,7 @@ export class SignupEmailService {
   if(typeof signupAllowed!=='function')throw new TypeError('Signup policy required');this.signupAllowed=signupAllowed;
   this.db=db;this.deliver=deliver;this.clock=clock;this.identity=new AccountIdentityService(db,{clock});
  }
- async request({email,clientAddress,cookieBinding}={}) {
+ async request({email,clientAddress,cookieBinding,allowExisting=false}={}) {
   // Never return an account-existence, quota or delivery-result oracle.
   const accepted=Object.freeze({status:'accepted'});
   email=canonicalAccountEmail(email);
@@ -20,16 +21,17 @@ export class SignupEmailService {
   // Both are consumed before branching. Address data is hashed by takeRateLimit.
   const sender=await takeRateLimit(this.db,'signup-email:address:'+clientAddress,{now,limit:5,windowMs:3600000});
   if(!sender.allowed)return accepted;
-  const recipient=await takeRateLimit(this.db,'signup-email:recipient:'+email,{now,limit:3,windowMs:3600000});
+  const recipient=await takeRateLimit(this.db,'signup-email:recipient:'+mailboxKey(email),{now,limit:3,windowMs:3600000});
   if(!recipient.allowed)return accepted;
   const global=await takeRateLimit(this.db,'signup-email:global',{now,limit:100,windowMs:86400000});
   if(!global.allowed)return accepted;
-  const existing=await this.db.prepare('SELECT owner_id FROM account_emails WHERE email=?1').bind(email).first();
-  if(existing)return accepted;
+  const existing=await this.db.prepare('SELECT owner_id FROM account_mailbox_keys WHERE mailbox_key=?1').bind(mailboxKey(email)).first();
+  if(existing&&!allowExisting)return accepted;
   const proof=await this.identity.issueEmailChallenge({purpose:'signup-email',email,ttlMs:TTL});
   const parsed=parseAccessToken(proof.token);
   await this.db.prepare('INSERT INTO signup_mail_bindings (proof_id,secret_digest,cookie_digest,email,created_at,expires_at) VALUES (?1,?2,?3,?4,?5,?6)').bind(parsed.tokenId,digestToHex(await digestSecret(parsed.secret)),await hashText(cookieBinding),email,now,proof.expiresAt).run();
-  try{if(this.signupAllowed(email)!==true)throw new Error('Signup policy changed');await this.deliver(Object.freeze({kind:'signup-email',to:email,token:proof.token,expiresAt:proof.expiresAt}));}
+  const code=await issueHumanCode(this.db,{purpose:'signup',binding:JSON.stringify([cookieBinding,email]),proofId:parsed.tokenId,now,expiresAt:proof.expiresAt});
+  try{if(this.signupAllowed(email)!==true)throw new Error('Signup policy changed');await this.deliver(Object.freeze({kind:'signup-email',to:email,token:proof.token,code,expiresAt:proof.expiresAt}));}
   catch{
    // Failed delivery invalidates its proof without returning transport details.
    await this.identity.claim({token:proof.token,purpose:'signup-email',email});

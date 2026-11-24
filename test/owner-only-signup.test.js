@@ -7,14 +7,14 @@ import {AccountIdentityService} from '../src/account-identity.js';
 import {PasskeySignupService} from '../src/passkey-signup.js';
 import {authenticator} from './passkey-fixture.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',NOW=1800000000000;
-const request=()=>new Request(API+'/auth/signup/start');
+const request=()=>new Request(API+'/auth/signup/app');
 test('auth-only signup fails closed with absent malformed removed or changed owner configuration',async()=>{
  for(const value of [undefined,'','*','a@example.test,b@example.test',' owner@example.test']) {
   const worker=createAuthOnlyWorker();assert.equal((await worker.fetch(request(),{DEPLOYMENT_STAGE:'auth-only',AUTH_ONLY_SIGNUP_EMAIL:value})).status,503);
  }
  const worker=createAuthOnlyWorker(),env={DEPLOYMENT_STAGE:'auth-only',AUTH_ONLY_SIGNUP_EMAIL:'owner@example.test'};
- // No binding means downstream503, but still latches policy before service use.
- assert.equal((await worker.fetch(request(),env)).status,503);
+ // No binding means downstream app retry, but still latches policy before service use.
+ assert.equal((await worker.fetch(request(),env)).status,303);
  assert.equal((await worker.fetch(request(),{...env,AUTH_ONLY_SIGNUP_EMAIL:'other@example.test'})).status,503);
  assert.equal((await worker.fetch(request(),env)).status,503);
 });
@@ -40,9 +40,9 @@ test('policy change during authenticator verification is checked before account 
 test('actual auth-only HTTP accepts denied email generically without sending or issuing proof',async()=>{
  const db=database(),yes={limit:async()=>({success:true})},env={DEPLOYMENT_STAGE:'auth-only',AUTH_ONLY_SIGNUP_EMAIL:'owner@example.test',DB:db,BREVO_API_KEY:'synthetic',BREVO_SENDER_EMAIL:'project@example.test',BREVO_REPLY_TO_EMAIL:'project@example.test',SIGNUP_ADDRESS_LIMIT:yes,SIGNUP_GLOBAL_LIMIT:yes,SIGNUP_VERIFY_ADDRESS_LIMIT:yes,SIGNUP_VERIFY_GLOBAL_LIMIT:yes};let sent=0;const worker=createAuthOnlyWorker({fetchImpl:async()=>{sent++;throw Error('must not send');}}),pending=[];
  function req(path,options={}){const r=new Request(API+path,{...options,headers:{'CF-Connecting-IP':'192.0.2.1',...options.headers}});Object.defineProperty(r,'cf',{value:{colo:'LHR',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'}});return r;}
- try{const path='/auth/signup/start?'+new URLSearchParams({challenge:'a'.repeat(43),state:'b'.repeat(43),redirect_uri:'https://otpanda.github.io/app/'}),ctx={waitUntil:p=>pending.push(p)},start=await worker.fetch(req(path),env,ctx);assert.equal(start.status,200);
+ try{const path='/auth/signup/app?'+new URLSearchParams({challenge:'a'.repeat(43),state:'b'.repeat(43),redirect_uri:'https://otpanda.github.io/app/'}),ctx={waitUntil:p=>pending.push(p)},start=await worker.fetch(req(path),env,ctx);assert.equal(start.status,200);
  const cookies=start.headers.getSetCookie().map(v=>v.split(';')[0]),csrf=cookies.find(v=>v.startsWith('__Host-otpanda_signup_csrf=')).split('=')[1],cookie=cookies.join('; ');
- const response=await worker.fetch(req('/auth/signup/email',{method:'POST',headers:{Origin:API,'Content-Type':'application/x-www-form-urlencoded',Cookie:cookie},body:new URLSearchParams({csrf,email:'denied@example.test'})}),env,ctx);assert.equal(response.status,202);await Promise.all(pending);assert.equal(sent,0);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM auth_challenges').get().n,0);
+ const response=await worker.fetch(req(path,{method:'POST',headers:{Origin:API,'Content-Type':'application/x-www-form-urlencoded',Cookie:cookie},body:new URLSearchParams({action:'email',csrf,email:'denied@example.test'})}),env,ctx);assert.equal(response.status,303);await Promise.all(pending);assert.equal(sent,0);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM auth_challenges').get().n,0);
  assert.equal((await worker.fetch(req(path),{...env,AUTH_ONLY_SIGNUP_EMAIL:'other@example.test'},ctx)).status,503);assert.equal((await worker.fetch(req(path),env,ctx)).status,503);
  }finally{db.sqlite.close();}
 });

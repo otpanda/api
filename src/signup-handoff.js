@@ -1,6 +1,7 @@
+import {claimHumanCode} from './human-email-code.js';
 // Internal first-passkey signup to existing cookie-bound login completion.
 // No HTTP/runtime mount, mail transport, enrollment of recovery devices or keys.
-import{AccountIdentityService,canonicalAccountEmail}from'./account-identity.js';
+import{AccountIdentityService,canonicalAccountEmail,mailboxKey}from'./account-identity.js';
 import{hashText}from'./sessions.js';
 import{generateAccessToken,parseAccessToken,digestSecret,digestToHex}from'./tokens.js';
 const REDIRECT='https://otpanda.github.io/app/',OPAQUE=/^[A-Za-z0-9_-]{43}$/;
@@ -8,16 +9,17 @@ async function binding(c){return hashText(JSON.stringify(['web-signup-v1',c.cook
 export class SignupHandoffService {
  constructor(db,{signup,login,clock=Date.now}={}){if(!db?.prepare||!signup||!login||typeof clock!=='function')throw new TypeError('Signup handoff dependencies required');Object.assign(this,{db,signup,login,clock});this.identity=new AccountIdentityService(db,{clock});}
  now(){const n=this.clock();if(!Number.isSafeInteger(n)||n<0||!Number.isSafeInteger(n+120000))throw new TypeError('Valid instant required');return n;}
- async beginBrowser({email,emailToken,cookieBinding,challenge,state,redirectUri}={}){
+ async beginBrowser({email,emailToken,cookieBinding,challenge,state,redirectUri,resolveExisting=false}={}){
   if(typeof cookieBinding!=='string'||cookieBinding.length<32||cookieBinding.length>512||!OPAQUE.test(challenge)||!OPAQUE.test(state)||redirectUri!==REDIRECT)return undefined;
   const now=this.now(),cookieDigest=await hashText(cookieBinding),c={cookieDigest,challenge,state};
-  email=canonicalAccountEmail(email);const ep=parseAccessToken(emailToken);if(!ep)return undefined;
-  if(await this.db.prepare('SELECT owner_id FROM account_emails WHERE email=?1').bind(email).first())return undefined;
-  const receipt=await this.db.prepare('UPDATE signup_mail_bindings SET attempts=attempts+1 WHERE proof_id=?1 AND secret_digest=?2 AND cookie_digest=?3 AND email=?4 AND created_at<=?5 AND expires_at>?5 AND attempts<5 RETURNING verified_at,expires_at').bind(ep.tokenId,digestToHex(await digestSecret(ep.secret)),cookieDigest,email,now).first();if(!receipt)return undefined;
+  email=canonicalAccountEmail(email);const human=await claimHumanCode(this.db,{purpose:'signup',binding:JSON.stringify([cookieBinding,email]),code:emailToken,now});const ep=human?{tokenId:human.proof_id}:parseAccessToken(emailToken);if(!ep)return undefined;
+  const existing=await this.db.prepare('SELECT owner_id FROM account_mailbox_keys WHERE mailbox_key=?1').bind(mailboxKey(email)).first();if(existing&&!resolveExisting)return undefined;
+  const receipt=await this.db.prepare('UPDATE signup_mail_bindings SET attempts=attempts+1 WHERE proof_id=?1 AND (?2 IS NULL OR secret_digest=?2) AND cookie_digest=?3 AND email=?4 AND created_at<=?5 AND expires_at>?5 AND attempts<5 RETURNING verified_at,expires_at').bind(ep.tokenId,human?null:digestToHex(await digestSecret(ep.secret)),cookieDigest,email,now).first();if(!receipt)return undefined;
   if(receipt.verified_at===null){
-   if(!await this.identity.claim({token:emailToken,purpose:'signup-email',email}))return undefined;
+   if(human){await this.db.prepare('DELETE FROM auth_challenges WHERE challenge_id=?1').bind(ep.tokenId).run();}else if(!await this.identity.claim({token:emailToken,purpose:'signup-email',email}))return undefined;
    await this.db.prepare('UPDATE signup_mail_bindings SET verified_at=?1 WHERE proof_id=?2 AND verified_at IS NULL').bind(now,ep.tokenId).run();
   }
+  if(existing)return {existing:true};
   // Browser-bound mailbox receipt permits at most five fresh ceremonies. Each
   // receives a new internal one-use proof and a new authenticator challenge.
   const internal=await this.identity.issueEmailChallenge({purpose:'signup-email',email,ttlMs:Math.min(120000,receipt.expires_at-now)});

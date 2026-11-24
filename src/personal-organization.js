@@ -1,3 +1,4 @@
+import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-method.js';
 const MAX_BYTES = 131072;
 function identifier(v) { if(typeof v!=='string'||!v.trim()||v.length>256||/[\x00-\x1f\x7f]/.test(v))throw new TypeError('Invalid organization identifier'); return v; }
 function exact(v,keys) { if(!v||typeof v!=='object'||Array.isArray(v)||Object.keys(v).length!==keys.length||keys.some(k=>!Object.hasOwn(v,k)))throw new TypeError('Invalid organization document'); }
@@ -25,7 +26,7 @@ function guardJson(guard,viewerId) {
  return JSON.stringify(guard);
 }
 function sessionGuard(param,now) {
- return `(?${param} IS NULL OR EXISTS(SELECT 1 FROM device_sessions d JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=json_extract(?${param},'$.deviceId') AND d.owner_id=?1 AND d.generation=json_extract(?${param},'$.generation') AND s.generation=d.generation AND d.revoked_at IS NULL AND p.revoked_at IS NULL AND p.owner_id=d.owner_id AND d.client_kind='web' AND d.created_at<=?${now} AND d.expires_at>?${now} AND json_extract(?${param},'$.expiresAt')>?${now}))`;
+ return `(?${param} IS NULL OR EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=json_extract(?${param},'$.deviceId') AND d.owner_id=?1 AND d.generation=json_extract(?${param},'$.generation') AND s.generation=d.generation AND d.revoked_at IS NULL AND ${MA} AND d.client_kind='web' AND d.created_at<=?${now} AND d.expires_at>?${now} AND json_extract(?${param},'$.expiresAt')>?${now}))`;
 }
 // Internal service only, not an HTTP route. viewerId must come from validated
 // session identity, never from body/path or the owner of a shared entry. Tags

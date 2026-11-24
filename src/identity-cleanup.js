@@ -1,6 +1,8 @@
 // Fixed-table bounded housekeeping for the new identity runtime only.
 // No legacy session/OIDC path is mounted by this module.
 const TABLES=Object.freeze([
+ ['human_email_codes','expires_at'],['pending_logins','expires_at'],['setting_changes','expires_at'],
+ ['google_continuations','expires_at'],['google_enrollment_grants','expires_at'],['passkey_add_authorizations','expires_at'],['oauth_transactions','expires_at'],
  ['assignment_intents','result_expires_at'],
  ['browser_logout_bindings','expires_at'],['auth_challenges','expires_at'],['passkey_ceremonies','expires_at'],
  ['passkey_signups','expires_at'],['web_signup_starts','expires_at'],['signup_mail_bindings','expires_at'],['web_login_starts','expires_at'],
@@ -19,5 +21,6 @@ export async function cleanupIdentity({db,clock=Date.now,limit=100}={}) {
  const devices=await db.prepare('DELETE FROM device_sessions WHERE device_id IN (SELECT device_id FROM device_sessions WHERE expires_at<=?1 OR revoked_at IS NOT NULL ORDER BY expires_at LIMIT ?2)').bind(now,limit).run();removed.device_sessions=devices.meta.changes;
  const receipts=await db.prepare('DELETE FROM personal_copy_receipts WHERE rowid IN (SELECT rowid FROM personal_copy_receipts WHERE accepted_at<?1 ORDER BY accepted_at LIMIT ?2)').bind(now-600000,limit).run();removed.personal_copy_receipts=receipts.meta.changes;
  const days=await db.prepare('DELETE FROM personal_copy_days WHERE rowid IN (SELECT rowid FROM personal_copy_days WHERE day<?1 ORDER BY day LIMIT ?2)').bind(Math.floor(now/86400000)-89,limit).run();removed.personal_copy_days=days.meta.changes;
+ const recognition=await db.prepare('DELETE FROM recognized_browsers WHERE recognition_id IN(SELECT r.recognition_id FROM recognized_browsers r LEFT JOIN account_security s ON s.owner_id=r.owner_id LEFT JOIN provider_identities g ON g.identity_id=r.provider_identity_id WHERE r.revoked_at IS NOT NULL OR s.generation<>r.generation OR g.revoked_at IS NOT NULL ORDER BY r.created_at LIMIT ?2)').bind(now,limit).run();removed.recognized_browsers=recognition.meta.changes;
  return removed;
 }

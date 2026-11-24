@@ -21,9 +21,9 @@ test('logout invalidates device access, refresh and outstanding exchange, not an
  const row=f.db.sqlite.prepare('SELECT owner_id,credential_id,generation FROM device_sessions WHERE device_id=?').get(f.d.deviceId);
  const other=await f.sessions.issue({proof:{ownerId:row.owner_id,credentialId:row.credential_id,generation:row.generation,purpose:'authenticate',verifiedAt:NOW},clientKind:'web'});
  const grant=await f.exchanges.mint({deviceId:f.d.deviceId,challenge:await pkceChallenge(verifier),redirectUri:redirect_uri});
- const l=await logout(f),r=await l.request();assert.equal(r.status,200);assert.ok((await r.text()).includes('signed out'));assert.equal(r.headers.getSetCookie().length,5);
+ const l=await logout(f),r=await l.request();assert.equal(r.status,303);assert.equal(r.headers.get('location'),redirect_uri);assert.equal(r.headers.getSetCookie().length,5);
  assert.equal(await f.sessions.authenticate(f.d.access),undefined);assert.equal((await f.sessions.rotate(f.d.refresh)).status,'denied');assert.equal(await f.exchanges.exchange({code:grant.code,verifier,redirectUri:redirect_uri}),undefined);assert.ok(await f.sessions.authenticate(other.access));
- assert.equal((await l.request()).status,200);
+ assert.equal((await l.request()).status,303);
  }finally{f.db.sqlite.close();}
 });
 test('spent refresh logout wins against concurrent rotation; native handle cannot revoke',async()=>{
@@ -32,7 +32,7 @@ test('spent refresh logout wins against concurrent rotation; native handle canno
  }finally{f.db.sqlite.close();}
 });
 test('logout requires exact origin CSRF and bounded strict body; GET cannot revoke',async()=>{
- const f=await fixture();try {const l=await logout(f);assert.ok(await f.sessions.authenticate(f.d.access));for(const Origin of [APP,'https://evil.test','null'])assert.equal((await l.request({Origin})).status,403);assert.equal((await l.request({Cookie:REFRESH_COOKIE+'='+f.d.refresh})).status,403);for(const body of ['csrf=x&csrf=x','csrf=x&extra=1','x'.repeat(513)])assert.ok([400,403].includes((await l.run({method:'POST',headers:{Origin:API,'Content-Type':'application/x-www-form-urlencoded',Cookie:l.csrf},body})).status));assert.ok(await f.sessions.authenticate(f.d.access));assert.equal((await l.request()).status,200);
+ const f=await fixture();try {const l=await logout(f);assert.ok(await f.sessions.authenticate(f.d.access));for(const Origin of [APP,'https://evil.test','null'])assert.equal((await l.request({Origin})).status,403);assert.equal((await l.request({Cookie:REFRESH_COOKIE+'='+f.d.refresh})).status,403);for(const body of ['csrf=x&csrf=x','csrf=x&extra=1','x'.repeat(513)])assert.ok([400,403].includes((await l.run({method:'POST',headers:{Origin:API,'Content-Type':'application/x-www-form-urlencoded',Cookie:l.csrf},body})).status));assert.ok(await f.sessions.authenticate(f.d.access));assert.equal((await l.request()).status,303);
  }finally{f.db.sqlite.close();}
 });
 test('logout browser binding cancels issuance before/after completion without affecting independent binding',async()=>{
