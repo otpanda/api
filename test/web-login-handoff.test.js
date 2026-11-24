@@ -34,8 +34,18 @@ test('expired/future handoff, generation reset and credential revoke deny withou
 test('only one concurrent completion can create a session',async()=>{
  const x=await setup(),h=await verified(x),results=await Promise.all([1,2].map(()=>x.login.complete({handoff:h.handoff,binding:x.context.binding})));assert.equal(results.filter(Boolean).length,1);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,1);x.db.sqlite.close();
 });
-test('failed mint or security reset during mint revokes provisional device',async()=>{
- for(const change of ['empty','throw','generation','expire']){const x=await setup(),h=await verified(x),mint=x.exchanges.mint.bind(x.exchanges);x.exchanges.mint=async args=>{if(change==='empty')return undefined;if(change==='throw')throw Error('storage failed');const r=await mint(args);if(change==='generation')x.db.sqlite.prepare('UPDATE account_security SET generation=generation+1').run();if(change==='expire')x.setNow(NOW+60000);return r;};const finish=()=>x.login.complete({handoff:h.handoff,binding:x.context.binding});if(change==='throw')await assert.rejects(finish,/storage failed/);else assert.equal(await finish(),undefined);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,0);x.db.sqlite.close();}
+test('atomic login commit storage failure or security reset preserves prior state',async()=>{
+ for(const change of ['throw','generation']){
+  const x=await setup(),h=await verified(x),batch=x.db.batch.bind(x.db);
+  x.db.batch=async statements=>{
+   if(change==='throw')x.db.sqlite.exec("CREATE TRIGGER fail_exchange BEFORE INSERT ON browser_exchanges BEGIN SELECT RAISE(ABORT,'synthetic storage failure'); END");
+   if(change==='generation')x.db.sqlite.prepare('UPDATE account_security SET generation=generation+1').run();
+   return batch(statements);
+  };
+  const finish=()=>x.login.complete({handoff:h.handoff,binding:x.context.binding});
+  if(change==='throw')await assert.rejects(finish,/synthetic storage failure/);else assert.equal(await finish(),undefined);
+  assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,0);x.db.sqlite.close();
+ }
 });
 test('malformed context is denied and expiry cleanup is bounded',async()=>{
  const x=await setup();for(const patch of [{binding:''},{challenge:'bad'},{state:'bad'},{redirectUri:REDIRECT+'bad'}])assert.equal(await x.login.begin({...x.context,...patch}),undefined);for(let i=0;i<2;i++)assert.ok(await verified(x));x.setNow(NOW+60000);assert.equal(await x.login.cleanup({limit:1}),1);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM web_login_handoffs').get().n,1);await assert.rejects(x.login.cleanup({limit:0}));x.db.sqlite.close();
@@ -50,9 +60,26 @@ test('logout tombstone wins before or during cookie-bound completion',async()=>{
  for(const phase of ['before','during']) {
  const x=await setup();try {const cookieBinding='c'.repeat(43),c=await x.login.beginBrowser({...x.context,cookieBinding}),h=await x.login.verifyBrowser({token:c.token,response:x.assertion(c)}),row=x.db.sqlite.prepare('SELECT binding_digest FROM web_login_handoffs').get();
  if(phase==='before')await x.sessions.logoutBrowser(undefined,row.binding_digest);
- else {const mint=x.exchanges.mint.bind(x.exchanges);x.exchanges.mint=async args=>{const r=await mint(args);await x.sessions.logoutBrowser(undefined,row.binding_digest);return r;};}
+ else {const batch=x.db.batch.bind(x.db);let injected=false;x.db.batch=async statements=>{if(!injected){injected=true;await x.sessions.logoutBrowser(undefined,row.binding_digest);}return batch(statements);};}
  assert.equal(await x.login.completeBrowser({handoff:h.handoff,cookieBinding}),undefined);
  assert.equal(x.db.sqlite.prepare('SELECT count(*) AS n FROM device_sessions WHERE revoked_at IS NULL').get().n,0);
  }finally{x.db.sqlite.close();}
+ }
+});
+
+test('expiry before final clock sample denies, execution overrun after sample is committed success',async()=>{
+ for(const phase of ['before','after']){
+  const x=await setup(),h=await verified(x);
+  if(phase==='before'){
+   const issue=x.sessions.issueBrowserLogin.bind(x.sessions);
+   x.sessions.issueBrowserLogin=async args=>{x.setNow(NOW+60000);return issue(args);};
+  }else{
+   const batch=x.db.batch.bind(x.db);
+   x.db.batch=async statements=>{x.setNow(NOW+60000);return batch(statements);};
+  }
+  const result=await x.login.complete({handoff:h.handoff,binding:x.context.binding});
+  assert.equal(Boolean(result),phase==='after');
+  assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,phase==='after'?1:0);
+  x.db.sqlite.close();
  }
 });

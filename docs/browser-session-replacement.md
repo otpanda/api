@@ -1,0 +1,13 @@
+# Same-browser session replacement candidate
+
+After a fresh passkey handoff, same-origin login completion may read the existing HttpOnly device-refresh cookie. It is used read-only, never rotated or replay-consumed. Only its exact active same-owner web device, current generation, nonrevoked credential and unused secret are eligible for retirement. Malformed, oversized, spent, foreign-owner and native handles supply no retirement authority.
+
+One serialized D1 batch inserts the new session, refresh, access and PKCE exchange, then retires only the eligible prior. The cap calculation and retirement use the identical SQL predicate. At fifty active devices only a still-eligible prior creates capacity. Ineligible prior material falls back to ordinary cap-controlled login. No lineage schema or global logout is added. Parallel independently passkey-authorized completions can still produce a bounded extra session, as before. This candidate addresses ordinary sequential replacement, not every response-loss/concurrent-tab orphan.
+
+The final injected-clock sample immediately before batch construction is the freshness commit boundary. Before-sample deadline expiry denies without retirement. Execution or response delay after that sample does not roll back committed retirement; after commit return success. Credential, generation, tombstone and capacity are checked inside SQL. Lost responses after commit require fresh login. There is no second database clock and no attempt to resurrect a retired session.
+
+Failed SQL batch rolls back all effects. Guarded session insertion denial yields no children or retirement. Unexpected child no-op blocks retirement and revokes only the provisional new session. Response has no prior-validity bit. Failed completion never clears the old cookie. API fields/origins, local-clear semantics, other devices, keys and source/data/recovery routes are unchanged.
+
+Validation: Node464tests, auth-only dry-run bundle, negative mutations removing exchange guard/prior secret/prior unused checks caught. Actual compiled production-main Flutter with workerd/all migrations passes synthetic signup, passkey login over existing session, old access401, old refresh denied, one active device, new restore/session/logout, excluded data404. Loopback virtual authenticator is not production-cookie, live hardware or expiry proof. No real account/key/source changed.
+
+The largest prepared-statement index is ten, removing the earlier unused eighth slot from the session insert. The retirement statement still binds shared positions6/7 without referencing them. Local SQLite/workerd accepts this shape; remote D1 parameter handling and atomicity have not been independently exercised by a real-account ceremony. No schema change is added.

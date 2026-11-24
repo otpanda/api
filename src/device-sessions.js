@@ -27,6 +27,40 @@ export class DeviceSessionService {
     const row=await this.db.prepare('SELECT device_id FROM device_sessions WHERE device_id=?1').bind(deviceId).first();
     return row?{deviceId,refresh:refresh.token,access:access.token,accessExpiresAt:now+ACCESS,refreshExpiresAt:now+IDLE}:undefined;
   }
+  // Login completion commits the new device and its PKCE exchange together.
+  // A prior refresh is authority only for retiring that same owner's web device.
+  // No refresh material or prior device id comes from the app request body.
+  async issueBrowserLogin({proof,browserBindingDigest,priorRefresh,challenge,redirectUri,deadline}) {
+    const redirect='https://otpanda.github.io/app/';
+    if(!Number.isSafeInteger(deadline)||redirectUri!==redirect||typeof challenge!=='string'||!/^[A-Za-z0-9_-]{43}$/.test(challenge)||!/^[a-f0-9]{64}$/.test(browserBindingDigest??''))return undefined;
+    let now=this.now();
+    if(!proof||proof.purpose!=='authenticate'||!Number.isSafeInteger(proof.verifiedAt)||proof.verifiedAt>now||now-proof.verifiedAt>=PROOF||!Number.isSafeInteger(proof.generation)||typeof proof.ownerId!=='string'||typeof proof.credentialId!=='string')return undefined;
+    const old=await tokenDigest(priorRefresh);
+    // Repeated identically by cap accounting and retirement inside one batch.
+    // Ineligible prior material is ignored, never rotated or replay-consumed.
+    const priorSql=`SELECT d.device_id FROM device_refresh_handles r JOIN device_sessions d ON d.device_id=r.device_id JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE r.handle_id=?8 AND r.secret_digest=?9 AND r.used_at IS NULL AND r.created_at<=?5 AND d.owner_id=?2 AND d.generation=?4 AND d.client_kind='web' AND d.revoked_at IS NULL AND d.created_at<=?5 AND d.expires_at>?5 AND p.revoked_at IS NULL AND p.owner_id=d.owner_id AND s.generation=d.generation`;
+    const deviceId=crypto.randomUUID(),refresh=await freshHandle(),access=await freshHandle(),exchange=await freshHandle();
+    // The fresh sample immediately before batch construction is the commit
+    // freshness boundary. After atomic commit, response delay is not rollback.
+    now=this.now();
+    if(proof.verifiedAt>now||now-proof.verifiedAt>=PROOF||now>=deadline)return undefined;
+    // Cap accounting and retirement share the exact eligibility predicate.
+    // A rotated/logged-out prior simply provides no capacity discount.
+    const results=await this.db.batch([
+      this.db.prepare(`INSERT INTO device_sessions (device_id,owner_id,credential_id,generation,client_kind,created_at,last_used_at,expires_at,browser_binding_digest) SELECT ?1,?2,?3,?4,'web',?5,?5,?6,?7 WHERE (SELECT count(*) FROM device_sessions WHERE owner_id=?2 AND revoked_at IS NULL AND expires_at>?5 AND device_id NOT IN (${priorSql}))<${MAX_DEVICES} AND NOT EXISTS (SELECT 1 FROM browser_logout_bindings WHERE binding_digest=?7 AND expires_at>?5) AND EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?3 AND p.owner_id=?2 AND p.revoked_at IS NULL AND s.generation=?4)`).bind(deviceId,proof.ownerId,proof.credentialId,proof.generation,now,now+IDLE,browserBindingDigest,old?.id??'',old?.digest??''),
+      this.db.prepare('INSERT INTO device_refresh_handles (handle_id,secret_digest,device_id,created_at) SELECT ?1,?2,?3,?4 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(refresh.tokenId,refresh.digest,deviceId,now),
+      this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(access.tokenId,access.digest,deviceId,now,now+ACCESS),
+      this.db.prepare('INSERT INTO browser_exchanges (exchange_id,secret_digest,device_id,challenge,redirect_uri,created_at,expires_at) SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE EXISTS (SELECT 1 FROM device_sessions WHERE device_id=?3)').bind(exchange.tokenId,exchange.digest,deviceId,challenge,redirect,now,now+60000),
+      this.db.prepare(`UPDATE device_sessions SET revoked_at=?5 WHERE device_id IN (${priorSql}) AND EXISTS (SELECT 1 FROM browser_exchanges WHERE exchange_id=?10 AND device_id=?1) AND EXISTS (SELECT 1 FROM device_refresh_handles WHERE device_id=?1) AND EXISTS (SELECT 1 FROM device_access_handles WHERE device_id=?1)`).bind(deviceId,proof.ownerId,proof.credentialId,proof.generation,now,now+IDLE,browserBindingDigest,old?.id??'',old?.digest??'',exchange.tokenId),
+    ]);
+    if(results.slice(0,4).some(r=>r.meta.changes!==1)) {
+      // Guarded insert denial is a no-op. An unexpected child no-op must not
+      // leave a usable provisional device; retirement also requires children.
+      if(results[0].meta.changes===1)await this.revoke({ownerId:proof.ownerId,deviceId});
+      return undefined;
+    }
+    return {deviceId,refresh:refresh.token,refreshExpiresAt:now+IDLE,code:exchange.token};
+  }
   async authenticate(token){
     const t=await tokenDigest(token);if(!t)return undefined;const now=this.now();
     const row=await this.db.prepare(`SELECT d.owner_id,d.device_id,d.generation,d.client_kind,a.expires_at FROM device_access_handles a JOIN device_sessions d ON d.device_id=a.device_id JOIN passkey_credentials p ON p.credential_id=d.credential_id JOIN account_security s ON s.owner_id=d.owner_id WHERE a.handle_id=?1 AND a.secret_digest=?2 AND a.created_at<=?3 AND a.expires_at>?3 AND ${ACTIVE}`).bind(t.id,t.digest,now).first();
@@ -76,4 +110,4 @@ export class DeviceSessionService {
   }
   async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes===1;}
   async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL').bind(this.now(),ownerId).run();return r.meta.changes;}
-                                                                                                                          }
+  }

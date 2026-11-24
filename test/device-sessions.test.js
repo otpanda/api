@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { database } from './sqlite-helper.js';
 import { PasskeySignupService } from '../src/passkey-signup.js';
 import { AccountIdentityService } from '../src/account-identity.js';
+import {BrowserExchangeService} from '../src/browser-exchanges.js';
 import { DeviceSessionService } from '../src/device-sessions.js';
 import { authenticator } from './passkey-fixture.js';
 const NOW=1_800_000_000_000,DAY=86400000;
@@ -64,4 +65,104 @@ test('refresh history ceiling fails closed without consuming current handle',asy
  for(let i=0;i<9999;i++)insert.run('synthetic-'+i,'a'.repeat(64),d.deviceId,NOW,NOW);
  assert.equal((await service.rotate(d.refresh)).status,'retry');assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_refresh_handles').get().n,10000);
  }finally{db.sqlite.close();}
+});
+
+const LOGIN_REDIRECT='https://otpanda.github.io/app/',BIND='f'.repeat(64),CHALLENGE='a'.repeat(43);
+function loginArgs(x,priorRefresh,patch={}){return{proof:x.proof,browserBindingDigest:BIND,priorRefresh,challenge:CHALLENGE,redirectUri:LOGIN_REDIRECT,deadline:NOW+60000,...patch};}
+test('browser login atomically retires exact prior and old access/refresh/exchange while new session works',async()=>{
+ const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:'web'}),other=await x.service.issue({proof:x.proof,clientKind:'web'});
+ const exchanges=new BrowserExchangeService(x.db,{clock:()=>NOW,redirectUri:LOGIN_REDIRECT});
+ const pending=await exchanges.mint({deviceId:old.deviceId,challenge:CHALLENGE,redirectUri:LOGIN_REDIRECT});
+ const current=await x.service.issueBrowserLogin(loginArgs(x,old.refresh));assert.ok(current);
+ assert.equal(await x.service.authenticate(old.access),undefined);assert.equal((await x.service.rotate(old.refresh)).status,'denied');
+ assert.ok(await x.service.authenticate(other.access));assert.equal((await x.service.rotate(current.refresh)).status,'rotated');
+ assert.equal(x.db.sqlite.prepare('SELECT revoked_at FROM device_sessions WHERE device_id=?').get(old.deviceId).revoked_at,NOW);
+ assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM browser_exchanges WHERE device_id=?').get(current.deviceId).n,1);x.db.sqlite.close();
+});
+test('invalid,oversize,forged,used and native prior are ignored read-only without retirement',async()=>{
+ for(const kind of ['missing','malformed','oversize','forged','used','android']){
+  const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:kind==='android'?'android':'web'});let prior=old.refresh;
+  if(kind==='missing')prior=undefined;if(kind==='malformed')prior='bad';if(kind==='oversize')prior='x'.repeat(10000);
+  if(kind==='forged')prior=old.refresh.slice(0,40)+(old.refresh[40]==='A'?'B':'A')+old.refresh.slice(41);
+  if(kind==='used'){await x.service.rotate(old.refresh);x.setNow(NOW+10001);}
+  const result=await x.service.issueBrowserLogin(loginArgs(x,prior));assert.ok(result,kind);
+  assert.equal(x.db.sqlite.prepare('SELECT revoked_at FROM device_sessions WHERE device_id=?').get(old.deviceId).revoked_at,null,kind);
+  x.db.sqlite.close();
+ }
+});
+test('crossowner prior is ignored for an independently valid other owner proof',async()=>{
+ const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:'web'});
+ const identity=new AccountIdentityService(x.db,{clock:()=>NOW}),signup=new PasskeySignupService(x.db,{clock:()=>NOW}),a=authenticator();
+ const {token}=await identity.issueEmailChallenge({purpose:'signup-email',email:'other@example.test'}),c=await signup.begin({email:'other@example.test',emailToken:token,binding:'other'});
+ const account=await signup.finish({token:c.token,binding:'other',response:a.registration({expected:c.options.challenge})});
+ const result=await x.service.issueBrowserLogin(loginArgs(x,old.refresh,{proof:{...account,verifiedAt:NOW,purpose:'authenticate'}}));assert.ok(result);
+ assert.ok(await x.service.authenticate(old.access));assert.equal(x.db.sqlite.prepare('SELECT owner_id FROM device_sessions WHERE device_id=?').get(result.deviceId).owner_id,account.ownerId);x.db.sqlite.close();
+});
+test('50-device cap discounts only eligible prior; fallback without prior cannot exceed it',async()=>{
+ const x=await setup(),devices=[];for(let i=0;i<50;i++)devices.push(await x.service.issue({proof:x.proof,clientKind:'web'}));
+ assert.equal(await x.service.issueBrowserLogin(loginArgs(x,'bad')),undefined);
+ const result=await x.service.issueBrowserLogin(loginArgs(x,devices[0].refresh));assert.ok(result);
+ assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,50);
+ assert.ok(await x.service.issueBrowserLogin(loginArgs(x,devices[1].refresh)));
+ assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,50);x.db.sqlite.close();
+});
+test('rotation or prior logout before atomic commit falls back without touching prior successor',async()=>{
+ for(const action of ['rotate','logout']){
+  const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:'web'}),batch=x.db.batch.bind(x.db);let once=false,rotated;
+  x.db.batch=async statements=>{if(!once){once=true;if(action==='rotate')rotated=await x.service.rotate(old.refresh);else await x.service.logoutBrowser(old.refresh);}return batch(statements);};
+  assert.ok(await x.service.issueBrowserLogin(loginArgs(x,old.refresh)),action);
+  if(rotated)assert.ok(await x.service.authenticate(rotated.access));
+  x.db.sqlite.close();
+ }
+});
+test('new binding logout, credential revoke and generation change deny all replacement effects',async()=>{
+ for(const action of ['binding','credential','generation']){
+  const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:'web'}),batch=x.db.batch.bind(x.db);let once=false;
+  x.db.batch=async statements=>{if(!once){once=true;if(action==='binding')await x.service.logoutBrowser(undefined,BIND);if(action==='credential')x.db.sqlite.prepare('UPDATE passkey_credentials SET revoked_at=?').run(NOW);if(action==='generation')x.db.sqlite.prepare('UPDATE account_security SET generation=generation+1').run();}return batch(statements);};
+  assert.equal(await x.service.issueBrowserLogin(loginArgs(x,old.refresh)),undefined,action);
+  assert.equal(x.db.sqlite.prepare('SELECT revoked_at FROM device_sessions WHERE device_id=?').get(old.deviceId).revoked_at,null);
+  assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,1);x.db.sqlite.close();
+ }
+});
+test('exchange insert failure atomically rolls back replacement and child no-op preserves prior',async()=>{
+ for(const mode of ['abort','ignore']){
+  const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:'web'});
+  x.db.sqlite.exec(`CREATE TRIGGER stop_exchange BEFORE INSERT ON browser_exchanges BEGIN SELECT RAISE(${mode==='abort'?"ABORT,'synthetic failure'":'IGNORE'}); END`);
+  const run=()=>x.service.issueBrowserLogin(loginArgs(x,old.refresh));
+  if(mode==='abort')await assert.rejects(run,/synthetic failure/);else assert.equal(await run(),undefined);
+  assert.ok(await x.service.authenticate(old.access));assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,1);x.db.sqlite.close();
+ }
+});
+
+test('fresh repeated logins replace prior without accumulating devices, cap fallback races stay bounded',async()=>{
+ const x=await setup();let prior=await x.service.issue({proof:x.proof,clientKind:'web'});
+ for(let i=0;i<55;i++){const result=await x.service.issueBrowserLogin(loginArgs(x,prior.refresh));assert.ok(result);prior=result;}
+ assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,1);
+ x.db.sqlite.close();
+});
+test('cap and retirement share exact predicate for rotate-at-cap and revoked credential prior',async()=>{
+ const x=await setup(),devices=[];for(let i=0;i<50;i++)devices.push(await x.service.issue({proof:x.proof,clientKind:'web'}));
+ const batch=x.db.batch.bind(x.db);let injected=false;
+ x.db.batch=async statements=>{if(!injected){injected=true;await x.service.rotate(devices[0].refresh);}return batch(statements);};
+ assert.equal(await x.service.issueBrowserLogin(loginArgs(x,devices[0].refresh)),undefined);
+ assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,50);x.db.sqlite.close();
+});
+
+test('concurrent verified replacements never exceed cap, with same or distinct prior',async()=>{
+ for(const same of [true,false]){
+  const x=await setup(),devices=[];for(let i=0;i<50;i++)devices.push(await x.service.issue({proof:x.proof,clientKind:'web'}));
+  const results=await Promise.all([x.service.issueBrowserLogin(loginArgs(x,devices[0].refresh)),x.service.issueBrowserLogin(loginArgs(x,devices[same?0:1].refresh))]);
+  assert.equal(results.filter(Boolean).length,same?1:2);
+  assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,50);x.db.sqlite.close();
+ }
+});
+test('unexpected refresh/access child no-op never retires prior or leaves usable replacement',async()=>{
+ for(const table of ['device_refresh_handles','device_access_handles']){
+  const x=await setup(),old=await x.service.issue({proof:x.proof,clientKind:'web'});
+  x.db.sqlite.exec(`CREATE TRIGGER stop_child BEFORE INSERT ON ${table} BEGIN SELECT RAISE(IGNORE); END`);
+  assert.equal(await x.service.issueBrowserLogin(loginArgs(x,old.refresh)),undefined);
+  assert.ok(await x.service.authenticate(old.access));
+  assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions WHERE revoked_at IS NULL').get().n,1);
+  x.db.sqlite.close();
+ }
 });
