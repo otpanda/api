@@ -14,7 +14,7 @@ const API='https://otpanda-api.abrahammurciano.workers.dev';
 const paths=new Set([...['status','begin','finish','request-change','approve-begin','approve-change','consume-change','cancel-request'].map(p=>'/v1/manage/recovery/'+p),...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>'/auth/recovery/email/'+p),...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
  '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
- '/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
+ '/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
