@@ -20,7 +20,7 @@ test('integrated cleanup purges expired encrypted incoming codes in bounded batc
  insert.run('a','current',source,expired,NOW,NOW+1000);
  const sessions=new SessionService(db,{origin:'https://app.test',clock:()=>NOW});
  const current=await sessions.issue('a');await sessions.issue('a');db.sqlite.prepare('UPDATE sessions SET created_at=?,expires_at=? WHERE session_id<>?').run(NOW-2000,NOW-1000,parseAccessToken(current.session).tokenId);
- const app=createEntryApplication({db,sessions,access:{},tokens:{},signIn:{},trustedRequestKey:()=> 'cleanup',clock:()=>NOW});
+ const app=createEntryApplication({db,sessions,access:{},tokens:{},trustedRequestKey:()=> 'cleanup',clock:()=>NOW});
  await app.cleanup();assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM incoming_codes').get().n,6);
  assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM sessions').get().n,1);
  await app.cleanup();assert.equal(db.sqlite.prepare('SELECT count(*) AS n FROM incoming_codes').get().n,1);
