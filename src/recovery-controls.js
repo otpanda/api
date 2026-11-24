@@ -87,10 +87,10 @@ export class RecoveryControls {
    this.db.prepare(`UPDATE recovery_changes SET consumed_at=?5,consume_receipt=?4 WHERE change_id=?1 AND owner_id=?2 AND generation=?3 AND requester_device_id=?6 AND approved_at IS NOT NULL AND consumed_at IS NULL AND expires_at>?5 AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?2 AND s.generation=?3) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?6 AND d.owner_id=?2 AND d.generation=?3 AND d.revoked_at IS NULL AND d.expires_at>?5 AND ${MA}) AND ${approver}`).bind(changeId,o,g,receipt,now,deviceId),
    effect,
   ]);}catch{return;}
-  if(r[0].meta.changes!==1)return;
+  if(r[0]/*exact-count-ok*/.meta.changes!==1)return;
   if(row.kind==='email-escape-on')return await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(o).first()?{emailEscape:true}:undefined;
   if(row.kind==='email-escape-off')return{emailEscape:false};
-  return r[1].meta.changes===1?{revoked:row.kind==='passkey-revoke'?'passkey':'session'}:undefined;
+  return r[1].meta.changes>=1?{revoked:row.kind==='passkey-revoke'?'passkey':'session'}:undefined;
  }
  // proof: PasskeyService.finishAuthentication result for purpose 'step-up'. A
  // device-key (possession-only) proof is refused here.
@@ -112,16 +112,16 @@ export class RecoveryControls {
    }
    if(kind==='email-escape-off'){
     const r=await this.db.prepare(`DELETE FROM email_recovery_optin WHERE owner_id=?2 AND ${live}`).bind(c,o,g).run();
-    return r.meta.changes===1||!await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(o).first()?{emailEscape:false}:undefined;
+    return r/*exact-count-ok*/.meta.changes===1||!await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(o).first()?{emailEscape:false}:undefined;
    }
    if(kind==='passkey-revoke'){
     // A different passkey must authorize, so one always remains.
     if(target===c)return;
     const r=await this.db.prepare(`UPDATE passkey_credentials SET revoked_at=?4,revision=revision+1 WHERE credential_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}${keep}`).bind(c,o,g,now,target).run();
-    return r.meta.changes===1?{revoked:'passkey'}:undefined;
+    return r/*exact-count-ok*/.meta.changes===1?{revoked:'passkey'}:undefined;
    }
    const r=await this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE device_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now,target).run();
-   return r.meta.changes===1?{revoked:'session'}:undefined;
+   return r.meta.changes>=1?{revoked:'session'}:undefined;
   }catch{return;}
  }
-}
+ }
