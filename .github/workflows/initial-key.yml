@@ -1,0 +1,44 @@
+name: Provision initial encryption key once
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Initial provisioning or read-only retention verification. Never repair or rotate.
+        required: true
+        type: choice
+        options:
+          - do-not-provision
+          - initial-key-once
+          - verify-only
+permissions:
+  contents: read
+jobs:
+  provision:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && (inputs.confirmation == 'initial-key-once' || inputs.confirmation == 'verify-only')
+    concurrency:
+      group: otpanda-production
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Verify retained bindings without a provider token
+        if: inputs.confirmation == 'verify-only'
+        env:
+          INITIAL_KEY_CONFIRM: initial-key-once
+          NODE_OPTIONS: ''
+          NODE_DEBUG: ''
+        run: node scripts/provision-initial-key.mjs --verify-only
+      - name: Reserve and provision initial key directly in provider custody
+        if: inputs.confirmation == 'initial-key-once'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          INITIAL_KEY_CONFIRM: ${{ inputs.confirmation }}
+          NODE_OPTIONS: ''
+          NODE_DEBUG: ''
+        run: node scripts/provision-initial-key.mjs

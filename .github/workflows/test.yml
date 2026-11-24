@@ -23,6 +23,9 @@ jobs:
       - run: npm run db:local
       - run: npm run db:local
   deploy:
+    concurrency:
+      group: otpanda-production
+      cancel-in-progress: false
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: node-test
     runs-on: ubuntu-latest
