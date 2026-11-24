@@ -1,3 +1,4 @@
+import {googleVerifyEmail} from './email-templates.js';
 import {ExtraVerification} from './extra-verification.js';
 import {createGoogleProtectionHttp} from './google-protection-http.js';
 import {createGoogleContinuationHttp} from './google-continuation-http.js';
@@ -18,7 +19,7 @@ export async function createGoogleBrowserRuntime({db,keys,activeKeyId,clientId,c
  if(server.issuer!==ISSUER||!server.code_challenge_methods_supported?.includes('S256')||!server.id_token_signing_alg_values_supported?.includes('RS256')||!server.token_endpoint_auth_methods_supported?.includes('client_secret_post'))throw Error('Unexpected Google metadata');
  const sessions=new DeviceSessionService(db,{clock}),accounts=new GoogleAccountService(db,{clock}),cipher=new CodeCipher({keys,activeKeyId});
  const protection=new ExtraVerification(db,{clock});
- const transport=mail?new BrevoMailTransport(mail):null,continuations=new GoogleContinuation(db,{cipher,clock,deliver:transport?proof=>transport.submit({to:proof.to,subject:'Verify your email for OTPanda',text:'Your OTPanda verification code is:\n\n'+(proof.code??proof.token)+'\n\nReturn to the same browser to continue. This verifies your Google account email for OTPanda. If you did not request this, ignore this email.'}):undefined});
+ const transport=mail?new BrevoMailTransport(mail):null,continuations=new GoogleContinuation(db,{cipher,clock,deliver:transport?proof=>transport.submit({to:proof.to,...googleVerifyEmail(proof.code??proof.token)}):undefined});
  const complete=async({identity,appState,challenge,remember,verifiedAt,expectedGeneration,request,protectionPending})=>{
   const account=await accounts.resolve(identity);
   if(!account||!['created','linked'].includes(account.status)){
