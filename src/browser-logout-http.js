@@ -29,6 +29,6 @@ export function createBrowserLogoutHttp({sessions,db,clock=Date.now}={}) {
   const bindingDigest=typeof binding==='string'&&/^otpda_[A-Za-z0-9_-]{55}$/.test(binding)?await hashText(await hashText(binding)):null;
   await sessions.logoutBrowser(readCookie(request,REFRESH_COOKIE),bindingDigest);
   const response=new Response(null,{status:303,headers:{...securityHeaders,Location:APP}});
-  response.headers.append('Set-Cookie',cookie(REFRESH_COOKIE,'',0));response.headers.append('Set-Cookie',cookie(CSRF,'',0));for(const name of ['__Host-otpanda_login','__Host-otpanda_login_csrf','__Host-otpanda_restore'])response.headers.append('Set-Cookie',cookie(name,'',0));return response;
+  response.headers.append('Set-Cookie',cookie(REFRESH_COOKIE,'',0));response.headers.append('Set-Cookie',cookie(CSRF,'',0));for(const name of ['__Host-otpanda_browser','__Host-otpanda_login','__Host-otpanda_login_csrf','__Host-otpanda_restore'])response.headers.append('Set-Cookie',cookie(name,'',0));return response;
  }};
 }
