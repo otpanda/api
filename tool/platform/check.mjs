@@ -10,7 +10,14 @@ const open=async ttl=>{
  return {ws,messages,closed:()=>closed};
 };
 const until=async test=>{for(let n=0;n<100;n++){if(test())return;await pause(100);}throw Error('event timeout');};
-console.log('health',await json('/health'));console.log('prepare',await json('/prepare'));
+// First workers.dev publication can briefly return platform HTML404. Health only, never retry writes.
+let ready=false;const deadline=Date.now()+60000;
+for(let n=0;n<12&&Date.now()<deadline;n++){
+ let r;try{r=await fetch(base+'/health',{headers:{authorization:'Bearer '+key},signal:AbortSignal.timeout(Math.max(1,Math.min(5000,deadline-Date.now())))});}catch{console.log('health network not ready');}
+ if(r?.ok){const h=await r.json();assert.equal(h.synthetic,true);ready=true;break;}
+ if(r&&r.status!==404)throw Error('health status '+r.status);
+ if(Date.now()<deadline)await pause(Math.min(5000,deadline-Date.now()));
+}assert.equal(ready,true,'workers.dev readiness within60s');console.log('health ready');console.log('prepare',await json('/prepare'));
 const one=await open(120000),before=await json('/inspection');
 const write=await json('/write');assert.equal(write.written.ok,true);assert.ok(write.hubCalls>=1);assert.ok(write.combined<=45);assert.ok(write.drainD1<=20);assert.ok(write.hubCalls<=10);
 await until(()=>one.messages.length>0);assert.equal(one.messages[0],'{"v":1,"t":"changed"}');console.log('writer_drain',write);
