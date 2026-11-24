@@ -15,7 +15,7 @@ async function setup(){
  const c=await signup.begin({email:'a@example.com',emailToken:token,binding:'binding'}),a=authenticator();
  const account=await signup.finish({token:c.token,binding:'binding',response:a.registration({expected:c.options.challenge})});
  db.sqlite.prepare("INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) VALUES('g1',?,'google','https://accounts.google.com','sub-1','a@example.com',?)").run(account.ownerId,NOW);
- const sessions=new DeviceSessionService(db,{clock:()=>now}),ev=new ExtraVerification(db,{clock:()=>now});
+ const sessions=new DeviceSessionService(db,{clock:()=>now}),ev=new ExtraVerification(db,{clock:()=>now,localVerification:async()=>true});
  const credentialId=db.sqlite.prepare('SELECT credential_id c FROM passkey_credentials').get().c;
  const google={ownerId:account.ownerId,generation:account.generation,verifiedAt:NOW,purpose:'authenticate',authMethod:'google',issuer:'https://accounts.google.com',subject:'sub-1'};
  const passkey={...account,verifiedAt:NOW,purpose:'authenticate'};
@@ -262,3 +262,32 @@ test('approver generation change and expired approver session fail at issuance',
  }
 });
 test('stale Google proof requires exact approved pending even after setting disabled or recognition added',async()=>{for(const variant of ['none','canceled','wrong-binding','valid']){const x=await enabled(),p=await x.ev.createPending(pendingArgs(x));await x.ev.approveWithPasskey({proof:await x.step(ACTION.approve(p.pendingId)),pendingId:p.pendingId});const q=await x.ev.poll({token:p.token,browserBindingDigest:B1});await x.ev.disable({proof:await x.step(ACTION.disable)});x.setNow(NOW+181000);if(variant==='canceled')await x.ev.cancel({ownerId:x.owner,generation:x.gen,pendingId:p.pendingId});const pending=variant==='none'?undefined:{id:q.pendingId,digest:q.digest};const result=await x.sessions.issueBrowserLogin({proof:x.google,browserBindingDigest:variant==='wrong-binding'?B2:B1,challenge:CH,redirectUri:REDIRECT,deadline:NOW+240000,protection:{pending}});assert.equal(Boolean(result),variant==='valid',variant);x.db.sqlite.close();}});
+test('client approval fails closed without verified fresh local proof; legacy session-only approvals are dead',async()=>{
+ const x=await setup(),old=await web(x,'3'.repeat(64)),b=await web(x,B1),base=ids(x);await enableNow(x);x.setNow(NOW+1000);
+ const mk=(f)=>new ExtraVerification(x.db,{clock:()=>NOW+1000,...(f?{localVerification:f}:{})});
+ const p=await x.ev.createPending(pendingArgs(x)),en=await x.ev.createSettingChange({...base,deviceId:b.deviceId,enabled:false});
+ const a=(ev)=>ev.approveWithClient({ownerId:x.owner,deviceId:old.deviceId,generation:x.gen,pendingId:p.pendingId}),c=(ev)=>ev.approveSettingChange({...base,deviceId:old.deviceId,changeId:en.changeId});
+ const none=mk();assert.equal(none.approvalAvailable,false);
+ for(const ev of [none,mk(async()=>false),mk(async()=>'yes'),mk(async()=>1),mk(async()=>{return undefined;})]){assert.equal(await a(ev),undefined);assert.equal(await c(ev),undefined);}
+ assert.equal(x.db.sqlite.prepare('SELECT approved_at a FROM pending_logins').get().a,null);assert.equal(x.db.sqlite.prepare('SELECT approved_at a FROM setting_changes').get().a,null);
+ const seen=[];assert.equal(await a(mk(async v=>{seen.push(v);return true;})),true);assert.equal(seen[0].pendingId,p.pendingId);assert.equal(seen[0].user.deviceId,old.deviceId);
+ assert.ok(x.db.sqlite.prepare('SELECT local_verified_at v FROM pending_logins').get().v);
+ // legacy: approved by session/browser alone before the fix
+ const q=await x.ev.createPending(pendingArgs(x));
+ x.db.sqlite.prepare("UPDATE pending_logins SET approved_at=?,approval_method='client',approver_device_id=? WHERE pending_id=?").run(NOW+1000,old.deviceId,q.pendingId);
+ const polled=await x.ev.poll({token:q.token,browserBindingDigest:B1}),pend={id:polled.pendingId,digest:polled.digest};
+ assert.equal(await x.login({protection:{pending:pend}}),undefined,'legacy stored client approval must not issue a session');
+ x.db.sqlite.prepare("UPDATE pending_logins SET local_verified_at=? WHERE pending_id=?").run(NOW+1000,q.pendingId);
+ assert.ok(await x.login({protection:{pending:pend}}),'same row with verified local proof does issue');
+ x.db.sqlite.prepare("UPDATE setting_changes SET approved_at=?,approver_device_id=?,local_verified_at=NULL WHERE change_id=?").run(NOW+1000,old.deviceId,en.changeId);
+ assert.equal(await x.ev.consumeSettingChange({...base,deviceId:b.deviceId,changeId:en.changeId}),undefined,'legacy stored setting approval cannot be consumed');
+ assert.equal(await x.ev.enabled(x.owner),true);x.db.sqlite.close();
+});
+test('mounted HTTP refuses client approval without a verifier while authenticated passkey settings remain available',async()=>{
+ const {createExtraVerificationHttp}=await import('../src/extra-verification-http.js');const x=await setup(),d=await web(x,B1);
+ const handler=createExtraVerificationHttp({db:x.db,sessions:x.sessions,clock:()=>NOW,service:new ExtraVerification(x.db,{clock:()=>NOW})});
+ const post=(action,value)=>handler.fetch(new Request('https://otpanda-api.abrahammurciano.workers.dev/v1/manage/security/'+action,{method:'POST',headers:{Origin:'https://otpanda.github.io','Content-Type':'application/json',Authorization:'Bearer '+d.access},body:JSON.stringify(value)}),{clientAddress:'synthetic'});
+ for(const [action,value]of [['approve',{pendingId:'p'}],['approve-change',{changeId:'c'}]]){const r=await post(action,value);assert.equal(r.status,503);assert.deepEqual(await r.json(),{error:'unavailable',reason:'local_verification_unavailable'});}
+ assert.equal((await post('begin',{enabled:true,warningAccepted:true})).status,200);
+ x.db.sqlite.close();
+});

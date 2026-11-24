@@ -18,12 +18,16 @@ async function fresh(){const t=generateAccessToken();return{token:t.token,id:t.t
 // Fragment usable inside an issuance batch. Placeholders are SQL parameter
 // names such as '?12'. True when the login may proceed without extra proof.
 export function protectionGuard({owner,gen,link,recId,recDigest,pendId,pendDigest,challenge,binding,now,requirePending=false}){
- const pending=`EXISTS(SELECT 1 FROM pending_logins pl WHERE pl.pending_id=${pendId} AND pl.secret_digest=${pendDigest} AND pl.owner_id=${owner} AND pl.generation=${gen} AND pl.provider_identity_id=${link} AND pl.challenge=${challenge} AND pl.browser_binding_digest=${binding} AND pl.approved_at IS NOT NULL AND pl.consumed_at IS NULL AND pl.canceled_at IS NULL AND pl.expires_at>${now} AND ((pl.approval_method='passkey' AND EXISTS(SELECT 1 FROM passkey_credentials ap WHERE ap.credential_id=pl.approver_credential_id AND ap.owner_id=${owner} AND ap.revoked_at IS NULL)) OR (pl.approval_method='client' AND EXISTS(SELECT 1 FROM device_sessions a ${MJA} WHERE a.device_id=pl.approver_device_id AND a.owner_id=${owner} AND a.generation=${gen} AND a.revoked_at IS NULL AND a.expires_at>${now} AND ${MAA}))))`;
+ const pending=`EXISTS(SELECT 1 FROM pending_logins pl WHERE pl.pending_id=${pendId} AND pl.secret_digest=${pendDigest} AND pl.owner_id=${owner} AND pl.generation=${gen} AND pl.provider_identity_id=${link} AND pl.challenge=${challenge} AND pl.browser_binding_digest=${binding} AND pl.approved_at IS NOT NULL AND pl.consumed_at IS NULL AND pl.canceled_at IS NULL AND pl.expires_at>${now} AND ((pl.approval_method='passkey' AND EXISTS(SELECT 1 FROM passkey_credentials ap WHERE ap.credential_id=pl.approver_credential_id AND ap.owner_id=${owner} AND ap.revoked_at IS NULL)) OR (pl.approval_method='client' AND pl.local_verified_at IS NOT NULL AND EXISTS(SELECT 1 FROM device_sessions a ${MJA} WHERE a.device_id=pl.approver_device_id AND a.owner_id=${owner} AND a.generation=${gen} AND a.revoked_at IS NULL AND a.expires_at>${now} AND ${MAA}))))`;
  if(requirePending)return pending;
  return `(NOT EXISTS(SELECT 1 FROM new_device_verification v WHERE v.owner_id=${owner}) OR EXISTS(SELECT 1 FROM recognized_browsers r WHERE r.recognition_id=${recId} AND r.secret_digest=${recDigest} AND r.owner_id=${owner} AND r.generation=${gen} AND r.revoked_at IS NULL AND r.provider_identity_id=${link}) OR ${pending})`;
 }
 export class ExtraVerification {
- constructor(db,{clock=Date.now}={}){this.db=db;this.clock=clock;}
+ // localVerification: injected verifier of FRESH local user verification on the
+// approving enrolled client. None exists yet, so client approval fails closed.
+ // A bare session or a different browser is never an approval.
+ constructor(db,{clock=Date.now,localVerification}={}){this.db=db;this.clock=clock;this.localVerification=typeof localVerification==='function'?localVerification:undefined;}
+ get approvalAvailable(){return !!this.localVerification;}
  now(){const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw new TypeError('Valid instant required');return n;}
  async enabled(ownerId){return!!await this.db.prepare('SELECT 1 x FROM new_device_verification WHERE owner_id=?1').bind(ownerId).first();}
  async #strong(proof,action){
@@ -67,9 +71,10 @@ export class ExtraVerification {
  // this attempt. It must predate the attempt and be a different browser, and
  // it is rechecked as an active session inside the write. Never automatic.
  async approveWithClient({ownerId,deviceId,generation,pendingId}){
-  if(typeof ownerId!=='string'||typeof deviceId!=='string'||!Number.isSafeInteger(generation)||typeof pendingId!=='string')return undefined;
+  if(typeof ownerId!=='string'||typeof deviceId!=='string'||!Number.isSafeInteger(generation)||typeof pendingId!=='string'||!this.localVerification)return undefined;
+  if(await this.localVerification({user:{ownerId,deviceId,generation},pendingId})!==true)return undefined;
   const now=this.now();
-  const r=await this.db.prepare(`UPDATE pending_logins SET approved_at=?1,approval_method='client',approver_device_id=?2 WHERE pending_id=?3 AND owner_id=?4 AND generation=?5 AND approved_at IS NULL AND consumed_at IS NULL AND canceled_at IS NULL AND expires_at>?1 AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?2 AND d.owner_id=?4 AND d.generation=?5 AND d.revoked_at IS NULL AND d.created_at<=?1 AND d.expires_at>?1 AND d.created_at<pending_logins.created_at AND d.browser_binding_digest IS NOT pending_logins.browser_binding_digest AND ${MA}) AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?4 AND s.generation=?5)`).bind(now,deviceId,pendingId,ownerId,generation).run();
+  const r=await this.db.prepare(`UPDATE pending_logins SET approved_at=?1,approval_method='client',approver_device_id=?2,local_verified_at=?1 WHERE pending_id=?3 AND owner_id=?4 AND generation=?5 AND approved_at IS NULL AND consumed_at IS NULL AND canceled_at IS NULL AND expires_at>?1 AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?2 AND d.owner_id=?4 AND d.generation=?5 AND d.revoked_at IS NULL AND d.created_at<=?1 AND d.expires_at>?1 AND d.created_at<pending_logins.created_at AND d.browser_binding_digest IS NOT pending_logins.browser_binding_digest AND ${MA}) AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?4 AND s.generation=?5)`).bind(now,deviceId,pendingId,ownerId,generation).run();
   return r.meta.changes===1;
  }
  async approveWithPasskey({proof,pendingId}){
@@ -112,8 +117,10 @@ export class ExtraVerification {
   return r.results.map(x=>({changeId:x.change_id,enabled:x.action==='enable-extra-verification',createdAt:x.created_at,expiresAt:x.expires_at}));
  }
  async approveSettingChange({ownerId,deviceId,generation,changeId}){
+  if(!this.localVerification||typeof changeId!=='string')return undefined;
+  if(await this.localVerification({user:{ownerId,deviceId,generation},changeId})!==true)return undefined;
   const now=this.now();
-  const r=await this.db.prepare(`UPDATE setting_changes SET approved_at=?1,approver_device_id=?2 WHERE change_id=?3 AND owner_id=?4 AND generation=?5 AND approved_at IS NULL AND consumed_at IS NULL AND expires_at>?1 AND requester_device_id<>?2 AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN device_sessions q ON q.device_id=setting_changes.requester_device_id WHERE d.device_id=?2 AND d.owner_id=?4 AND d.generation=?5 AND d.revoked_at IS NULL AND d.created_at<=?1 AND d.expires_at>?1 AND d.browser_binding_digest IS NOT q.browser_binding_digest AND ${MA})`).bind(now,deviceId,changeId,ownerId,generation).run();
+  const r=await this.db.prepare(`UPDATE setting_changes SET approved_at=?1,approver_device_id=?2,local_verified_at=?1 WHERE change_id=?3 AND owner_id=?4 AND generation=?5 AND approved_at IS NULL AND consumed_at IS NULL AND expires_at>?1 AND requester_device_id<>?2 AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN device_sessions q ON q.device_id=setting_changes.requester_device_id WHERE d.device_id=?2 AND d.owner_id=?4 AND d.generation=?5 AND d.revoked_at IS NULL AND d.created_at<=?1 AND d.expires_at>?1 AND d.browser_binding_digest IS NOT q.browser_binding_digest AND ${MA})`).bind(now,deviceId,changeId,ownerId,generation).run();
   return r.meta.changes===1;
  }
  // Atomic: consume the approved change and apply the toggle in one batch. Both
@@ -121,7 +128,7 @@ export class ExtraVerification {
  async consumeSettingChange({ownerId,deviceId,generation,changeId}){
   const now=this.now(),receipt=(await fresh()).id;
   const r=await this.db.batch([
-   this.db.prepare(`UPDATE setting_changes SET consumed_at=?1,consume_receipt=?6 WHERE change_id=?2 AND owner_id=?3 AND generation=?4 AND requester_device_id=?5 AND approved_at IS NOT NULL AND consumed_at IS NULL AND expires_at>?1 AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?3 AND s.generation=?4) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?5 AND d.owner_id=?3 AND d.generation=?4 AND d.revoked_at IS NULL AND d.expires_at>?1 AND ${MA}) AND EXISTS(SELECT 1 FROM device_sessions a ${MJA} WHERE a.device_id=setting_changes.approver_device_id AND a.owner_id=?3 AND a.generation=?4 AND a.revoked_at IS NULL AND a.expires_at>?1 AND ${MAA})`).bind(now,changeId,ownerId,generation,deviceId,receipt),
+   this.db.prepare(`UPDATE setting_changes SET consumed_at=?1,consume_receipt=?6 WHERE change_id=?2 AND owner_id=?3 AND generation=?4 AND requester_device_id=?5 AND approved_at IS NOT NULL AND local_verified_at IS NOT NULL AND consumed_at IS NULL AND expires_at>?1 AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?3 AND s.generation=?4) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?5 AND d.owner_id=?3 AND d.generation=?4 AND d.revoked_at IS NULL AND d.expires_at>?1 AND ${MA}) AND EXISTS(SELECT 1 FROM device_sessions a ${MJA} WHERE a.device_id=setting_changes.approver_device_id AND a.owner_id=?3 AND a.generation=?4 AND a.revoked_at IS NULL AND a.expires_at>?1 AND ${MAA})`).bind(now,changeId,ownerId,generation,deviceId,receipt),
    // Only this batch's own consumption (unique random receipt on the row, same
    // owner/generation/id) may apply the toggle; a replay changes nothing.
    this.db.prepare(`INSERT OR IGNORE INTO new_device_verification(owner_id,enabled_at,generation) SELECT ?1,?3,?4 WHERE EXISTS(SELECT 1 FROM setting_changes WHERE change_id=?2 AND owner_id=?1 AND generation=?4 AND consume_receipt=?5 AND action='enable-extra-verification')`).bind(ownerId,changeId,now,generation,receipt),
