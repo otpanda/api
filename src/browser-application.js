@@ -7,7 +7,7 @@ import{createSignupHost}from'./signup-host.js';
 const signupPaths=new Set(['/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify']);
 export function createBrowserApplication({db,keys,activeKeyId,resolveTrustedIngress,mail,edgeAddress,edgeGlobal,edgeVerifyAddress,edgeVerifyGlobal,clock=Date.now}={}){
  let identity;
- const identityPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete','/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/organization','/v1/manage/organization-copy']);
+ const identityPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete','/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/organization','/v1/manage/organization-copy']);
  const getIdentity=()=>identity??=createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey:resolveTrustedIngress,clock});
  const signup=createSignupHost({db,mail,edgeAddress,edgeGlobal,edgeVerifyAddress,edgeVerifyGlobal,resolveTrustedIngress,clock});
  return{async fetch(request,ctx){

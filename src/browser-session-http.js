@@ -2,6 +2,7 @@ import {silentPost,appFailure} from './silent-bridge.js';
 // First-party restore boundary. No login/session creation or native clients.
 import {cookie,readCookie,json,securityHeaders,takeRateLimit} from './sessions.js';
 import {generateAccessToken} from './tokens.js';
+import {bearerToken} from './http.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',REDIRECT=APP+'/app/';
 export const REFRESH_COOKIE='__Host-otpanda_device';
 const CSRF='__Host-otpanda_restore';
@@ -17,19 +18,20 @@ function parameters(data){
 }
 async function boundedText(request,max){const reader=request.body?.getReader();if(!reader)return '';const chunks=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();return undefined;}chunks.push(value);}return new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(chunks.flatMap(c=>Array.from(c))));}catch{return undefined;}finally{reader.releaseLock();}}
 function html(body,status=200,extra={}){return json({error:'restart'},status);}
-export function createBrowserSessionHttp({sessions,exchanges,db,clock=Date.now}={}){
+export function createBrowserSessionHttp({sessions,exchanges,renewals,db,clock=Date.now}={}){
  if(!sessions||!exchanges||!db)throw new TypeError('Session dependencies required');
  return {async fetch(request,{clientAddress}={}){
   const url=new URL(request.url);
   if(url.origin!==API)return json({error:'not_found'},404);
-  if(!['/auth/restore','/auth/exchange'].includes(url.pathname))return json({error:'not_found'},404);
-  const exchange=url.pathname==='/auth/exchange';
+  const renew=url.pathname==='/auth/renew';
+  if(!['/auth/restore','/auth/exchange',...(renewals?['/auth/renew']:[])].includes(url.pathname))return json({error:'not_found'},404);
+  const exchange=url.pathname==='/auth/exchange'||renew;
   const origin=request.headers.get('origin');
   if(exchange&&origin!==APP)return json({error:'forbidden'},403);
   if(exchange&&request.method==='OPTIONS'){
    const headers=request.headers.get('access-control-request-headers')?.toLowerCase().split(',').map(v=>v.trim())??[];
-   if(request.headers.get('access-control-request-method')!=='POST'||headers.some(h=>h!=='content-type'))return json({error:'forbidden'},403);
-   return new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type'}});
+   if(request.headers.get('access-control-request-method')!=='POST'||headers.some(h=>!(h==='content-type'||(renew&&h==='authorization'))))return json({error:'forbidden'},403);
+   return new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':renew?'Authorization, Content-Type':'Content-Type'}});
   }
   if((exchange&&request.method!=='POST')||(!exchange&&!['GET','POST'].includes(request.method)))return json({error:'method_not_allowed'},405);
   // Address is supplied by trusted runtime metadata, never forwarded headers.
@@ -40,8 +42,18 @@ export function createBrowserSessionHttp({sessions,exchanges,db,clock=Date.now}=
    if(url.search||request.headers.get('content-type')!=='application/json'||Number(request.headers.get('content-length')??0)>4096)return json({error:'invalid_request'},400,cors);
    const text=await boundedText(request,4096);if(text===undefined)return json({error:'invalid_request'},400,cors);
    let data;try{data=JSON.parse(text);}catch{return json({error:'invalid_request'},400,cors);}
-   if(!data||Array.isArray(data)||Object.keys(data).sort().join(',')!=='code,redirect_uri,verifier')return json({error:'invalid_request'},400,cors);
-   const result=await exchanges.exchange({code:data.code,verifier:data.verifier,redirectUri:data.redirect_uri});
+   if(renew){
+    if(!data||Array.isArray(data)||Object.keys(data).sort().join(',')!=='expires_at,lineage_id,signature'||typeof data.lineage_id!=='string'||!/^[A-Za-z0-9_-]{8,64}$/.test(data.lineage_id))return json({error:'invalid_request'},400,cors);
+    const token=bearerToken(request.headers.get('authorization'));if(!token)return json({error:'invalid_grant'},401,cors);
+    // Per-lineage ceiling on top of the per-address one; failures and successes both count.
+    if(!(await takeRateLimit(db,'renew:lineage:'+data.lineage_id,{now:clock(),limit:20})).allowed)return json({error:'rate_limited'},429,cors);
+    const r=await renewals.renew({token,lineageId:data.lineage_id,signature:data.signature,expiresAt:data.expires_at});
+    if(r.status==='renewed')return json({access:r.access,accessExpiresAt:r.accessExpiresAt,renewal:r.renewal},200,cors);
+    return r.status==='renewed-elsewhere'?json({error:'renewed'},409,cors):json({error:'invalid_grant'},401,cors);
+   }
+   const keys=data&&!Array.isArray(data)?Object.keys(data).sort().join(','):'';
+   if(!data||Array.isArray(data)||!['code,redirect_uri,verifier','code,redirect_uri,renewal_key,verifier'].includes(keys))return json({error:'invalid_request'},400,cors);
+   const result=await exchanges.exchange({code:data.code,verifier:data.verifier,redirectUri:data.redirect_uri,...(keys.includes('renewal_key')?{renewalKey:data.renewal_key}:{})});
    return result?json(result,200,cors):json({error:'invalid_grant'},401,cors);
   }
   if(request.method==='GET'){
