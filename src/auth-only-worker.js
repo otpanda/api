@@ -11,7 +11,7 @@ import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
 import {appFailure} from './silent-bridge.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
-const paths=new Set([...['status','begin','finish','request-change','approve-begin','approve-change','consume-change','cancel-request'].map(p=>'/v1/manage/recovery/'+p),...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>'/auth/recovery/email/'+p),...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
+const paths=new Set(['/v1/manage/totp','/v1/manage/totp/begin','/v1/manage/totp-code',...['status','begin','finish','request-change','approve-begin','approve-change','consume-change','cancel-request'].map(p=>'/v1/manage/recovery/'+p),...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>'/auth/recovery/email/'+p),...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
  '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
  '/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
@@ -37,7 +37,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
    if(url.origin!==API)return json({error:'not_found'},404);
    // Stage must be deliberate; no flag value can widen the route list.
    if(env?.DEPLOYMENT_STAGE!=='auth-only')return json({error:'setup_required'},503);
-   if(url.pathname==='/health'&&['GET','HEAD'].includes(request.method))return json({service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-read-only',sources:'authenticated-read-only',recovery:'email-escape-opt-in',enrolledClientApproval:'unavailable'},200);
+   if(url.pathname==='/health'&&['GET','HEAD'].includes(request.method))return json({service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-received-and-totp',totp:'passkey-enrollment-code-only-read',sources:'authenticated-read-only',recovery:'email-escape-opt-in',enrolledClientApproval:'unavailable'},200);
    if(url.pathname==='/ready'&&request.method==='GET') {
     try {
      if(!env.DB?.prepare || !['SIGNUP_ADDRESS_LIMIT','SIGNUP_GLOBAL_LIMIT','SIGNUP_VERIFY_ADDRESS_LIMIT','SIGNUP_VERIFY_GLOBAL_LIMIT','IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT'].every(k=>typeof env[k]?.limit==='function'))throw Error();

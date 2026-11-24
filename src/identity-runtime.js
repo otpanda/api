@@ -1,3 +1,7 @@
+import {SeedCipher} from './seed-cipher.js';
+import {TotpSeedStore,EntryTotpGenerator} from './totp-seeds.js';
+import {createTotpReadHttp} from './totp-read-http.js';
+import {createTotpManagementHttp} from './totp-management-http.js';
 import {createExtraVerificationHttp} from './extra-verification-http.js';
 import {createFirstPasskeyHttp} from './first-passkey-http.js';
 import {createAddPasskeyHttp} from './additional-passkey-http.js';
@@ -36,7 +40,8 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  const encrypted=()=>codeDependencies??=Promise.resolve().then(async()=>{
   const configuration=loadCodeKeys?await loadCodeKeys():{keys,activeKeyId};
   const cipher=new CodeCipher(configuration),metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,cipher,{matcher:metadata});
-  return{cipher,sources,access:new EntryAccess(db,sources)};
+  const access=new EntryAccess(db,sources),seedCipher=new SeedCipher(configuration),seeds=new TotpSeedStore(db,seedCipher);
+  return{cipher,sources,access,seedCipher,generator:new EntryTotpGenerator(db,seeds,access)};
  });
  const sources={
   unassignedForOwner:async(...args)=>(await encrypted()).sources.unassignedForOwner(...args),
@@ -44,6 +49,8 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  };
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
  const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
+ const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},clock});
+ const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
  const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
  const overview=createAccountOverviewHttp({db,sessions,clock});
@@ -57,7 +64,9 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
    let handler;
-   if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
+   if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
+   else if(['/v1/manage/totp','/v1/manage/totp/begin'].includes(url.pathname))handler=totpManage;
+   else if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;
    else if(url.pathname.startsWith('/v1/manage/passkey/add/'))handler=addPasskey;
    else if(url.pathname.startsWith('/v1/manage/recovery/'))handler=recovery;
