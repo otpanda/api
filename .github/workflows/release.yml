@@ -33,4 +33,8 @@ jobs:
           set -euo pipefail
           flags=(--verify-tag --generate-notes --title "OTPanda API ${GITHUB_REF_NAME}")
           case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" "${flags[@]}" out/*
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" out/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "${flags[@]}" out/*
+          fi
