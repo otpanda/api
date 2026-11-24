@@ -26,9 +26,9 @@ export class WebLoginHandoffService {
   if(!row)return undefined;
   return this.verify({token,response,binding:row.cookie_digest,challenge:row.challenge,state:row.state,redirectUri:REDIRECT});
  }
- async completeBrowser({handoff,cookieBinding}={}){
+ async completeBrowser({handoff,cookieBinding,priorRefresh}={}){
   if(typeof cookieBinding!=='string'||cookieBinding.length<32||cookieBinding.length>512)return undefined;
-  return this.complete({handoff,binding:await hashText(cookieBinding)});
+  return this.complete({handoff,binding:await hashText(cookieBinding),priorRefresh});
  }
  async begin(c){if(!context(c))return undefined;return this.passkeys.begin({purpose:'authenticate',binding:await bound(c)});}
  async verify({token,response,...c}={}){
@@ -39,19 +39,14 @@ export class WebLoginHandoffService {
   const result=await this.db.prepare('INSERT INTO web_login_handoffs (handoff_id,secret_digest,binding_digest,owner_id,credential_id,generation,verified_at,challenge,state,created_at,expires_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 WHERE EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?5 AND p.owner_id=?4 AND p.revoked_at IS NULL AND s.generation=?6)').bind(secret.tokenId,digest,binding,proof.ownerId,proof.credentialId,proof.generation,proof.verifiedAt,c.challenge,c.state,now,Math.min(now+TTL,proof.verifiedAt+120000)).run();
   return result.meta.changes===1?{handoff:secret.token,expiresAt:Math.min(now+TTL,proof.verifiedAt+120000)}:undefined;
  }
- async complete({handoff,binding}={}){
+ async complete({handoff,binding,priorRefresh}={}){
   const parsed=parseAccessToken(handoff);if(!parsed||typeof binding!=='string'||binding.length<32||binding.length>512)return undefined;
   const now=this.now(),row=await this.db.prepare('DELETE FROM web_login_handoffs WHERE handoff_id=?1 AND secret_digest=?2 AND binding_digest=?3 AND created_at<=?4 AND expires_at>?4 RETURNING owner_id,credential_id,generation,verified_at,challenge,state,expires_at,binding_digest').bind(parsed.tokenId,digestToHex(await digestSecret(parsed.secret)),await hashText(binding),now).first();
   if(!row||this.now()>=row.expires_at)return undefined;
   const proof={ownerId:row.owner_id,credentialId:row.credential_id,generation:row.generation,verifiedAt:row.verified_at,purpose:'authenticate'};
-  const device=await this.sessions.issue({proof,clientKind:'web',browserBindingDigest:row.binding_digest});if(!device)return undefined;
-  let completed=false;
-  try{
-   const grant=await this.exchanges.mint({deviceId:device.deviceId,challenge:row.challenge,redirectUri:REDIRECT});
-   if(!grant||this.now()>=row.expires_at||!await this.sessions.authenticate(device.access))return undefined;
-   completed=true;
-   return {refresh:device.refresh,refreshExpiresAt:device.refreshExpiresAt,code:grant.code,state:row.state,redirectUri:REDIRECT};
-  }finally{if(!completed)await this.sessions.revoke({ownerId:row.owner_id,deviceId:device.deviceId});}
+  const device=await this.sessions.issueBrowserLogin({proof,browserBindingDigest:row.binding_digest,priorRefresh,challenge:row.challenge,redirectUri:REDIRECT,deadline:row.expires_at});
+  if(!device)return undefined;
+  return {refresh:device.refresh,refreshExpiresAt:device.refreshExpiresAt,code:device.code,state:row.state,redirectUri:REDIRECT};
  }
  async cleanup({limit=100}={}){if(!Number.isSafeInteger(limit)||limit<1||limit>500)throw new TypeError('Bounded cleanup required');const now=this.now(),results=await this.db.batch([this.db.prepare('DELETE FROM web_login_handoffs WHERE handoff_id IN (SELECT handoff_id FROM web_login_handoffs WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(now,limit),this.db.prepare('DELETE FROM web_login_starts WHERE ceremony_id IN (SELECT ceremony_id FROM web_login_starts WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(now,limit)]);return results[0].meta.changes;}
 }
