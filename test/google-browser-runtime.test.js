@@ -15,7 +15,7 @@ import { createGoogleBrowserFlow } from '../src/google-browser-flow.js';
 import { CodeCipher } from '../src/code-cipher.js';
 import { base64urlEncode } from '../src/tokens.js';
 const encoder = new TextEncoder();
-async function setup({ wrongNonce = false, wrongAudience = false, tamperSignature = false, wrongIssuer = false, expiredToken = false, missingIdToken = false, remember = true } = {}) {
+async function setup({ wrongNonce = false, wrongAudience = false, tamperSignature = false, wrongIssuer = false, expiredToken = false, missingIdToken = false, remember = true, email = 'a@gmail.com' } = {}) {
   const db = database();let clockNow=Date.now();
   const sessions = new SessionService(db, { origin: 'https://app.test' });
   const encryptionKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
@@ -34,7 +34,7 @@ async function setup({ wrongNonce = false, wrongAudience = false, tamperSignatur
     assert.equal(body.get('redirect_uri'), 'https://otpanda-api.abrahammurciano.workers.dev/auth/callback');
     const now = Math.floor(Date.now() / 1000);
     const header = base64urlEncode(encoder.encode(JSON.stringify({ alg: 'RS256', kid: 'key-1' })));
-    const payload = base64urlEncode(encoder.encode(JSON.stringify({ iss: wrongIssuer ? 'https://evil.test' : server.issuer, sub: 'person-1', aud: wrongAudience ? 'wrong' : 'client.apps.googleusercontent.com', iat: now, exp: expiredToken ? now - 600 : now + 300, email:'a@gmail.com',email_verified:true,nonce: wrongNonce ? 'wrong' : nonce })));
+    const payload = base64urlEncode(encoder.encode(JSON.stringify({ iss: wrongIssuer ? 'https://evil.test' : server.issuer, sub: 'person-1', aud: wrongAudience ? 'wrong' : 'client.apps.googleusercontent.com', iat: now, exp: expiredToken ? now - 600 : now + 300, email,email_verified:true,nonce: wrongNonce ? 'wrong' : nonce })));
     const signature = new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5', signing.privateKey, encoder.encode(header + '.' + payload)));
     if (tamperSignature) signature[0] ^= 1;
     return Response.json({ access_token: 'synthetic-provider-token', token_type: 'Bearer', ...(missingIdToken ? {} : { id_token: header + '.' + payload + '.' + base64urlEncode(signature) }) });
@@ -58,3 +58,5 @@ test('enabled unrecognized Google creates zero-authority pending; explicit exist
  const finish=await x.flow.fetch(new Request('https://otpanda-api.abrahammurciano.workers.dev/auth/google/protection/complete',{method:'POST',headers:{Origin:'https://otpanda-api.abrahammurciano.workers.dev','Content-Type':'application/x-www-form-urlencoded',Cookie:csrfCookie+'; '+bindingCookie},body:new URLSearchParams({token:pending.token,csrf:csrfCookie.split('=')[1]})}),{clientAddress:'192.0.2.1'});
  const final=new URLSearchParams(new URL(finish.headers.get('Location')).hash.slice(1));assert.ok(final.get('code'));assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,2);assert.equal(x.db.sqlite.prepare('SELECT consumed_at FROM pending_logins').get().consumed_at,x.now());
 });
+
+test('external-email Google callback directly creates provider account and session without email challenge',async()=>{const x=await setup({email:'external@example.test'}),r=await x.flow.fetch(x.callback()),f=new URLSearchParams(new URL(r.headers.get('location')).hash.slice(1));assert.equal(r.status,303);assert.ok(f.get('code'));assert.ok(f.get('enrollment'));assert.equal(f.has('google'),false);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM accounts').get().n,1);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,1);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM auth_challenges').get().n,0);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM google_continuations').get().n,0);});
