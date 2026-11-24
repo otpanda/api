@@ -6,7 +6,7 @@ import {cleanupIdentity} from './identity-cleanup.js';
 import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
-const paths=new Set([...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
+const paths=new Set([...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
  '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
  '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
@@ -48,6 +48,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
    if(url.pathname.startsWith('/auth/signup/')&&request.method!=='OPTIONS') {
     if(!configure(env))return json({error:'setup_required'},503);
    }
+   if(['/auth/signup/start','/auth/signup/email','/auth/signup/begin'].includes(url.pathname))return new Response(null,{status:303,headers:{Location:'https://otpanda.github.io/app/','Cache-Control':'no-store'}});
    return browser.fetch(request,env,ctx);
   },
   async scheduled(event,env,ctx) {
