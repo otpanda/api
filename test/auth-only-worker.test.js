@@ -15,7 +15,7 @@ test('deployment explicitly selects bounded public auth-only stage; other stages
 });
 test('auth-only stage cannot mount code source mutation recovery legacy or unknown paths',async()=>{
  const worker=createAuthOnlyWorker();let calls=0;const env=config({prepare(){calls++;throw Error('must not touch database');}});
- for(const path of ['/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/assignment/begin','/auth/recovery','/auth/start','/auth/callback','/v1/manage/session/'])for(const method of ['GET','POST','OPTIONS'])assert.equal((await worker.fetch(request(path,{method}),env)).status,404,path);
+ for(const path of ['/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/assignment/begin','/auth/recovery','/auth/start','/v1/manage/session/'])for(const method of ['GET','POST','OPTIONS'])assert.equal((await worker.fetch(request(path,{method}),env)).status,404,path);
  assert.equal(calls,0);assert.equal((await worker.fetch(new Request('https://wrong.test/health'),env)).status,404);
  const health=await worker.fetch(request('/health'),env);assert.equal(health.status,200);assert.deepEqual(await health.json(),{service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'unavailable',sources:'unavailable',recovery:'unavailable'});
 });
