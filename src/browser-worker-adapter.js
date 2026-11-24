@@ -7,8 +7,8 @@ import{importBrowserKeyring}from'./browser-keyring.js';
 import{json}from'./sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
 const signupPaths=new Set(['/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify']);
-export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}){
- const signup=createSignupWorkerAdapter({resolveTrustedIngress,fetchImpl,clock});let identity,configuration;
+export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now,signupAllowed}={}){
+ const signup=createSignupWorkerAdapter({resolveTrustedIngress,fetchImpl,clock,signupAllowed});let identity,configuration;
  return{async fetch(request,env,ctx){
   const u=new URL(request.url);if(u.origin!==API)return json({error:'not_found'},404);
   if(signupPaths.has(u.pathname))return signup.fetch(request,env,ctx);

@@ -9,7 +9,7 @@ const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda
 const paths=new Set(['/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify']);
 const cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
 function failure(verify,status){const headers={...securityHeaders,'Retry-After':'60',...(verify?cors:{})};return verify?json({error:status===429?'busy':'unavailable'},status,headers):new Response('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OTPanda signup</title><main><h1>Signup is busy.</h1><p>No new request was accepted. Wait a moment, then return to the signup form in this browser and try again.</p></main></html>',{status,headers:{...headers,'Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"}});}
-export function createSignupHost({db,mail,edgeAddress,edgeGlobal,edgeVerifyAddress,edgeVerifyGlobal,resolveTrustedIngress,clock=Date.now}={}){
+export function createSignupHost({db,mail,edgeAddress,edgeGlobal,edgeVerifyAddress,edgeVerifyGlobal,resolveTrustedIngress,clock=Date.now,signupAllowed}={}){
  let runtime;
  return{async fetch(request,ctx){
   const url=new URL(request.url);if(url.origin!==API||!paths.has(url.pathname))return json({error:'not_found'},404);
@@ -27,7 +27,7 @@ export function createSignupHost({db,mail,edgeAddress,edgeGlobal,edgeVerifyAddre
    // counters so mail floods cannot spend the credential-verification budget.
    if((await individual.limit({key:await hashText((verify?'verify:':'signup:')+address)}))?.success!==true)return failure(verify,429);
    if((await global.limit({key:verify?'otpanda-signup-verify-v1':'otpanda-signup-v1'}))?.success!==true)return failure(verify,429);
-   runtime??=createSignupPreparationRuntime({db,deliver:createSignupMailDelivery(mail),clock});
+   runtime??=createSignupPreparationRuntime({db,deliver:createSignupMailDelivery(mail),clock,signupAllowed});
    return await runtime.fetch(request,{clientAddress:address,waitUntil:p=>ctx.waitUntil(p)});
   }catch{return failure(verify,503);}
  }};
