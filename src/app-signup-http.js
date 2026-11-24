@@ -29,7 +29,7 @@ export function createAppSignupHttp({db,signupEmail,handoff,clock=Date.now,defer
   const csrf=readCookie(request,CSRF),binding=readCookie(request,BIND);if(!TOKEN.test(csrf??'')||p.get('csrf')!==csrf||!TOKEN.test(binding??''))return back(state,'restart');
   let email;try{email=canonicalAccountEmail(p.get('email'));}catch{return back(state,'email-invalid');}
   if(action==='email'){if(typeof defer!=='function')return back(state,'retry');try{defer(()=>signupEmail.request({email,cookieBinding:binding,clientAddress,allowExisting:true}));}catch{return back(state,'retry');}return back(state,'email-sent');}
-  if(!TOKEN.test(p.get('email_token')??'')&&!/^[A-HJ-NP-Z2-9]{8}$/i.test((p.get('email_token')??'').replaceAll(' ','')))return back(state,'code-invalid');
+  if(!TOKEN.test(p.get('email_token')??'')&&!/^[A-HJ-NP-Z2-9]{8}$/i.test((p.get('email_token')??'').replaceAll(' ','').replaceAll('-','')))return back(state,'code-invalid');
   let c;try{c=await handoff.beginBrowser({email,emailToken:p.get('email_token'),cookieBinding:binding,challenge:u.searchParams.get('challenge'),state,redirectUri:APP,resolveExisting:true});}catch{return back(state,'code-invalid');}
   if(!c)return back(state,'code-invalid');if(c.existing===true)return back(state,'existing-account');const target=new URL(APP);target.hash=new URLSearchParams({signup:base64urlEncode(new TextEncoder().encode(JSON.stringify(c))),state});return new Response(null,{status:303,headers:{...securityHeaders,Location:target.href}});
  }};
