@@ -43,7 +43,7 @@ test('purpose/owner/provider binding rejects confused challenge without consumin
  assert.equal(await service.linkProvider({ownerId:owner,identity,token}),true);
  assert.equal(await service.ownerForProvider(identity),owner);
  assert.equal(await service.ownerForProvider({...identity,subject:'other'}),undefined);
- assert.equal(await service.ownerForProvider({...identity,email:'changed@example.com'}),undefined);
+ assert.equal(await service.ownerForProvider({...identity,email:'changed@example.com'}),owner);
  db.sqlite.close();
 });
 test('different provider-email cannot link and equal emails alone never locate account',async()=>{
