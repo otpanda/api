@@ -6,8 +6,6 @@ Required bindings:
 
 - `DB`: migrated D1-compatible binding with `prepare` and `batch`.
 - `APP_ORIGIN`: exact HTTPS application origin, no path or trailing slash.
-- `GOOGLE_CLIENT_ID`: registered Google web-client ID.
-- `GOOGLE_CLIENT_SECRET`: OAuth client secret from protected deployment configuration.
 - `ACTIVE_KEY_ID`: identifier of the active encryption key.
 - `ENCRYPTION_KEYRING`: secret JSON array of objects with exactly `id` and `key`. Each key is canonical unpadded base64url encoding of 32 bytes. One to eight unique keys, including the active identifier. Retain old keys while encrypted records still require them. No example production keys are provided.
 - `ASSETS`: optional static asset binding. Reserved API/auth routes never fall through to assets.
