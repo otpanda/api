@@ -5,7 +5,7 @@ import {generateAccessToken} from './tokens.js';
 import {REFRESH_COOKIE} from './browser-session-http.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io/app/';
 const CSRF='__Host-otpanda_logout';
-function html(body,status=200,extra={}) {return new Response('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OTPanda sign out</title><style>body{font:16px/1.5 system-ui;background:#f5f8f7;color:#17332a;max-width:460px;padding:24px;margin:10vh auto}button,a{display:inline-block;padding:12px}button{font:inherit}</style><main>'+body+'</main></html>',{status,headers:{...securityHeaders,'Referrer-Policy':'same-origin','Content-Type':'text/html; charset=utf-8','Content-Security-Policy':"default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",...extra}});}
+function html(body,status=200,extra={}) {return json({error:'restart'},status);}
 async function body(request) {const reader=request.body?.getReader();if(!reader)return;let size=0;const parts=[];try{while(true){const x=await reader.read();if(x.done)break;size+=x.value.length;if(size>512){await reader.cancel();return;}parts.push(x.value);}return new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(parts.flatMap(x=>Array.from(x))));}catch{return;}finally{reader.releaseLock();}}
 export function createBrowserLogoutHttp({sessions,db,clock=Date.now}={}) {
  if(!sessions||!db)throw new TypeError('Logout dependencies required');
