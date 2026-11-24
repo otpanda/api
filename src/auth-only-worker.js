@@ -6,10 +6,10 @@ import {cleanupIdentity} from './identity-cleanup.js';
 import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
-const paths=new Set([
- '/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
+const paths=new Set([...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
+ '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
- '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session',
+ '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
