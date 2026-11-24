@@ -40,7 +40,8 @@ export class PasskeyService {
     const account = ownerId === null ? null : await this.account(ownerId);
     if (ownerId !== null && !account) return undefined;
     const now = this.now(), secret = generateAccessToken();
-    const challenge = base64urlEncode(crypto.getRandomValues(new Uint8Array(32)));
+    const entropy=crypto.getRandomValues(new Uint8Array(32));
+    const challenge = purpose==='step-up'?base64urlEncode(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(['otpanda-step-up-v1',base64urlEncode(entropy),action]))))):base64urlEncode(entropy);
     const credentials = ownerId === null ? null : await this.active(ownerId);
     const options = purpose === 'register'
       ? await this.verifier.registrationOptions({ ownerId, email:account.email, challenge, excludeCredentials:credentials })
@@ -72,10 +73,14 @@ export class PasskeyService {
       .bind(c.id, ownerId, Array.from(c.publicKey), c.counter, JSON.stringify(transports), deviceType, backedUp, now, ceremony.generation).run();
     return result.meta.changes === 1;
   }
-  async finishAuthentication({ token, binding, response, ownerId = null, action = null }) {
+  async finishAuthentication({ token, binding, response, ownerId = null, action = null, onCeremonyClaimed }) {
     const purpose = ownerId === null ? 'authenticate' : 'step-up';
     const ceremony = await this.claim({ token, purpose, ownerId, binding, action });
-    if (!ceremony || !credentialId(response?.id)) return undefined;
+    if (!ceremony) return undefined;
+    // Internal ownership signal, never an authentication result. Only the caller
+    // that deleted this one-use ceremony may retire its pending action intent.
+    onCeremonyClaimed?.();
+    if (!credentialId(response?.id)) return undefined;
     const row = await this.db.prepare('SELECT p.*, s.generation FROM passkey_credentials p JOIN account_security s ON s.owner_id = p.owner_id JOIN account_emails e ON e.owner_id = p.owner_id WHERE p.credential_id = ?1 AND p.revoked_at IS NULL').bind(response.id).first();
     if (!row || (ownerId !== null && (ownerId !== row.owner_id || ceremony.generation !== row.generation))) return undefined;
     // Discoverable authentication must return the exact opaque user handle.
