@@ -10,7 +10,7 @@ const API='https://otpanda-api.abrahammurciano.workers.dev';
 const paths=new Set([...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>'/v1/manage/passkey/add/'+p),...['status','begin','verify','complete'].map(p=>'/auth/google/protection/'+p),...['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>'/v1/manage/security/'+p),...['email','begin','verify','complete'].map(p=>'/auth/google/continue/'+p),'/auth/google/start','/auth/callback',
  '/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify',
  '/auth/login/start','/auth/login/verify','/auth/login/complete',
- '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
+ '/auth/restore','/auth/exchange','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
@@ -33,7 +33,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
    if(url.origin!==API)return json({error:'not_found'},404);
    // Stage must be deliberate; no flag value can widen the route list.
    if(env?.DEPLOYMENT_STAGE!=='auth-only')return json({error:'setup_required'},503);
-   if(url.pathname==='/health'&&['GET','HEAD'].includes(request.method))return json({service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'unavailable',sources:'unavailable',recovery:'unavailable'},200);
+   if(url.pathname==='/health'&&['GET','HEAD'].includes(request.method))return json({service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-read-only',sources:'authenticated-read-only',recovery:'unavailable'},200);
    if(url.pathname==='/ready'&&request.method==='GET') {
     try {
      if(!env.DB?.prepare || !['SIGNUP_ADDRESS_LIMIT','SIGNUP_GLOBAL_LIMIT','SIGNUP_VERIFY_ADDRESS_LIMIT','SIGNUP_VERIFY_GLOBAL_LIMIT','IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT'].every(k=>typeof env[k]?.limit==='function'))throw Error();
