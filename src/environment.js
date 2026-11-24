@@ -17,8 +17,6 @@ export function snapshotEnvironment(env){
  if(ASSETS!==undefined&&typeof ASSETS.fetch!=='function')throw new TypeError('Asset binding required');
  const origin=text(env.APP_ORIGIN,2048),url=new URL(origin);
  if(url.protocol!=='https:'||url.origin!==origin||url.username||url.password)throw new TypeError('Exact HTTPS application origin required');
- const clientId=text(env.GOOGLE_CLIENT_ID,256),clientSecret=text(env.GOOGLE_CLIENT_SECRET,4096);
- if(!/^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/.test(clientId))throw new TypeError('Registered Google web client required');
  const activeKeyId=text(env.ACTIVE_KEY_ID,64);
  if(!keyId.test(activeKeyId))throw new TypeError('Invalid active key identifier');
  let entries;
@@ -39,7 +37,7 @@ export function snapshotEnvironment(env){
   if(typeof trustedRequestKey!=='function')throw new TypeError('Trusted request resolver required');
   const keys=new Map();
   for(const [id,bytes] of raw)keys.set(id,await crypto.subtle.importKey('raw',bytes,{name:'AES-GCM'},false,['encrypt','decrypt']));
-  return createRuntime({db:DB,origin,keys,activeKeyId,clientId,clientSecret,trustedRequestKey});
+  return createRuntime({db:DB,origin,keys,activeKeyId,trustedRequestKey});
  }});
 }
 export function createConfiguredHost(env,{trustedRequestKey}={}){
