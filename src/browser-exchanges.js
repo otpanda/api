@@ -2,6 +2,7 @@
 // The HTTP boundary must establish first-party refresh-cookie authority before
 // mint(), validate exact Origin on exchange(), rate-limit and clean callback URL.
 import { generateAccessToken, parseAccessToken, digestSecret, digestToHex, base64urlEncode } from './tokens.js';
+import {importRenewalKey,firstPartyExpiresAt,MAX_LINEAGES} from './access-renewal.js';
 import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-method.js';
 const MAX_EXCHANGES=32,MAX_ACCESS=64;
 const TTL=60_000,ACCESS=300_000;
@@ -24,8 +25,11 @@ export class BrowserExchangeService {
       .bind(secret.tokenId,hash,now,challenge,redirectUri,now+TTL,deviceId).run();
     return result.meta.changes===1?{code:secret.token,expiresAt:now+TTL}:undefined;
   }
-  async exchange({code,verifier,redirectUri}){
+  // renewalKey is optional (capability fallback). It is validated BEFORE the code is claimed so a
+  // malformed key cannot burn a legitimate code, and it can be bound nowhere else.
+  async exchange({code,verifier,redirectUri,renewalKey}){
     if(redirectUri!==this.redirectUri)return undefined;
+    if(renewalKey!==undefined&&!await importRenewalKey(renewalKey))return undefined;
     const c=await digest(code),challenge=await pkceChallenge(verifier);if(!c||!challenge)return undefined;
     const now=this.now();
     // A wrong PKCE/redirect cannot consume another tab's legitimate code. A
@@ -34,9 +38,22 @@ export class BrowserExchangeService {
     if(!claimed)return undefined;
     const access=generateAccessToken(),hash=digestToHex(await digestSecret(access.secret)),completed=this.now();
     if(completed<now||completed>=claimed.expires_at)return undefined;
-    const result=await this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,d.device_id,?3,?4 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND (SELECT count(*) FROM device_access_handles WHERE device_id=d.device_id AND expires_at>?3)<${MAX_ACCESS} AND ${ACTIVE}`)
+    const guard=`(SELECT count(*) FROM device_access_handles WHERE device_id=d.device_id AND expires_at>?3)<${MAX_ACCESS} AND ${ACTIVE}`;
+    if(renewalKey===undefined){
+    const result=await this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,d.device_id,?3,?4 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND ${guard}`)
       .bind(access.tokenId,hash,completed,completed+ACCESS,claimed.device_id).run();
     return result.meta.changes===1?{access:access.token,accessExpiresAt:completed+ACCESS}:undefined;
+    }
+    // The lineage and its first handle commit together or not at all (same guards).
+    const lineage=generateAccessToken().tokenId;
+    const results=await this.db.batch([
+      this.db.prepare(`DELETE FROM access_lineages WHERE lineage_id IN (SELECT lineage_id FROM access_lineages WHERE device_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT -1 OFFSET ${MAX_LINEAGES-1}) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?1 AND ${ACTIVE.replaceAll('?3','?2')})`).bind(claimed.device_id,completed),
+      this.db.prepare(`INSERT INTO access_lineages (lineage_id,device_id,public_key,created_at) SELECT ?1,d.device_id,?2,?3 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND ${guard}`).bind(lineage,renewalKey,completed,completed+ACCESS,claimed.device_id),
+      this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?1,?2,d.device_id,?3,?4,?6 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND EXISTS(SELECT 1 FROM access_lineages WHERE lineage_id=?6 AND device_id=d.device_id) AND ${guard}`).bind(access.tokenId,hash,completed,completed+ACCESS,claimed.device_id,lineage),
+    ]);
+    if(results[2].meta.changes!==1){await this.db.prepare('DELETE FROM access_lineages WHERE lineage_id=?1').bind(lineage).run();return undefined;}
+    const fp=await firstPartyExpiresAt(this.db,claimed.device_id);
+    return {access:access.token,accessExpiresAt:completed+ACCESS,renewal:{lineageId:lineage,handleId:access.tokenId,serverTime:completed,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};
   }
   async cleanup({limit=100}={}){if(!Number.isSafeInteger(limit)||limit<1||limit>500)throw new TypeError('Bounded cleanup required');const r=await this.db.prepare('DELETE FROM browser_exchanges WHERE exchange_id IN (SELECT exchange_id FROM browser_exchanges WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(this.now(),limit).run();return r.meta.changes;}
 }
