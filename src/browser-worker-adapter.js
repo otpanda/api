@@ -4,6 +4,7 @@ import * as oauth from 'oauth4webapi';
 // in charge of health/readiness. One adapter per deployed module/isolate.
 import{createIdentityRuntime}from'./identity-runtime.js';
 import{createSignupWorkerAdapter}from'./signup-worker-adapter.js';
+import{createRecoveryMailDelivery}from'./recovery-mail-transport.js';
 import{createIdentityEdgeHost,isIdentityPath}from'./identity-edge-host.js';
 import{importBrowserKeyring}from'./browser-keyring.js';
 import{json}from'./sessions.js';
@@ -24,9 +25,9 @@ export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...
   if(request.method==='OPTIONS')return createIdentityEdgeHost().fetch(request);
   const unavailable=()=>createIdentityEdgeHost().fetch(request);
   if(!env||typeof env!=='object')return unavailable();
-  const current=[env.BROWSER_CONFIGURATION_VERSION,env.DB,env.ACTIVE_KEY_ID,env.ENCRYPTION_KEYRING,env.IDENTITY_ADDRESS_LIMIT,env.IDENTITY_AUTH_GLOBAL_LIMIT,env.IDENTITY_READ_GLOBAL_LIMIT];
+  const current=[env.BROWSER_CONFIGURATION_VERSION,env.DB,env.ACTIVE_KEY_ID,env.ENCRYPTION_KEYRING,env.IDENTITY_ADDRESS_LIMIT,env.IDENTITY_AUTH_GLOBAL_LIMIT,env.IDENTITY_READ_GLOBAL_LIMIT,env.BREVO_API_KEY,env.BREVO_SENDER_EMAIL,env.BREVO_REPLY_TO_EMAIL];
   if(configuration&&current.some((v,i)=>v!==configuration[i]))return unavailable();
-  if(!identity){configuration=current;identity=createIdentityEdgeHost({resolveTrustedIngress,edgeAddress:env.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env.IDENTITY_AUTH_GLOBAL_LIMIT,edgeReadGlobal:env.IDENTITY_READ_GLOBAL_LIMIT,initialize:async()=>createIdentityRuntime({db:env.DB,loadCodeKeys:()=>importBrowserKeyring(env),trustedRequestKey:resolveTrustedIngress,clock})});}
-  return identity.fetch(request);
+  if(!identity){configuration=current;identity=createIdentityEdgeHost({resolveTrustedIngress,edgeAddress:env.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env.IDENTITY_AUTH_GLOBAL_LIMIT,edgeReadGlobal:env.IDENTITY_READ_GLOBAL_LIMIT,initialize:async()=>createIdentityRuntime({db:env.DB,loadCodeKeys:()=>importBrowserKeyring(env),trustedRequestKey:resolveTrustedIngress,deliverRecoveryMail:env.BREVO_API_KEY?createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL,fetchImpl}):undefined,clock})});}
+  return identity.fetch(request,ctx);
  }};
 }

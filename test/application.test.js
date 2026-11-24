@@ -12,8 +12,8 @@ test('composed application limits ingress, fails closed on database failure and 
   const sessions = new SessionService(db, { origin: 'https://app.test', clock: () => now });
   const key = await crypto.subtle.generateKey({name:'AES-GCM',length:256},false,['encrypt','decrypt']);
   const codes = new D1CodeStore(db, new CodeCipher({keys:new Map([['test',key]]),activeKeyId:'test'}));
-  const app = createApplication({ db, tokenStore: new D1TokenStore(db), codeStore: codes, sessions, signIn: { start: () => new Response(null, {status: 418}) }, trustedRequestKey: () => 'trusted-platform-source', clock: () => now });
-  assert.equal((await app.fetch(new Request('https://app.test/auth/start'))).status,418);
+  const app = createApplication({ db, tokenStore: new D1TokenStore(db), codeStore: codes, sessions, trustedRequestKey: () => 'trusted-platform-source', clock: () => now });
+  assert.equal((await app.fetch(new Request('https://app.test/auth/start'))).status,404);
   for(let i=0;i<59;i++) assert.equal((await app.fetch(new Request('https://app.test/health'))).status,200);
   assert.equal((await app.fetch(new Request('https://app.test/health'))).status,429);
   assert.equal((await app.fetch(new Request('https://wrong.test/health'))).status,404);

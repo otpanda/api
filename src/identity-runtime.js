@@ -1,6 +1,8 @@
 import {createExtraVerificationHttp} from './extra-verification-http.js';
 import {createFirstPasskeyHttp} from './first-passkey-http.js';
 import {createAddPasskeyHttp} from './additional-passkey-http.js';
+import {createRecoveryControlsHttp} from './recovery-controls-http.js';
+import {createEmailRecoveryHttp} from './email-recovery-http.js';
 import {createAccountOverviewHttp} from './account-overview-http.js';
 // Inactive browser identity composition. Never mounts legacy mutations,
 // OIDC, signup delivery or automatic account creation. Deployment stays gated.
@@ -23,7 +25,7 @@ import {json} from './sessions.js';
 import {canonicalClientAddress} from './client-address.js';
 import {PersonalOrganizationStore} from './personal-organization.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
-export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loadCodeKeys,clock=Date.now}={}) {
+export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,clock=Date.now}={}) {
  if(!db||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  const sessions=new DeviceSessionService(db,{clock}),exchanges=new BrowserExchangeService(db,{clock,redirectUri:'https://otpanda.github.io/app/'}),passkeys=new PasskeyService(db,{clock});
  const login=new WebLoginHandoffService(db,{sessions,exchanges,passkeys,clock});
@@ -42,14 +44,14 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
  const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
- const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys});
+ const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
  const overview=createAccountOverviewHttp({db,sessions,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
  const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));
  const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
  const loginPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete']);
- return {async fetch(request) {
+ return {async fetch(request,{waitUntil}={}) {
   try {
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
@@ -57,6 +59,8 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;
    else if(url.pathname.startsWith('/v1/manage/passkey/add/'))handler=addPasskey;
+   else if(url.pathname.startsWith('/v1/manage/recovery/'))handler=recovery;
+   else if(url.pathname.startsWith('/auth/recovery/email/'))handler=emailRecovery;
    else if(url.pathname==='/v1/manage/account')handler=overview;
    else if(loginPaths.has(url.pathname))handler=loginHttp;
    else if(['/auth/restore','/auth/exchange'].includes(url.pathname))handler=sessionHttp;
@@ -67,7 +71,7 @@ export function createIdentityRuntime({db,keys,activeKeyId,trustedRequestKey,loa
    else return json({error:'not_found'},404);
    const clientAddress=canonicalClientAddress(await trustedRequestKey(request));
    if(!clientAddress)return json({error:'unavailable'},503);
-   return await handler.fetch(request,{clientAddress});
+   return await handler.fetch(request,{clientAddress,waitUntil});
   }catch{return json({error:'unavailable'},503);}
  },async cleanup(){return cleanupIdentity({db,clock,limit:100});}};
 }

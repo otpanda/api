@@ -1,3 +1,5 @@
+> Historical. The legacy OIDC sign-in adapter described here was removed. Google sign-in is `src/google-browser-flow.js`, passkey sign-in is the login routes, per docs/integrated-auth-design.md.
+
 # Account sign-in and management milestone
 
 This adds a configurable OIDC authorization-code sign-in adapter, durable browser sessions, token management and application composition. It does not create an OAuth client, choose a production identity provider, deploy the app or connect a real account.

@@ -17,7 +17,7 @@ test('auth-only stage cannot mount code source mutation recovery legacy or unkno
  const worker=createAuthOnlyWorker();let calls=0;const env=config({prepare(){calls++;throw Error('must not touch database');}});
  for(const path of ['/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/assignment/begin','/auth/recovery','/auth/start','/v1/manage/session/'])for(const method of ['GET','POST','OPTIONS'])assert.equal((await worker.fetch(request(path,{method}),env)).status,404,path);
  assert.equal(calls,0);assert.equal((await worker.fetch(new Request('https://wrong.test/health'),env)).status,404);
- const health=await worker.fetch(request('/health'),env);assert.equal(health.status,200);assert.deepEqual(await health.json(),{service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-read-only',sources:'authenticated-read-only',recovery:'unavailable'});
+ const health=await worker.fetch(request('/health'),env);assert.equal(health.status,200);assert.deepEqual(await health.json(),{service:'otpanda-api',status:'auth-only',authentication:'staged',codes:'authenticated-read-only',sources:'authenticated-read-only',recovery:'email-escape-opt-in',enrolledClientApproval:'unavailable'});
 });
 test('production-shaped signup and protected session route work without cipher or invented ingress',async()=>{
  const db=database(),worker=createAuthOnlyWorker(),env=config(db),ctx={waitUntil(){}};
@@ -45,7 +45,7 @@ test('auth-only scheduled cleanup is capped and wrong stage performs no writes',
 
 test('auth-only readiness checks schema and configured budgets without consuming quotas or loading cipher',async()=>{
  const db=database(),worker=createAuthOnlyWorker(),env={...config(db),BREVO_SENDER_EMAIL:'otpanda.app@gmail.com',BREVO_REPLY_TO_EMAIL:'otpanda.app@gmail.com'};
- try {const r=await worker.fetch(request('/ready'),env);assert.equal(r.status,200);assert.equal((await r.json()).mail,'configured-not-delivery-proof');
+ try {const r=await worker.fetch(request('/ready'),env);assert.equal(r.status,200);{const j=await r.json();assert.equal(j.mail,'configured-not-delivery-proof');assert.equal(j.recoveryDelivery,'ok');}
  for(const change of [{IDENTITY_READ_GLOBAL_LIMIT:undefined},{BREVO_API_KEY:''},{BREVO_SENDER_EMAIL:'wrong@example.test'},{DB:{prepare(){throw Error('secret detail');}}}]){const failed=await worker.fetch(request('/ready'),{...env,...change});assert.equal(failed.status,503);assert.deepEqual(await failed.json(),{error:'unavailable'});}
  }finally{db.sqlite.close();}
 });

@@ -39,3 +39,14 @@ async function setup({ wrongNonce = false, wrongAudience = false, tamperSignatur
 }
 test('Google verifies signature audience nonce state and PKCE before bounded completion',async()=>{const x=await setup();assert.equal(x.target.searchParams.get('scope'),'openid email');assert.equal(x.target.searchParams.get('code_challenge_method'),'S256');const wrong=await x.flow.callback(x.callback('__Host-otpanda_google=wrong'));assert.equal(wrong.status,303);assert.equal(x.tokenCalls(),0);const r=await x.flow.callback(x.callback());assert.equal(r.status,303);assert.equal(x.completed().identity.subject,'person-1');assert.equal(x.completed().identity.email,'a@gmail.com');assert.equal(x.completed().identity.authoritative,true);assert.equal(x.completed().remember,true);assert.equal(x.completed().appState,'s'.repeat(43));assert.equal(x.completed().access_token,undefined);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM accounts').get().n,0);await x.flow.callback(x.callback());assert.equal(x.tokenCalls(),1);});
 for(const flag of ['wrongNonce','wrongAudience','tamperSignature','wrongIssuer','expiredToken','missingIdToken'])test('Google rejects '+flag+' without completion',async()=>{const x=await setup({[flag]:true});const r=await x.flow.callback(x.callback());assert.equal(r.status,303);assert.equal(x.completed(),undefined);assert.ok(r.headers.get('location').startsWith('https://otpanda.github.io/app/'));});
+// Ported from the retired legacy OIDC adapter tests: transaction, binding and
+// replay rejection must hold in the current flow before any token exchange.
+test('Google callback rejects duplicate state, foreign origin, wrong binding and expired transaction before the token call',async()=>{
+ const x=await setup(),dup=x.callback(),u=new URL(dup.url);u.searchParams.append('state','extra');
+ for(const req of [new Request(u,{headers:dup.headers}),new Request(x.callback().url.replace('https://otpanda-api.abrahammurciano.workers.dev','https://evil.test'),{headers:x.callback().headers}),x.callback('__Host-otpanda_google=wrong')]){const r=await x.flow.callback(req);assert.equal(r.status,303);assert.ok(r.headers.get('location').startsWith('https://otpanda.github.io/app/'));}
+ assert.equal(x.tokenCalls(),0);assert.equal(x.completed(),undefined);
+ x.db.sqlite.prepare('UPDATE oauth_transactions SET created_at=?,expires_at=?').run(Date.now()-2000,Date.now()-1000);
+ assert.equal((await x.flow.callback(x.callback())).status,303);assert.equal(x.tokenCalls(),0);assert.equal(x.completed(),undefined);});
+test('Google callback transaction is one-time: a replay never reaches the provider again',async()=>{
+ const x=await setup();assert.ok(x.completed()===undefined);await x.flow.callback(x.callback());const calls=x.tokenCalls();assert.equal(calls,1);
+ const r=await x.flow.callback(x.callback());assert.equal(r.status,303);assert.equal(x.tokenCalls(),1);});

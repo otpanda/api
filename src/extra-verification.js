@@ -41,7 +41,7 @@ export class ExtraVerification {
  async enable({proof,warningAccepted}){
   if(warningAccepted!==true)return undefined;
   const now=await this.#strong(proof,ACTION.enable);if(now===undefined)return undefined;
-  await this.db.prepare(`INSERT OR IGNORE INTO new_device_verification(owner_id,enabled_at,generation) SELECT ?1,?2,?3 WHERE EXISTS(SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?4 AND p.owner_id=?1 AND p.revoked_at IS NULL AND s.generation=?3)`).bind(proof.ownerId,now,proof.generation,proof.credentialId).run();
+  try{await this.db.prepare(`INSERT OR IGNORE INTO new_device_verification(owner_id,enabled_at,generation) SELECT ?1,?2,?3 WHERE EXISTS(SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?4 AND p.owner_id=?1 AND p.revoked_at IS NULL AND s.generation=?3)`).bind(proof.ownerId,now,proof.generation,proof.credentialId).run();}catch{return undefined;}
   return await this.enabled(proof.ownerId)?{enabled:true}:undefined;
  }
  // Opt out needs the same strong proof it enforces, never a Google-only session.
@@ -107,6 +107,8 @@ export class ExtraVerification {
  async createSettingChange({ownerId,deviceId,generation,enabled,warningAccepted}){
   if(typeof ownerId!=='string'||typeof deviceId!=='string'||!Number.isSafeInteger(generation)||typeof enabled!=='boolean')return undefined;
   if(enabled&&warningAccepted!==true)return undefined;
+  // Mutually exclusive with the email-only escape hatch; never toggled silently.
+  if(enabled&&await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(ownerId).first())return undefined;
   const now=this.now(),f=await fresh(),action=enabled?'enable-extra-verification':'disable-extra-verification';
   const r=await this.db.prepare(`INSERT INTO setting_changes(change_id,owner_id,generation,action,requester_device_id,created_at,expires_at) SELECT ?1,?2,?3,?7,?4,?5,?6 WHERE EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?4 AND d.owner_id=?2 AND d.generation=?3 AND d.revoked_at IS NULL AND d.created_at<=?5 AND d.expires_at>?5 AND ${MA}) AND (SELECT count(*) FROM setting_changes WHERE owner_id=?2 AND consumed_at IS NULL AND expires_at>?5)<${MAX_PENDING}`).bind(f.id,ownerId,generation,deviceId,now,now+PENDING_TTL,action).run();
   return r.meta.changes===1?{changeId:f.id,expiresAt:now+PENDING_TTL}:undefined;
@@ -127,13 +129,13 @@ export class ExtraVerification {
  // requester and approver must still be active, generation current.
  async consumeSettingChange({ownerId,deviceId,generation,changeId}){
   const now=this.now(),receipt=(await fresh()).id;
-  const r=await this.db.batch([
+  let r;try{r=await this.db.batch([
    this.db.prepare(`UPDATE setting_changes SET consumed_at=?1,consume_receipt=?6 WHERE change_id=?2 AND owner_id=?3 AND generation=?4 AND requester_device_id=?5 AND approved_at IS NOT NULL AND local_verified_at IS NOT NULL AND consumed_at IS NULL AND expires_at>?1 AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?3 AND s.generation=?4) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?5 AND d.owner_id=?3 AND d.generation=?4 AND d.revoked_at IS NULL AND d.expires_at>?1 AND ${MA}) AND EXISTS(SELECT 1 FROM device_sessions a ${MJA} WHERE a.device_id=setting_changes.approver_device_id AND a.owner_id=?3 AND a.generation=?4 AND a.revoked_at IS NULL AND a.expires_at>?1 AND ${MAA})`).bind(now,changeId,ownerId,generation,deviceId,receipt),
    // Only this batch's own consumption (unique random receipt on the row, same
    // owner/generation/id) may apply the toggle; a replay changes nothing.
    this.db.prepare(`INSERT OR IGNORE INTO new_device_verification(owner_id,enabled_at,generation) SELECT ?1,?3,?4 WHERE EXISTS(SELECT 1 FROM setting_changes WHERE change_id=?2 AND owner_id=?1 AND generation=?4 AND consume_receipt=?5 AND action='enable-extra-verification')`).bind(ownerId,changeId,now,generation,receipt),
    this.db.prepare(`DELETE FROM new_device_verification WHERE owner_id=?1 AND EXISTS(SELECT 1 FROM setting_changes WHERE change_id=?2 AND owner_id=?1 AND generation=?3 AND consume_receipt=?4 AND action='disable-extra-verification')`).bind(ownerId,changeId,generation,receipt),
-  ]);
+  ]);}catch{return undefined;}
   if(r[0].meta.changes!==1)return undefined;
   return {enabled:await this.enabled(ownerId)};
  }

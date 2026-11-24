@@ -109,9 +109,11 @@ export class PasskeyService {
   async revoke({ ownerId, credentialId: id }) {
     owner(ownerId);
     if (!credentialId(id)) return false;
+    // The last passkey stays unless an active Google link remains (no lockout).
     // HTTP layer must require fresh action-bound step-up and recovery-readiness
     // confirmation before calling this mutation. Never accept ownerId from body.
-    const result = await this.db.prepare('UPDATE passkey_credentials SET revoked_at = ?1, revision = revision + 1 WHERE credential_id = ?2 AND owner_id = ?3 AND revoked_at IS NULL').bind(this.now(), id, ownerId).run();
+    // The 0025 last-verifier trigger still aborts a protection-on last-key revoke.
+    let result;try{result = await this.db.prepare('UPDATE passkey_credentials SET revoked_at = ?1, revision = revision + 1 WHERE credential_id = ?2 AND owner_id = ?3 AND revoked_at IS NULL AND (EXISTS(SELECT 1 FROM passkey_credentials o WHERE o.owner_id = ?3 AND o.credential_id <> ?2 AND o.revoked_at IS NULL) OR EXISTS(SELECT 1 FROM provider_identities g WHERE g.owner_id = ?3 AND g.revoked_at IS NULL))').bind(this.now(), id, ownerId).run();}catch{return false;}
     return result.meta.changes === 1;
   }
 }
