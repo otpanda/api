@@ -16,7 +16,7 @@ test('synthetic multi-source to shared entry to browser/API flow, with no legacy
  const sources=new SourceEntryStore(db,new CodeCipher({keys:new Map([['test',key]]),activeKeyId:'test'}),{matcher:metadata});
  const access=new EntryAccess(db,sources),tokens=new EntryTokenStore(db,access);
  const sessions=new SessionService(db,{origin:'https://app.test',clock:()=>NOW});
- const app=createEntryApplication({db,sessions,sources,access,tokens,signIn:{},trustedRequestKey:()=> 'test-platform',clock:()=>NOW});
+ const app=createEntryApplication({db,sessions,sources,access,tokens,trustedRequestKey:()=> 'test-platform',clock:()=>NOW});
  const entry=await sources.createEntry('a','new-service.test','Household',NOW);
  assert.equal(db.sqlite.prepare('SELECT name FROM services WHERE service_id=?').get('new-service.test').name,'new-service.test');
  await metadata.setEntryAccount('a',entry,'Shared account');
@@ -55,14 +55,14 @@ test('synthetic multi-source to shared entry to browser/API flow, with no legacy
 test('integrated application rejects cross-origin, anonymous and CSRF-less requests',async()=>{
  const db=database();await db.prepare('INSERT INTO accounts VALUES (?,?)').bind('a',NOW).run();
  const sessions=new SessionService(db,{origin:'https://app.test',clock:()=>NOW});
- const app=createEntryApplication({db,sessions,access:{},tokens:{},signIn:{},trustedRequestKey:()=> 'boundary',clock:()=>NOW});
+ const app=createEntryApplication({db,sessions,access:{},tokens:{},trustedRequestKey:()=> 'boundary',clock:()=>NOW});
  const issued=await sessions.issue('a');
  assert.equal((await app.fetch(new Request('https://other.test/v1/manage/entries'))).status,404);
  assert.equal((await app.fetch(new Request('https://app.test/v1/manage/entries'))).status,401);
  assert.equal((await app.fetch(new Request('https://app.test/v1/manage/logout',{method:'POST',headers:{cookie:SESSION_COOKIE+'='+issued.session}}))).status,401);
  const logout=await app.fetch(new Request('https://app.test/v1/manage/logout',{method:'POST',headers:{cookie:SESSION_COOKIE+'='+issued.session,origin:'https://app.test','x-otpanda-csrf':issued.csrf}}));
  assert.equal(logout.status,200);assert.equal(await sessions.authenticate(new Request('https://app.test/',{headers:{cookie:SESSION_COOKIE+'='+issued.session}})),undefined);
- const unavailable=createEntryApplication({db,sessions,access:{},tokens:{},signIn:{},trustedRequestKey:()=>null,clock:()=>NOW});
+ const unavailable=createEntryApplication({db,sessions,access:{},tokens:{},trustedRequestKey:()=>null,clock:()=>NOW});
  assert.equal((await unavailable.fetch(new Request('https://app.test/health'))).status,503);
  db.sqlite.close();
 });
