@@ -25,7 +25,7 @@ test('public HTTP issues two distinct verified-mail challenges without owner all
  const response=await w.fetch(req(start,{method:'POST',headers:{Origin:API,'Content-Type':'application/x-www-form-urlencoded',Cookie:cookies.join('; ')},body:new URLSearchParams({action:'email',email,csrf})}),e,ctx);assert.equal(response.status,303);await Promise.all(pending);
  }
  assert.equal(sent.length,4);assert.deepEqual(sent.map(x=>x.to[0].email),['first@example.test','friend@example.test','friend@example.test','friend@example.test']);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM auth_challenges').get().n,4);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM accounts').get().n,0);
- for(const path of ['/v1/manage/entries','/auth/recovery','/v1/manage/sources'])assert.equal((await w.fetch(req(path),e,ctx)).status,404);
+ assert.equal((await w.fetch(req('/auth/recovery'),e,ctx)).status,404);for(const path of ['/v1/manage/entries','/v1/manage/sources'])assert.equal((await w.fetch(req(path,{headers:{Origin:'https://otpanda.github.io'}}),e,ctx)).status,401);
  // Scope changes poison only signup. Existing-account unauthenticated login/session still respond normally.
  assert.equal((await w.fetch(req(start),{...e,AUTH_ONLY_SIGNUP_MODE:'invalid'},ctx)).status,503);
  assert.equal((await w.fetch(req('/v1/manage/session',{headers:{Origin:'https://otpanda.github.io'}}),e,ctx)).status,401);
