@@ -18,7 +18,7 @@ test('bounded cleanup removes expired rows, preserves live rows and repeats safe
 });
 test('every cleanup statement is fixed-table and explicitly bounded',async()=>{
  const calls=[],db={prepare(sql){assert.match(sql,/DELETE FROM/);assert.match(sql,/LIMIT \?2/);assert.doesNotMatch(sql,/DELETE FROM sessions /);return {bind(...args){assert.equal(args[1],3);calls.push(sql);return {async run(){return {meta:{changes:0}};}};}};}};
- const result=await cleanupIdentity({db,clock:()=>NOW,limit:3});assert.equal(calls.length,30);assert.equal(Object.keys(result).length,30);
+ const result=await cleanupIdentity({db,clock:()=>NOW,limit:3});assert.equal(calls.length,33);assert.equal(Object.keys(result).length,32);
  for(const limit of [0,-1,501,1.5])await assert.rejects(cleanupIdentity({db,limit}));
  await assert.rejects(cleanupIdentity({db,clock:()=>NaN}));
 });
