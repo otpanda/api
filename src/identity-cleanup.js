@@ -1,6 +1,7 @@
 // Fixed-table bounded housekeeping for the new identity runtime only.
 // No legacy session/OIDC path is mounted by this module.
 const TABLES=Object.freeze([
+ ['assignment_intents','result_expires_at'],
  ['browser_logout_bindings','expires_at'],['auth_challenges','expires_at'],['passkey_ceremonies','expires_at'],
  ['passkey_signups','expires_at'],['web_signup_starts','expires_at'],['signup_mail_bindings','expires_at'],['web_login_starts','expires_at'],
  ['web_login_handoffs','expires_at'],['browser_exchanges','expires_at'],
