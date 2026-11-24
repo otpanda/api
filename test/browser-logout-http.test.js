@@ -21,7 +21,7 @@ test('logout invalidates device access, refresh and outstanding exchange, not an
  const row=f.db.sqlite.prepare('SELECT owner_id,credential_id,generation FROM device_sessions WHERE device_id=?').get(f.d.deviceId);
  const other=await f.sessions.issue({proof:{ownerId:row.owner_id,credentialId:row.credential_id,generation:row.generation,purpose:'authenticate',verifiedAt:NOW},clientKind:'web'});
  const grant=await f.exchanges.mint({deviceId:f.d.deviceId,challenge:await pkceChallenge(verifier),redirectUri:redirect_uri});
- const l=await logout(f),r=await l.request();assert.equal(r.status,303);assert.equal(r.headers.get('location'),redirect_uri);assert.equal(r.headers.getSetCookie().length,5);
+ const l=await logout(f),r=await l.request();assert.equal(r.status,303);assert.equal(r.headers.get('location'),redirect_uri);assert.equal(r.headers.getSetCookie().length,6);assert.ok(r.headers.getSetCookie().some(c=>c.startsWith('__Host-otpanda_browser=;')&&c.includes('Max-Age=0')));
  assert.equal(await f.sessions.authenticate(f.d.access),undefined);assert.equal((await f.sessions.rotate(f.d.refresh)).status,'denied');assert.equal(await f.exchanges.exchange({code:grant.code,verifier,redirectUri:redirect_uri}),undefined);assert.ok(await f.sessions.authenticate(other.access));
  assert.equal((await l.request()).status,303);
  }finally{f.db.sqlite.close();}
