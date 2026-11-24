@@ -5,8 +5,8 @@ import { createEntryManagement } from './entry-management.js';
 // The integrated entry application does not mount service-only foundation
 // routes or accept provider events from public HTTP callers. Connectors must
 // authenticate and normalize events before calling sources.receive internally.
-export function createEntryApplication({db,sessions,sources,metadata,access,tokens,signIn,trustedRequestKey,clock=Date.now}){
- if(!db||!sessions||!access||!tokens||!signIn||typeof trustedRequestKey!=='function')throw new TypeError('Complete entry dependencies required');
+export function createEntryApplication({db,sessions,sources,metadata,access,tokens,trustedRequestKey,clock=Date.now}){
+ if(!db||!sessions||!access||!tokens||typeof trustedRequestKey!=='function')throw new TypeError('Complete entry dependencies required');
  const reads=createEntryReadHandler({tokens,access,clock});
  const management=createEntryManagement({db,sessions,sources,metadata,access,tokens,clock});
  return {async fetch(request){
@@ -18,8 +18,6 @@ export function createEntryApplication({db,sessions,sources,metadata,access,toke
    const rate=await takeRateLimit(db,'entry-request:'+key,{now:clock(),limit:60});
    if(!rate.allowed)return json({error:'rate_limited'},429,{'Retry-After':String(rate.retryAfter)});
    if(url.pathname==='/health'&&request.method==='GET')return json({status:'development-only'});
-   if(url.pathname==='/auth/start')return await signIn.start(request);
-   if(url.pathname==='/auth/callback')return await signIn.callback(request);
    if(url.pathname==='/v1/entries/code')return await reads.fetch(request);
    if(!url.pathname.startsWith('/v1/manage/'))return json({error:'not_found'},404);
    const auth=await sessions.authenticate(request,{mutation:request.method!=='GET'});
