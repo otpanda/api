@@ -19,7 +19,7 @@ export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...
   if(!env||typeof env!=='object')return unavailable();
   const current=[env.BROWSER_CONFIGURATION_VERSION,env.DB,env.ACTIVE_KEY_ID,env.ENCRYPTION_KEYRING,env.IDENTITY_ADDRESS_LIMIT,env.IDENTITY_AUTH_GLOBAL_LIMIT,env.IDENTITY_READ_GLOBAL_LIMIT];
   if(configuration&&current.some((v,i)=>v!==configuration[i]))return unavailable();
-  if(!identity){configuration=current;identity=createIdentityEdgeHost({resolveTrustedIngress,edgeAddress:env.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env.IDENTITY_AUTH_GLOBAL_LIMIT,edgeReadGlobal:env.IDENTITY_READ_GLOBAL_LIMIT,initialize:async()=>createIdentityRuntime({db:env.DB,...await importBrowserKeyring(env),trustedRequestKey:resolveTrustedIngress,clock})});}
+  if(!identity){configuration=current;identity=createIdentityEdgeHost({resolveTrustedIngress,edgeAddress:env.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env.IDENTITY_AUTH_GLOBAL_LIMIT,edgeReadGlobal:env.IDENTITY_READ_GLOBAL_LIMIT,initialize:async()=>createIdentityRuntime({db:env.DB,loadCodeKeys:()=>importBrowserKeyring(env),trustedRequestKey:resolveTrustedIngress,clock})});}
   return identity.fetch(request);
  }};
 }
