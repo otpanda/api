@@ -2,7 +2,7 @@
 // No legacy session/OIDC path is mounted by this module.
 const TABLES=Object.freeze([
  ['human_email_codes','expires_at'],['pending_logins','expires_at'],['setting_changes','expires_at'],
- ['google_continuations','expires_at'],['google_enrollment_grants','expires_at'],['oauth_transactions','expires_at'],
+ ['google_continuations','expires_at'],['google_enrollment_grants','expires_at'],['passkey_add_authorizations','expires_at'],['oauth_transactions','expires_at'],
  ['assignment_intents','result_expires_at'],
  ['browser_logout_bindings','expires_at'],['auth_challenges','expires_at'],['passkey_ceremonies','expires_at'],
  ['passkey_signups','expires_at'],['web_signup_starts','expires_at'],['signup_mail_bindings','expires_at'],['web_login_starts','expires_at'],
