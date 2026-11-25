@@ -5,11 +5,11 @@ import {RecoveryControls,recoveryAction,DELAY_MS} from '../src/recovery-controls
 import {createIdentityRuntime} from '../src/identity-runtime.js';
 const NOW=1800000000000,API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
 const key=(db,a)=>db.sqlite.prepare('INSERT INTO passkey_credentials(credential_id,owner_id,public_key,counter,transports,device_type,backed_up,created_at) VALUES(?,?,?,?,?,?,?,?)').run(a.credential.id,'owner',a.credential.publicKey,0,'[]','singleDevice',0,NOW);
-async function setup({google=true,second=true,lv}={}){const db=database(),t={now:NOW},clock=()=>t.now;
+async function setup({google=true,second=true,first=true,lv}={}){const db=database(),t={now:NOW},clock=()=>t.now;
  db.sqlite.prepare('INSERT INTO accounts(owner_id,created_at) VALUES(?,?)').run('owner',NOW);db.sqlite.prepare('INSERT INTO account_emails VALUES(?,?,?,?)').run('owner','a@gmail.com',NOW,NOW);db.sqlite.prepare('INSERT INTO account_security(owner_id) VALUES(?)').run('owner');
  db.sqlite.prepare("INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) VALUES('one','owner','google','https://accounts.google.com','one','a@gmail.com',?)").run(NOW);
  if(!google)db.sqlite.prepare('UPDATE provider_identities SET revoked_at=?').run(NOW);
- const a=authenticator(),b=authenticator();key(db,a);if(second)key(db,b);
+ const a=authenticator(),b=authenticator();if(first)key(db,a);if(second)key(db,b);
  const sessions=new DeviceSessionService(db,{clock}),passkeys=new PasskeyService(db,{clock});
  const mk=async()=>sessions.issue({proof:{authMethod:'google',issuer:'https://accounts.google.com',subject:'one',ownerId:'owner',generation:0,purpose:'authenticate',verifiedAt:NOW},clientKind:'web'});
  const d=await mk();
@@ -72,4 +72,14 @@ test('reconnect: partial unique index allows relinking the same Google subject a
  const pk=await x.sessions.issue({proof:{authMethod:'passkey',credentialId:x.a.credential.id,ownerId:'owner',generation:0,purpose:'authenticate',verifiedAt:NOW},clientKind:'web'});
  const base={kind:'google-unlink'},bg=await (await x.call('begin',base,{auth:pk.access})).json();
  assert.equal((await x.call('finish',{...base,token:bg.token,response:x.a.assertion({expected:bg.options.challenge,counter:9})},{auth:pk.access})).status,200);assert.equal(q(x,LINK).n,0);
+});
+test('google unlink: zero active passkeys is 409 no_passkey before any ceremony; finish cannot apply; link and sessions unchanged',async()=>{
+ const x=await setup({first:false,second:false});
+ const r=await x.call('begin',{kind:'google-unlink'});assert.equal(r.status,409);assert.equal((await r.json()).error,'no_passkey');
+ assert.equal(q(x,'SELECT count(*) n FROM passkey_ceremonies').n,0);
+ const f=await x.call('finish',{kind:'google-unlink',token:'x'.repeat(40),response:x.a.assertion({expected:'AAAA',counter:1})});assert.notEqual(f.status,200);
+ assert.equal(q(x,LINK).n,1);assert.ok(await x.sessions.authenticate(x.d.access),'google session untouched');
+ // all passkeys revoked after linking behaves the same
+ const y=await setup();y.db.sqlite.prepare('UPDATE passkey_credentials SET revoked_at=?').run(NOW);
+ const r2=await y.call('begin',{kind:'google-unlink'});assert.equal(r2.status,409);assert.equal((await r2.json()).error,'no_passkey');assert.equal(q(y,LINK).n,1);
 });
