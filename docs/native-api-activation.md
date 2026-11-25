@@ -10,7 +10,7 @@ Off means:
 
 The flag is part of the adapter's latched configuration vector. Changing it on a live isolate makes the host answer 503 until the isolate restarts.
 
-Enabling also needs: migration `0039_native_sessions.sql` applied first, and `NATIVE_ASSET_FINGERPRINTS` set to the final app.otpanda signer(s) (assetlinks is 404 while empty). Native Google sign-in stays 503 until an audience and JWKS source are wired (not in this source).
+Enabling also needs: migration `0039_native_sessions.sql` applied first, and `NATIVE_ASSET_FINGERPRINTS` set to the final app.otpanda signer(s) (assetlinks is 404 while empty). Native Google uses the adapter JWKS verifier. Set explicit NATIVE_GOOGLE_AUDIENCES to the web server client ID. Optional NATIVE_GOOGLE_AUTHORIZED_PARTIES pins azp only after real release-token semantics are verified. Android OAuth registration must match app.otpanda and the actual persistent release signer. Source tests do not establish provider or device acceptance.
 
 ## Routes that accept a native (android) access token when enabled
 No `Origin` header, android token only. A web token without Origin, or an android token with any Origin, is refused.
@@ -23,13 +23,16 @@ No `Origin` header, android token only. A web token without Origin, or an androi
 
 The edge host allows no-Origin only for exactly this list, never for OPTIONS.
 
-## Not implemented for native (token refused; do not build the client expecting these)
-- `/v1/manage/totp-codes` (10-minute batch, web only; see below)
-- `/auth/realtime/ticket` and `/auth/realtime` (realtime). Client must poll or refetch.
-- `/v1/manage/assignment/*`, `/v1/manage/security/*`, `/v1/manage/recovery/*`, `/v1/manage/passkey/add/*`, `/v1/manage/first-passkey/*`, `/v1/manage/google/link/ticket`.
-- Native Google sign-in (503 until configured).
+## Additional mounted native routes
+- Realtime ticket and WebSocket accept the native session without Origin, with strict client-kind segregation. Native must listen, not poll.
+- Assignment begin/finish/status support private confirmation and shared enrolled-device proof.
+- Entry rename/account and device-key/approval routes are mounted behind the native flag.
 
-Native does not give full web parity. Each missing route needs its own factory opt-in, edge allow-list entry and per-route native/web tests.
+## Still excluded for native
+- `/v1/manage/totp-codes` is held for both web and native pending CPU qualification. It returns 404 without D1 access.
+- Security/recovery and remaining passkey management routes are not made native by this release.
+
+Native activation still requires a working installed release, App Links association, Pages handoff, real provider sign-in and device acceptance. Unit and local synthetic Worker/D1 tests are evidence only for their exercised paths.
 
 ## Cookies
 `/auth/native/approve` rotates only the web `__Host-otpanda_device` refresh cookie and clears the native CSRF cookie. It reads, sets and clears no recognition/remember cookie. Tested.
@@ -40,5 +43,3 @@ Setting `NATIVE_AUTH_ENABLED` back to anything but `1` stops native at once: nat
 ## Native route added for the device list
 POST `/v1/manage/session/describe` is also accepted for an android token (no Origin) when enabled, so a native client can send its device name (Build.MODEL / device name). Native sends `browser:null`; web sends `name:null`.
 
-## Batch codes budget (web)
-`/v1/manage/totp-codes` accepts at most 5 entries per request and 24 requests/min per address. Prefetch up to 20 entries as 4 sequential 5-entry requests; honor Retry-After; never fan out in parallel.
