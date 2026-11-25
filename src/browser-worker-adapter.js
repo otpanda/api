@@ -23,7 +23,7 @@ export const realtimeConfiguration=env=>{
 };
 // Native Android routes exist only when the deployment explicitly sets NATIVE_AUTH_ENABLED to the string 1. Default is off: 404 before any
 // setup, limiter or database access, for every native path.
-const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
+const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete',...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>'/auth/native/recovery/email/'+p),'/auth/native/google/continue/begin','/auth/native/google/continue/finish','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
 const signupPaths=new Set(['/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify','/auth/native/signup/email','/auth/native/signup/begin','/auth/native/signup/finish']);
 export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now,signupAllowed}={}){
  const signup=createSignupWorkerAdapter({resolveTrustedIngress,fetchImpl,clock,signupAllowed});let identity,configuration,google,googleConfiguration;

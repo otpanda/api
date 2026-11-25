@@ -8,12 +8,13 @@ const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda
 export const EMAIL_RECOVERY_STEPS=['request','verify','complete-code','complete-begin','complete-finish'];
 const SHAPES={request:'binding,email',verify:'binding,code,email','complete-code':'binding,email','complete-begin':'binding,code,email','complete-finish':'grant,response,token'};
 async function body(request){const reader=request.body?.getReader();if(!reader)return;let out='',n=0;const d=new TextDecoder('utf-8',{fatal:true});try{for(;;){const r=await reader.read();if(r.done)break;n+=r.value.byteLength;if(n>24576){await reader.cancel();return;}out+=d.decode(r.value,{stream:true});}return JSON.parse(out+d.decode());}catch{return;}finally{reader.releaseLock();}}
-export function createEmailRecoveryHttp({db,deliver,getCipher,clock=Date.now,passkeys=new PasskeyService(db,{clock}),service=new EmailRecovery(db,{clock,deliver,passkeys,getCipher})}={}){
+export function createEmailRecoveryHttp({db,deliver,getCipher,clock=Date.now,passkeys=new PasskeyService(db,{clock}),service=new EmailRecovery(db,{clock,deliver,passkeys,getCipher}),native=false}={}){
  return{async fetch(request,{clientAddress,waitUntil}={}){
-  const u=new URL(request.url),step=u.pathname.slice('/auth/recovery/email/'.length);
-  if(u.origin!==API||!u.pathname.startsWith('/auth/recovery/email/')||!EMAIL_RECOVERY_STEPS.includes(step)||u.search)return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
-  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type'}});
+  const u=new URL(request.url),prefix=native===true?'/auth/native/recovery/email/':'/auth/recovery/email/',step=u.pathname.slice(prefix.length);
+  if(u.origin!==API||!u.pathname.startsWith(prefix)||!EMAIL_RECOVERY_STEPS.includes(step)||u.search)return json({error:'not_found'},404);
+  // Native: no Origin header at all (a browser always sends one). Web: exactly the app origin.
+  if(native===true?request.headers.has('origin'):request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(request.method==='OPTIONS'&&native!==true)return new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Content-Type'}});
   if(request.method!=='POST'||request.headers.get('content-type')!=='application/json')return json({error:'invalid_request'},400,cors);
   if(typeof clientAddress!=='string'||!clientAddress)return json({error:'unavailable'},503,cors);
   if(!(await takeRateLimit(db,'recovery-email-http:'+clientAddress,{now:clock(),limit:30})).allowed)return json({error:'busy'},429,cors);

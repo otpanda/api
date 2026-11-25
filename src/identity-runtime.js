@@ -1,3 +1,5 @@
+import {GoogleContinuation} from './google-continuation.js';
+import {createNativeGoogleLinkHttp} from './native-google-link-http.js';
 import {SeedCipher} from './seed-cipher.js';
 import {TotpSeedStore,EntryTotpGenerator} from './totp-seeds.js';
 import {createTotpReadHttp} from './totp-read-http.js';
@@ -72,18 +74,18 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
 // Native Android boundary. Without native.assetFingerprints assetlinks is 404; without native.google the Google routes are 503.
  const nativeSessionService=new NativeSessionService(db,{clock});
  // Google routes need an injected NativeGoogle OR audiences plus a key lookup; with neither they stay 503 (fail closed).
- const nativeGoogle=native?.google??(Array.isArray(native?.googleAudiences)&&native.googleAudiences.length&&typeof native.googleGetKey==='function'?new NativeGoogle(db,{native:nativeSessionService,audiences:native.googleAudiences,authorizedParties:native.googleAuthorizedParties??[],getKey:native.googleGetKey,clock}):undefined);
+ const nativeGoogle=native?.google??(Array.isArray(native?.googleAudiences)&&native.googleAudiences.length&&typeof native.googleGetKey==='function'?new NativeGoogle(db,{native:nativeSessionService,audiences:native.googleAudiences,authorizedParties:native.googleAuthorizedParties??[],getKey:native.googleGetKey,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined);
  // Separate service so web ceremonies never accept an android origin; shares tables, differs in binding and origin set.
  const nativeOrigins=androidOriginsFromFingerprints(native?.assetFingerprints??[]),nativePasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins,nativeOnly:true})}):undefined;
  const nativeHttp=createNativeHttp({sessions,native:nativeSessionService,db,google:nativeGoogle,passkeys:nativePasskeys,assetFingerprints:native?.assetFingerprints??[],clock});
- const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
+ const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/google/continue/begin','/auth/native/google/continue/finish','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
  const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,clock});
  // Authenticated, device/owner/action-bound passkey ceremonies (step-up, register) must verify an assertion from either client: web origin plus the configured android signer. Without a signer this is exactly the web service.
  const managedPasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins})}):passkeys;
  const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys});
- const security=createExtraVerificationHttp({db,sessions,clock});
- const firstPasskey=createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})}),addPasskey=createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
- const deviceInfo=createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock}),passkeyLabel=createPasskeyLabelHttp({db,sessions,clock}),overview=createAccountOverviewHttp({db,sessions,native:nativeOn,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock});
+ const security=createExtraVerificationHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn});
+ const firstPasskey=createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})}),addPasskey=createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys}),nativeEmailRecovery=nativeOn&&nativePasskeys?createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys:nativePasskeys,native:true}):undefined,nativeLink=nativeOn&&nativeOrigins.length?createNativeGoogleLinkHttp({db,sessions,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined;
+ const deviceInfo=createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock}),passkeyLabel=createPasskeyLabelHttp({db,sessions,clock,native:nativeOn}),overview=createAccountOverviewHttp({db,sessions,native:nativeOn,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock,native:nativeOn});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn});
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
@@ -112,6 +114,8 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(url.pathname==='/v1/manage/passkey/rename')handler=passkeyLabel;
    else if(url.pathname==='/v1/manage/session/describe')handler=deviceInfo;
    else if(url.pathname.startsWith('/v1/manage/recovery/'))handler=recovery;
+   else if(url.pathname.startsWith('/auth/native/recovery/email/')){handler=nativeEmailRecovery;if(!handler)return json({error:'not_found'},404);}
+   else if(['/v1/manage/google/link/begin','/v1/manage/google/link/finish'].includes(url.pathname)){handler=nativeLink;if(!handler)return json({error:'not_found'},404);}
    else if(url.pathname.startsWith('/auth/recovery/email/'))handler=emailRecovery;
    else if(url.pathname==='/v1/manage/account')handler=overview;
    else if(url.pathname==='/v1/manage/google/link/ticket')handler=googleLink;

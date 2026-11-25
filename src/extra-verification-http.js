@@ -4,9 +4,9 @@ import {ExtraVerification,ACTION} from './extra-verification.js';
 import {PasskeyService} from './passkey-service.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
 async function body(request){const reader=request.body?.getReader();if(!reader)return;let out='',size=0;const d=new TextDecoder('utf-8',{fatal:true});try{for(;;){const x=await reader.read();if(x.done)break;size+=x.value.byteLength;if(size>24576){await reader.cancel();return;}out+=d.decode(x.value,{stream:true});}return JSON.parse(out+d.decode());}catch{return;}finally{reader.releaseLock();}}
-export function createExtraVerificationHttp({db,sessions,clock=Date.now,service=new ExtraVerification(db,{clock}),passkeys=new PasskeyService(db,{clock})}){const auth=createDeviceSessionAuth({sessions});return{async fetch(request,{clientAddress}={}){
+export function createExtraVerificationHttp({db,sessions,clock=Date.now,service=new ExtraVerification(db,{clock}),passkeys=new PasskeyService(db,{clock}),native=false}){const auth=createDeviceSessionAuth({sessions,native:native===true});return{async fetch(request,{clientAddress}={}){
  const u=new URL(request.url),action=u.pathname.slice('/v1/manage/security/'.length);if(u.origin!==API||!['status','begin','finish','approve','deny','request-change','approve-change','consume-change'].includes(action)||u.search)return json({error:'not_found'},404);
- if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+ if(!auth.originAllowed(request))return json({error:'forbidden'},403);
  if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':action==='status'?'GET':'POST','Access-Control-Allow-Headers':'Authorization, Content-Type'}});
  if(request.method!==(action==='status'?'GET':'POST')||(action!=='status'&&request.headers.get('content-type')!=='application/json'))return json({error:'invalid_request'},400,cors);
  if(!clientAddress||!(await takeRateLimit(db,'security:'+clientAddress,{now:clock(),limit:30})).allowed)return json({error:'busy'},429,cors);
