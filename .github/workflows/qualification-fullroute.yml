@@ -1,7 +1,7 @@
-name: Isolated pinned noble cap5 mounted-route CPU qualification
+name: Isolated WebCrypto route baseline comparison
 on:
   push:
-    branches: [qualify/totp-mounted-cap5]
+    branches: [qualify/totp-mounted-noble-paused]
 permissions:
   contents: read
 concurrency:
@@ -9,13 +9,18 @@ concurrency:
   cancel-in-progress: false
 jobs:
   qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        case: [0, 1, 2, 3, 4]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       WRANGLER_SEND_METRICS: 'false'
-      QUALIFICATION_NAME: otpanda-totp-mounted-${{ github.run_id }}
+      QUALIFICATION_NAME: otpanda-totp-mounted-${{ github.run_id }}${{ matrix.case }}
+      QUALIFICATION_CASE: ${{ matrix.case }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -45,7 +50,7 @@ jobs:
           node --input-type=module <<'JS' | tee qualification-evidence/check.log
           import {readFileSync} from 'node:fs';const f=JSON.parse(readFileSync('/tmp/mounted/fixture.json','utf8')),base='https://'+process.env.QUALIFICATION_NAME+'.abrahammurciano.workers.dev';
           console.log('qualification_url='+base);
-          let failures=0;for(let i=0;i<24;i++){await new Promise(r=>setTimeout(r,1500));const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text();let b;try{b=JSON.parse(text)}catch{}console.log(JSON.stringify({request:i+1,status:r.status,contentType:r.headers.get('content-type'),entries:b?.entries?.length,codeCounts:b?.entries?.map(e=>e.codes.length),bytes:text.length,error:b?.entries?undefined:(b?.error||text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,1200))}));if(r.status!==200||b?.entries?.length!==5)failures++;}if(failures)throw Error('mounted route failures='+failures);
+          let failures=0;const routes=['/v1/manage/session','/v1/manage/totp-code?entry='+f.ids[0],'/v1/manage/totp-codes?entry=unknown-entry','/v1/manage/totp-codes?entry='+f.ids[0],'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&')],mode=Number(process.env.QUALIFICATION_CASE);for(let i=0;i<8;i++){await new Promise(r=>setTimeout(r,1500));const r=await fetch(base+routes[mode],{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text();let b;try{b=JSON.parse(text)}catch{}console.log(JSON.stringify({mode,request:i+1,status:r.status,contentType:r.headers.get('content-type'),entries:b?.entries?.length,codeCounts:b?.entries?.map(e=>e.codes.length),bytes:text.length,error:b?.entries?undefined:(b?.error||text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,1200))}));if(r.status!==200||!b||(mode===0&&!b.ownerId)||(mode===1&&!b.code)||(mode===2&&b.entries?.length!==0)||(mode===3&&b.entries?.length!==1)||(mode===4&&b.entries?.length!==5))failures++;}if(failures)throw Error('mounted route failures='+failures);
           JS
       - name: Bounded metrics inspection window
         if: always()
@@ -60,6 +65,6 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: synthetic-mounted-cap5-${{ github.run_id }}
+          name: synthetic-mounted-baseline-${{ github.run_id }}-${{ matrix.case }}
           path: qualification-evidence
           retention-days: 3
