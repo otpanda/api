@@ -15,7 +15,7 @@ test('edge bindings remain distinct bounded counters for explicit auth-only depl
 });
 
 test('realtime binding stage preserves one maintenance cron and SQLite class migration',()=>{
- assert.deepEqual(config.triggers.crons,['*/15 * * * *']);
+ assert.deepEqual(config.triggers.crons,['*/15 * * * *','*/5 * * * *']);
  assert.deepEqual(config.durable_objects.bindings,[{name:'REALTIME_HUB',class_name:'RealtimeHub'}]);
  assert.deepEqual(config.migrations,[{tag:'realtime-v1',new_sqlite_classes:['RealtimeHub']}]);
  assert.deepEqual(config.ratelimits.filter(x=>x.name.startsWith('REALTIME_')).map(x=>x.namespace_id),['68022008','68022009','68022010']);
