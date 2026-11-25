@@ -7,6 +7,9 @@ import {generateAccessToken,digestSecret,digestToHex} from './tokens.js';
 import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-method.js';
 export const PROOF_TTL=120_000,DELAY_MS=604_800_000,CHANGE_TTL=10*60_000,MAX_CHANGES=5;
 export const KINDS=['email-escape-on','email-escape-off','passkey-revoke','session-revoke'];
+// Passkey step-up only. Deliberately NOT in KINDS: the enrolled-client approval path (createChange/consumeChange) must never apply it.
+export const APPLY_KINDS=[...KINDS,'google-unlink'];
+export const GOOGLE_ISSUER='https://accounts.google.com';
 export const recoveryAction=(kind,target)=>JSON.stringify(['recovery',kind,target??null]);
 const ID=/^[A-Za-z0-9_-]{1,512}$/;
 export class RecoveryControls {
@@ -17,6 +20,7 @@ export class RecoveryControls {
  // unavailable unless a real verifier is injected. Possession alone is never a fallback.
  constructor(db,{clock=Date.now,localVerification}={}){this.db=db;this.clock=clock;this.localVerification=typeof localVerification==='function'?localVerification:undefined;}
  get approvalAvailable(){return !!this.localVerification;}
+ async googleLinked(ownerId){return !!await this.db.prepare("SELECT 1 x FROM provider_identities WHERE owner_id=?1 AND issuer=?2 AND revoked_at IS NULL").bind(ownerId,GOOGLE_ISSUER).first();}
  async status(user){
   const owner=user.ownerId,now=this.clock();
   const escape=!!await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(owner).first();
@@ -96,7 +100,7 @@ export class RecoveryControls {
  // device-key (possession-only) proof is refused here.
  async apply({user,kind,target,proof,warningAccepted}){
   const now=this.clock();
-  if(!KINDS.includes(kind)||!proof||proof.purpose!=='step-up'||proof.ownerId!==user.ownerId||proof.generation!==user.generation||typeof proof.credentialId!=='string'||typeof proof.keyId==='string'||!Number.isSafeInteger(proof.verifiedAt)||proof.verifiedAt>now||now-proof.verifiedAt>=PROOF_TTL)return;
+  if(!APPLY_KINDS.includes(kind)||!proof||proof.purpose!=='step-up'||proof.ownerId!==user.ownerId||proof.generation!==user.generation||typeof proof.credentialId!=='string'||typeof proof.keyId==='string'||!Number.isSafeInteger(proof.verifiedAt)||proof.verifiedAt>now||now-proof.verifiedAt>=PROOF_TTL)return;
   const needsTarget=kind==='passkey-revoke'||kind==='session-revoke';
   if(needsTarget!==(typeof target==='string')||(needsTarget&&!ID.test(target)))return;
   if(kind==='email-escape-on'&&warningAccepted!==true)return;
@@ -119,6 +123,18 @@ export class RecoveryControls {
     if(target===c)return;
     const r=await this.db.prepare(`UPDATE passkey_credentials SET revoked_at=?4,revision=revision+1 WHERE credential_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}${keep}`).bind(c,o,g,now,target).run();
     return r/*exact-count-ok*/.meta.changes===1?{revoked:'passkey'}:undefined;
+   }
+   if(kind==='google-unlink'){
+    // One atomic batch. The proving passkey must be active (so a passkey always remains) and the link still active.
+    // Sessions that rest on the link are revoked by writing revoked_at, so the realtime revoke trigger fires too.
+    const gone=`(SELECT identity_id FROM provider_identities WHERE owner_id=?2 AND issuer='${GOOGLE_ISSUER}' AND revoked_at=?4)`;
+    const r=await this.db.batch([
+     this.db.prepare(`UPDATE provider_identities SET revoked_at=?4 WHERE owner_id=?2 AND issuer='${GOOGLE_ISSUER}' AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now),
+     this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE owner_id=?2 AND revoked_at IS NULL AND provider_identity_id IN ${gone}`).bind(c,o,g,now),
+     this.db.prepare(`UPDATE recognized_browsers SET revoked_at=?4 WHERE owner_id=?2 AND revoked_at IS NULL AND provider_identity_id IN ${gone}`).bind(c,o,g,now),
+     this.db.prepare(`DELETE FROM pending_logins WHERE owner_id=?2 AND provider_identity_id IN ${gone}`).bind(c,o,g,now),
+    ]);
+    return r[0].meta.changes>=1?{revoked:'google'}:undefined;
    }
    const r=await this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE device_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now,target).run();
    return r.meta.changes>=1?{revoked:'session'}:undefined;
