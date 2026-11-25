@@ -20,6 +20,7 @@ export default [
       'no-empty': ['error', {allowEmptyCatch: true}],
     },
   },
+  {files: ['src/realtime-hub.js'], languageOptions: {globals: {WebSocketPair: 'readonly'}}},
   {files: ['**/*.cjs'], languageOptions: {sourceType: 'commonjs'}},
   {
     // Browser-side check scripts evaluate code inside a page that defines this.
