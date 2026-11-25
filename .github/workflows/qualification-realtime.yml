@@ -1,0 +1,111 @@
+name: Isolated realtime platform qualification
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/qualification-realtime.yml]
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-isolated-realtime-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: source
+    env:
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+      WRANGLER_SEND_METRICS: 'false'
+      QUALIFICATION_NAME: otpanda-realtime-qualification-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: e07b84c814532933becbe477ed66bba9948ecadf
+          path: source
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: 7ac984645de29e9ce51dadf904d3621847fa4a01
+          path: harness
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Prepare fixed harness
+        run: |
+          set -euo pipefail
+          python3 - <<'PYTHON'
+          import pathlib,re,base64,gzip,hashlib
+          text=pathlib.Path('../harness/REALTIME-CURRENT-PREPARATION.md').read_text()
+          encoded=re.search(r'```base64-gzip\n([\s\S]*?)```',text).group(1)
+          patch=gzip.decompress(base64.b64decode(encoded))
+          assert hashlib.sha256(patch).hexdigest()=='7f670b5ce6bc74037c65a4e40e20c1ee6b37ced8907d31624d6acd77f53e0d3d'
+          pathlib.Path('/tmp/realtime-reviewed.patch').write_bytes(patch)
+          PYTHON
+          git apply /tmp/realtime-reviewed.patch
+          node --test tool/platform/socket-observer.test.mjs
+          npm ci --ignore-scripts
+          npm ci --prefix tool/platform --ignore-scripts
+          mkdir -p qualification-evidence
+          node tool/platform/key.mjs
+      - name: Verify temporary names are absent before creation
+        run: |
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' node tool/platform/verify-cleanup.mjs > qualification-evidence/preflight-isolation.log
+          touch qualification-evidence/isolation-passed
+      - name: Create temporary D1
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler d1 create "$QUALIFICATION_NAME" > qualification-evidence/create.log
+          node tool/platform/read-created-id.mjs
+      - name: Deploy synthetic harness and measure
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          node tool/platform/configure.mjs
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler d1 migrations apply "$QUALIFICATION_NAME" --remote --config tool/platform/wrangler.json > qualification-evidence/migrations.log
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler deploy --config tool/platform/wrangler.json > qualification-evidence/deploy.log
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler tail "$QUALIFICATION_NAME" --format json > qualification-evidence/tail.json 2>&1 &
+          tail_pid=$!
+          trap 'kill "$tail_pid" || true; wait "$tail_pid" || true' EXIT
+          export QUALIFICATION_URL="https://${QUALIFICATION_NAME}.abrahammurciano.workers.dev"
+          node tool/platform/check.mjs | tee qualification-evidence/check.log
+      - name: Always remove temporary namespace, Worker and D1
+        if: always()
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -uo pipefail
+          mkdir -p qualification-evidence
+          if [ ! -f qualification-evidence/isolation-passed ]; then
+            echo "Isolation not established; no resource mutation was attempted, cleanup must not touch existing names."
+            exit 0
+          fi
+          status=0
+          if [ -f tool/platform/cleanup.json ]; then
+            CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler deploy --config tool/platform/cleanup.json >> qualification-evidence/cleanup.log 2>&1 || status=1
+          fi
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' node tool/platform/delete-worker.mjs >> qualification-evidence/cleanup.log 2>&1 || status=1
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler d1 delete "$QUALIFICATION_NAME" --skip-confirmation >> qualification-evidence/cleanup.log 2>&1 || status=1
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' node tool/platform/verify-cleanup.mjs >> qualification-evidence/cleanup.log 2>&1 || status=1
+          exit "$status"
+      - name: Remove ephemeral key from evidence
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'JS'
+          import {readdirSync,readFileSync,writeFileSync,existsSync} from 'node:fs';
+          const dir='qualification-evidence',key=process.env.QUALIFICATION_KEY;
+          if(key&&existsSync(dir))for(const f of readdirSync(dir)){const p=dir+'/'+f;writeFileSync(p,readFileSync(p,'utf8').replaceAll(key,'[REDACTED-EPHEMERAL-KEY]'));}
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: isolated-realtime-qualification-${{ github.run_id }}
+          path: source/qualification-evidence
+          retention-days: 3
