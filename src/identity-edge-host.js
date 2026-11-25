@@ -20,13 +20,30 @@ const nativeManage=new Set(['account','session','entries','active-codes','unassi
 const corsPath=p=>p==='/auth/extension/begin'||((p.startsWith('/auth/google/continue/')||p.startsWith('/auth/google/protection/'))&&!p.endsWith('/complete'))||p.startsWith('/auth/recovery/email/')||p==='/auth/login/verify'||p==='/auth/exchange'||p==='/auth/renew'||p.startsWith('/v1/');
 const headers=p=>({...securityHeaders,...(corsPath(p)?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'}:{})});
 export const isIdentityPath=p=>methods.has(p);
-const realtimeMethods=new Map([['/auth/realtime/ticket',['POST']],['/auth/realtime',['GET']]]);
+const realtimeMethods=new Map([['/auth/realtime/ticket',['POST']],['/auth/realtime',['GET']],['/auth/extension/realtime/ticket',['POST']],['/auth/extension/realtime',['GET']]]);
 // realtime (optional): {edgeAddress, edgeGlobal} are DEDICATED rate-limit bindings for ticket mint and upgrade. They never touch
 // the shared auth pool or the read pool. Absent, the realtime paths do not exist (404) and nothing about the other routes changes.
 export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAddress,edgeAuthGlobal,edgeReadGlobal,realtime,nativeApi=false,extensionApi=false,extensionOrigins=[]}={}){
  let identity;
   const realtimeFetch=async(request,ctx)=>{
   const url=new URL(request.url),p=url.pathname,allowed=realtimeMethods.get(p),ticket=p==='/auth/realtime/ticket',origin=request.headers.get('origin');
+  // Extension realtime: fixed-kind paths, NO CORS headers and no preflight, only when extension auth AND its own dedicated limiter bindings exist.
+  // Origin absent or exactly a configured extension origin; web/android origins and anything else are refused before any budget or D1 is touched.
+  if(p.startsWith('/auth/extension/')){
+   const eh={...securityHeaders},efail=(status,error='unavailable')=>json({error},status,{...eh,...([429,503].includes(status)?{'Retry-After':'30'}:{})}),X=realtime?.extension;
+   if(url.origin!==API||url.search||extensionApi!==true||!X)return json({error:'not_found'},404);
+   if(origin!==null&&!extensionOrigins.includes(origin))return efail(403,'forbidden');
+   if(request.method==='OPTIONS')return efail(403,'forbidden');
+   if(!allowed.includes(request.method))return efail(405,'method_not_allowed');
+   try{
+    if(typeof initialize!=='function'||typeof resolveTrustedIngress!=='function'||typeof X.edgeAddress?.limit!=='function'||typeof X.edgeGlobal?.limit!=='function')return efail(503);
+    const address=canonicalClientAddress(await resolveTrustedIngress(request));if(!address)return efail(503);
+    if((await X.edgeAddress.limit({key:await hashText('realtime-ext:'+address)}))?.success!==true)return efail(429,'busy');
+    if((await X.edgeGlobal.limit({key:'otpanda-realtime-ext-v1'}))?.success!==true)return efail(429,'busy');
+    identity??=Promise.resolve().then(initialize);
+    return await(await identity).fetch(request,{waitUntil:typeof ctx?.waitUntil==='function'?q=>ctx.waitUntil(q):undefined});
+   }catch{return efail(503);}
+  }
   // Native Android realtime: only when native is enabled, only with NO Origin header, never for a preflight. A browser always sends Origin.
   const nativeRt=nativeApi===true&&origin===null&&request.method!=='OPTIONS';
   const h={...securityHeaders,...(origin===APP?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After'}:{}),Vary:'Origin'};

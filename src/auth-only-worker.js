@@ -23,7 +23,7 @@ const paths=new Set([...['begin','exchange','challenge','renew','logout'].map(p=
  ...['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p),...['rename','account'].map(p=>'/v1/manage/entry/'+p),
  '/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/passkey/rename','/v1/manage/session/describe','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
-const realtimePaths=new Set(['/auth/realtime/ticket','/auth/realtime']);
+const realtimePaths=new Set(['/auth/realtime/ticket','/auth/realtime']),extensionRealtimePaths=new Set(['/auth/extension/realtime/ticket','/auth/extension/realtime']);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
  const signupAllowed=email=>!invalid&&configured&&(mode==='public'||email===owner);
@@ -56,7 +56,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
      return json({service:'otpanda-api',stage:'auth-only',database:'available',recoveryDelivery:(recoveryDelivery.deadNotifications+recoveryDelivery.deadCodeJobs)>0?'attention':'ok',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged'},200);
     }catch{return json({error:'unavailable'},503);}
    }
-   if(!paths.has(url.pathname)&&!(realtimePaths.has(url.pathname)&&realtimeConfiguration(env)))return json({error:'not_found'},404);
+   if(!paths.has(url.pathname)&&!((realtimePaths.has(url.pathname)&&realtimeConfiguration(env))||(extensionRealtimePaths.has(url.pathname)&&realtimeConfiguration(env)?.extension)))return json({error:'not_found'},404);
    // Public registration requires an explicit mode with no owner binding.
    // Existing isolates latch policy and refuse runtime scope changes.
    if(url.pathname.startsWith('/auth/signup/')&&request.method!=='OPTIONS') {
