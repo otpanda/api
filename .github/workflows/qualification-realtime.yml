@@ -52,7 +52,9 @@ jobs:
           mkdir -p qualification-evidence
           node tool/platform/key.mjs
       - name: Verify temporary names are absent before creation
-        run: CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' node tool/platform/verify-cleanup.mjs > qualification-evidence/preflight-isolation.log
+        run: |
+          CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' node tool/platform/verify-cleanup.mjs > qualification-evidence/preflight-isolation.log
+          touch qualification-evidence/isolation-passed
       - name: Create temporary D1
         timeout-minutes: 2
         shell: bash
@@ -80,6 +82,10 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p qualification-evidence
+          if [ ! -f qualification-evidence/isolation-passed ]; then
+            echo "Isolation not established; no resource mutation was attempted, cleanup must not touch existing names."
+            exit 0
+          fi
           status=0
           if [ -f tool/platform/cleanup.json ]; then
             CLOUDFLARE_API_TOKEN='${{ secrets.CLOUDFLARE_API_TOKEN }}' npx wrangler deploy --config tool/platform/cleanup.json >> qualification-evidence/cleanup.log 2>&1 || status=1
