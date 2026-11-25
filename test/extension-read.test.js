@@ -68,7 +68,7 @@ test('revoking the extension device or bumping the generation ends read access a
  assert.equal((await f.read('entries',{token:f.ext.access})).status,401);assert.equal((await f.dom('GET',{token:f.ext.access})).status,401);f.db.sqlite.close();
 });
 test('default-deny guard: extension mode may be enabled only in the audited modules (identity-runtime.js mounts the extension realtime instance)',()=>{
- const allowed=new Set(['device-read-http.js','entry-domains-http.js','extension-http.js','device-session-auth.js','identity-runtime.js']);
+ const allowed=new Set(['device-read-http.js','entry-domains-http.js','extension-http.js','device-session-auth.js','identity-runtime.js','totp-read-http.js']);
  for(const f of readdirSync(new URL('../src/',import.meta.url)).filter(f=>f.endsWith('.js'))){
   const s=readFileSync(new URL('../src/'+f,import.meta.url),'utf8');
   if(/extension\s*:\s*true/.test(s))assert.ok(allowed.has(f),f+' enables extension kind and is not audited');

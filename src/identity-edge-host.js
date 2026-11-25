@@ -72,7 +72,7 @@ export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAdd
   const url=new URL(request.url),p=url.pathname,allowed=methods.get(p),origin=request.headers.get('origin'),cors=corsPath(p);
   const fail=(status,error='unavailable')=>{const h={...(origin===APP?headers(p):securityHeaders),...([429,503].includes(status)?{'Retry-After':'60'}:{})};return cors||nativePath(p)?json({error},status,h):new Response(null,{status:303,headers:{...h,Location:'https://otpanda.github.io/app/#auth=retry'}});};
   if(url.origin!==API||!allowed)return json({error:'not_found'},404);
-  const extRead=extensionApi&&request.method==='GET'&&['/v1/manage/entries','/v1/manage/active-codes','/v1/manage/entry/domains'].includes(p)&&origin!==APP&&(origin===null||extensionOrigins.includes(origin));
+  const extRead=extensionApi&&request.method==='GET'&&['/v1/manage/entries','/v1/manage/active-codes','/v1/manage/entry/domains','/v1/manage/totp-code'].includes(p)&&origin!==APP&&(origin===null||extensionOrigins.includes(origin));
   const ext=p.startsWith('/auth/extension/'),extBegin=p==='/auth/extension/begin';
   if(ext&&!extensionApi)return json({error:'not_found'},404);
   if((ext&&!extBegin)||extRead){
