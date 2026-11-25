@@ -17,3 +17,11 @@ test('public Worker preflight for /auth/renew: exactly authorization and content
  // other /auth endpoints must NOT gain authorization
  const x=await pre('authorization',APP,'POST','/auth/exchange');assert.equal(x.status,403);assert.equal((await pre('content-type',APP,'POST','/auth/exchange')).status,204);
  assert.equal(calls,0);});
+
+test('disallowed origins expose no CORS response headers',async()=>{const h=createIdentityEdgeHost();const r=await h.fetch(req('/v1/manage/session',{headers:{Origin:'https://evil.test'}}));assert.equal(r.status,403);assert.equal(r.headers.get('Access-Control-Allow-Origin'),null);assert.equal(r.headers.get('Access-Control-Expose-Headers'),null);});
+test('edge read failures expose Retry-After to the cross-origin web client',async()=>{
+ for(const allowed of [false,true]){
+  const h=createIdentityEdgeHost({resolveTrustedIngress:()=> '192.0.2.1',edgeAddress:{limit:async()=>({success:allowed})},edgeReadGlobal:yes,initialize:async()=>{throw Error('unavailable');}});
+  const r=await h.fetch(req());assert.equal(r.status,allowed?503:429);assert.equal(r.headers.get('Access-Control-Expose-Headers'),'Retry-After');assert.equal(r.headers.get('Retry-After'),'60');
+ }
+});

@@ -102,3 +102,9 @@ test('the shared foreground drain wrapper: an allowlisted success drains within 
  await mk(redirect('x=1'),undefined)(req,ctx);assert.equal(waits.length,0,'inert without realtime');
  await mk(redirect('x=1'),rt)(req,ctx);assert.equal(waits.length,1);await Promise.all(waits);assert.equal(calls,1);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM realtime_outbox').get().n,0);
  db.sqlite.close();});
+
+test('only committed authenticator enrollment status201 is a foreground writer',()=>{
+ for(const status of [200,204,400,401,403,409,429,503])assert.equal(relevantWrite(new Request(GAPI+'/v1/manage/totp',{method:'POST'}),new Response(null,{status})),false);
+ assert.equal(relevantWrite(new Request(GAPI+'/v1/manage/totp',{method:'POST'}),new Response(null,{status:201})),true);
+ assert.equal(relevantWrite(new Request(GAPI+'/v1/manage/totp/begin',{method:'POST'}),new Response(null,{status:200})),false);
+});
