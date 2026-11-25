@@ -1,7 +1,7 @@
-name: Isolated synthetic cap5 mounted-route CPU qualification
+name: Isolated pinned noble cap5 mounted-route CPU qualification
 on:
   push:
-    branches: [qualify/totp-mounted-cap5]
+    branches: [qualify/totp-mounted-noble-paused]
 permissions:
   contents: read
 concurrency:
@@ -43,7 +43,7 @@ jobs:
           node --input-type=module <<'JS' | tee qualification-evidence/check.log
           import {readFileSync} from 'node:fs';const f=JSON.parse(readFileSync('/tmp/mounted/fixture.json','utf8')),base='https://'+process.env.QUALIFICATION_NAME+'.abrahammurciano.workers.dev';
           console.log('qualification_url='+base);
-          let failures=0;for(let i=0;i<12;i++){await new Promise(r=>setTimeout(r,1500));const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text();let b;try{b=JSON.parse(text)}catch{}console.log(JSON.stringify({request:i+1,status:r.status,contentType:r.headers.get('content-type'),entries:b?.entries?.length,codeCounts:b?.entries?.map(e=>e.codes.length),bytes:text.length,error:b?.entries?undefined:(b?.error||text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,1200))}));if(r.status!==200||b?.entries?.length!==5)failures++;}if(failures)throw Error('mounted route failures='+failures);
+          let failures=0;for(let i=0;i<24;i++){await new Promise(r=>setTimeout(r,1500));const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text();let b;try{b=JSON.parse(text)}catch{}console.log(JSON.stringify({request:i+1,status:r.status,contentType:r.headers.get('content-type'),entries:b?.entries?.length,codeCounts:b?.entries?.map(e=>e.codes.length),bytes:text.length,error:b?.entries?undefined:(b?.error||text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,1200))}));if(r.status!==200||b?.entries?.length!==5)failures++;}if(failures)throw Error('mounted route failures='+failures);
           JS
       - name: Bounded metrics inspection window
         run: sleep 420
