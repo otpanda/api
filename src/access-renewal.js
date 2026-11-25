@@ -54,7 +54,7 @@ export class AccessRenewal{
    // Capacity refused the successor: give the handle back instead of stranding the tab.
    this.db.prepare('UPDATE device_access_handles SET renewed_at=NULL,renew_receipt=NULL WHERE handle_id=?1 AND renew_receipt=?2 AND NOT EXISTS(SELECT 1 FROM device_access_handles WHERE handle_id=?3)').bind(t.id,receipt,next.tokenId),
   ]);
-  if(results[1].meta.changes===1){const fp=await firstPartyExpiresAt(this.db,row.device_id);return {status:'renewed',access:next.token,accessExpiresAt:at+ACCESS,renewal:{lineageId,handleId:next.tokenId,serverTime:at,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};}
-  return {status:results[0].meta.changes===1?'denied':'renewed-elsewhere'};
+  if(results[1]/*exact-count-ok*/.meta.changes===1){const fp=await firstPartyExpiresAt(this.db,row.device_id);return {status:'renewed',access:next.token,accessExpiresAt:at+ACCESS,renewal:{lineageId,handleId:next.tokenId,serverTime:at,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};}
+  return {status:results[0]/*exact-count-ok*/.meta.changes===1?'denied':'renewed-elsewhere'};
  }
 }
