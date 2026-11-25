@@ -1,3 +1,4 @@
+import {storeAaguid} from './passkey-providers.js';
 // Internal orchestration, not a public route. Authenticated owner/action binding
 // comes from the future HTTP layer, never from an untrusted request field.
 import { generateAccessToken, parseAccessToken, digestSecret, digestToHex, base64urlEncode, base64urlDecode } from './tokens.js';
@@ -18,7 +19,7 @@ export async function verifiedRegistration(verifier, response, challenge) {
   const c = info.credential;
   if (!(c.publicKey instanceof Uint8Array) || c.publicKey.length < 1 || c.publicKey.length > 4096 || !Number.isSafeInteger(c.counter) || c.counter < 0 || !['singleDevice','multiDevice'].includes(info.credentialDeviceType) || typeof info.credentialBackedUp !== 'boolean') return undefined;
   const transports = [...new Set((c.transports ?? []).filter(t => ['ble','cable','hybrid','internal','nfc','smart-card','usb'].includes(t)))];
-  return { c, transports, deviceType:info.credentialDeviceType, backedUp:info.credentialBackedUp ? 1 : 0 };
+  return { c, transports, deviceType:info.credentialDeviceType, backedUp:info.credentialBackedUp ? 1 : 0, aaguid:info.aaguid };
 }
 export class PasskeyService {
   constructor(db, { clock = Date.now, verifier = new PasskeyVerifier() } = {}) { this.db = db; this.clock = clock; this.verifier = verifier; }
@@ -71,7 +72,9 @@ export class PasskeyService {
     // Uniqueness never overwrites another credential, including a revoked one.
     const result = await this.db.prepare('INSERT INTO passkey_credentials (credential_id, owner_id, public_key, counter, transports, device_type, backed_up, created_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS (SELECT 1 FROM account_security WHERE owner_id = ?2 AND generation = ?9) ON CONFLICT(credential_id) DO NOTHING')
       .bind(c.id, ownerId, Array.from(c.publicKey), c.counter, JSON.stringify(transports), deviceType, backedUp, now, ceremony.generation).run();
-    return result.meta.changes === 1;
+    if (result.meta.changes !== 1) return false;
+    await storeAaguid(this.db,{credentialId:c.id,ownerId,aaguid:record.aaguid});
+    return true;
   }
   async finishAuthentication({ token, binding, response, ownerId = null, action = null, onCeremonyClaimed }) {
     const purpose = ownerId === null ? 'authenticate' : 'step-up';

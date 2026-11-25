@@ -1,5 +1,6 @@
 import {generateAccessToken,parseAccessToken,digestSecret,digestToHex} from './tokens.js';
 import {PasskeyService,verifiedRegistration} from './passkey-service.js';
+import {storeAaguid} from './passkey-providers.js';
 const parse=async token=>{const p=parseAccessToken(token);return p?{id:p.tokenId,hash:digestToHex(await digestSecret(p.secret))}:undefined;};
 export class FirstPasskeyEnrollment {
  constructor(db,{clock=Date.now,passkeys=new PasskeyService(db,{clock})}={}){Object.assign(this,{db,clock,passkeys});}
@@ -21,6 +22,6 @@ export class FirstPasskeyEnrollment {
   const completed=this.clock();if(completed<ceremony.created_at||completed>=ceremony.expires_at)return false;
   const {c,transports,deviceType,backedUp}=record;
   const result=await this.db.prepare('INSERT INTO passkey_credentials(credential_id,owner_id,public_key,counter,transports,device_type,backed_up,created_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8 WHERE NOT EXISTS(SELECT 1 FROM passkey_credentials WHERE owner_id=?2 AND revoked_at IS NULL) AND EXISTS(SELECT 1 FROM device_sessions d JOIN account_security s ON s.owner_id=d.owner_id JOIN provider_identities i ON i.identity_id=d.provider_identity_id AND i.owner_id=d.owner_id WHERE i.revoked_at IS NULL AND d.device_id=?9 AND d.owner_id=?2 AND d.revoked_at IS NULL AND d.expires_at>?8 AND d.generation=?10 AND s.generation=?10) ON CONFLICT(credential_id) DO NOTHING').bind(c.id,user.ownerId,Array.from(c.publicKey),c.counter,JSON.stringify(transports),deviceType,backedUp,completed,user.deviceId,user.generation).run();
-  return result.meta.changes===1;
+  if(result.meta.changes!==1)return false;await storeAaguid(this.db,{credentialId:c.id,ownerId:user.ownerId,aaguid:record.aaguid});return true;
  }
 }

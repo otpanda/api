@@ -30,6 +30,8 @@ import {cleanupIdentity} from './identity-cleanup.js';
 import {json} from './sessions.js';
 import {canonicalClientAddress} from './client-address.js';
 import {PersonalOrganizationStore} from './personal-organization.js';
+import {createDeviceSessionInfoHttp} from './device-session-info-http.js';
+import {createPasskeyLabelHttp} from './passkey-label-http.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
 import {createRealtimeHttp} from './realtime-http.js';
 import {createForegroundDrain} from './realtime-foreground.js';
@@ -59,7 +61,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
  const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
- const overview=createAccountOverviewHttp({db,sessions,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock});
+ const deviceInfo=createDeviceSessionInfoHttp({db,sessions,clock}),passkeyLabel=createPasskeyLabelHttp({db,sessions,clock}),overview=createAccountOverviewHttp({db,sessions,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
@@ -77,6 +79,8 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;
    else if(url.pathname.startsWith('/v1/manage/passkey/add/'))handler=addPasskey;
+   else if(url.pathname==='/v1/manage/passkey/rename')handler=passkeyLabel;
+   else if(url.pathname==='/v1/manage/session/describe')handler=deviceInfo;
    else if(url.pathname.startsWith('/v1/manage/recovery/'))handler=recovery;
    else if(url.pathname.startsWith('/auth/recovery/email/'))handler=emailRecovery;
    else if(url.pathname==='/v1/manage/account')handler=overview;
