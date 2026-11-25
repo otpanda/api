@@ -138,7 +138,7 @@ export class EmailRecovery {
    b(`INSERT INTO recovery_notifications(notification_id,owner_id,request_id,kind,created_at) SELECT ?11,?2,?1,'completed',?3 WHERE ${E2} AND ${N}`).bind(id,o,at,receipt,c.id,null,null,null,null,null,nid),
    b(`UPDATE email_recovery_requests SET completed_at=?3,completion_receipt=?4 WHERE request_id=?1 AND owner_id=?2 AND completed_at IS NULL AND ${E2} AND ${N}`).bind(id,o,at,receipt,c.id),
   ]);}catch{return false;}
-  return r[9].meta.changes===1;
+  return r[9]/*exact-count-ok*/.meta.changes===1;
  }
  async cleanup({limit=100}={}){const r=await this.db.prepare('DELETE FROM email_recovery_grants WHERE grant_id IN(SELECT grant_id FROM email_recovery_grants WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(this.clock(),limit).run();return r.meta.changes;}
 }
