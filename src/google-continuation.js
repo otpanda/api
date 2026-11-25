@@ -3,7 +3,7 @@ import {issueHumanCode,claimHumanCode} from './human-email-code.js';
 // provider, mailbox or existing-owner proof, original browser and app PKCE.
 import {generateAccessToken,parseAccessToken,digestSecret,digestToHex} from './tokens.js';
 import {hashText,takeRateLimit} from './sessions.js';
-import {AccountIdentityService,mailboxKey} from './account-identity.js';
+import {AccountIdentityService,mailboxKey,googlePictureUrl} from './account-identity.js';
 import {PasskeyService} from './passkey-service.js';
 const TTL=600000;
 const parse=async token=>{const p=parseAccessToken(token);return p?{id:p.tokenId,hash:digestToHex(await digestSecret(p.secret))}:undefined;};
@@ -26,7 +26,7 @@ export class GoogleContinuation {
    // Existing-owner proof and current mailbox identity must still match. Alias
    // collision keys prevent duplicates but never authorize provider linking.
    const account=await this.identity.emailForOwner(data.ownerId);if(mailboxKey(account)!==mailboxKey(data.identity.email))return false;
-   const inserted=await this.db.prepare("INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) SELECT ?1,?2,'google',?3,?4,?5,?6 WHERE EXISTS(SELECT 1 FROM account_emails e JOIN account_security s ON s.owner_id=e.owner_id JOIN passkey_credentials p ON p.owner_id=e.owner_id WHERE e.owner_id=?2 AND e.email=?5 AND s.generation=?7 AND p.credential_id=?8 AND p.revoked_at IS NULL AND ?6<?9 AND ?6>=?10 AND ?6<?10+120000) AND (?11 IS NULL OR EXISTS(SELECT 1 FROM device_sessions d WHERE d.device_id=?11 AND d.owner_id=?2 AND d.generation=?7 AND d.revoked_at IS NULL AND d.expires_at>?6)) ON CONFLICT(issuer,subject) WHERE revoked_at IS NULL DO NOTHING").bind(crypto.randomUUID(),data.ownerId,data.identity.issuer,data.identity.subject,account,this.clock(),proof.generation,proof.credentialId,q.r.expires_at,proof.verifiedAt,data.linkOnly?.deviceId??null).run();if(inserted.meta.changes!==1)return false;
+   const inserted=await this.db.prepare("INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at,picture) SELECT ?1,?2,'google',?3,?4,?5,?6,?12 WHERE EXISTS(SELECT 1 FROM account_emails e JOIN account_security s ON s.owner_id=e.owner_id JOIN passkey_credentials p ON p.owner_id=e.owner_id WHERE e.owner_id=?2 AND e.email=?5 AND s.generation=?7 AND p.credential_id=?8 AND p.revoked_at IS NULL AND ?6<?9 AND ?6>=?10 AND ?6<?10+120000) AND (?11 IS NULL OR EXISTS(SELECT 1 FROM device_sessions d WHERE d.device_id=?11 AND d.owner_id=?2 AND d.generation=?7 AND d.revoked_at IS NULL AND d.expires_at>?6)) ON CONFLICT(issuer,subject) WHERE revoked_at IS NULL DO NOTHING").bind(crypto.randomUUID(),data.ownerId,data.identity.issuer,data.identity.subject,account,this.clock(),proof.generation,proof.credentialId,q.r.expires_at,proof.verifiedAt,data.linkOnly?.deviceId??null,googlePictureUrl(data.identity.picture)??null).run();if(inserted.meta.changes!==1)return false;
    // Link-only is complete here: single use, no verified marker, nothing for consume() or a sign-in to pick up.
    if(data.linkOnly){await this.db.prepare('DELETE FROM google_continuations WHERE continuation_id=?1 AND secret_digest=?2').bind(q.p.id,q.p.hash).run();return true;}
   }else{if(!this.allowEmailVerification)return false;if(!await claimHumanCode(this.db,{purpose:'google',binding:token,code:emailProof,now:this.clock()})&&!await this.identity.claim({token:emailProof,purpose:'signup-email',email:data.identity.email}))return false;data.identity={...data.identity,authoritative:true};}
