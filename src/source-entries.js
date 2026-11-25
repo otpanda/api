@@ -20,7 +20,7 @@ export class SourceEntryStore {
   async revokeSource(ownerId,sourceId,now){
     [ownerId,sourceId].forEach(id);if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
     const result=await this.db.prepare('UPDATE sources SET revoked_at=COALESCE(revoked_at,?1) WHERE owner_id=?2 AND source_id=?3').bind(now,ownerId,sourceId).run();
-    return result.meta.changes===1;
+    return result.meta.changes>=1;
   }
   async createEntry(ownerId, serviceId, name, now, {accountName=null}={}) {
     const entryId=crypto.randomUUID();
@@ -65,7 +65,7 @@ export class SourceEntryStore {
     const context={ownerId,recordId:await hashText(JSON.stringify([sourceId,eventId])),serviceId:entryId ?? 'unassigned',receivedAt,expiresAt};
     const envelope=await this.cipher.encrypt(code,context);
     const r=await this.db.prepare('INSERT INTO incoming_codes (owner_id,event_id,source_id,entry_id,envelope,received_at,expires_at,assignment) SELECT ?1,?2,?3,?4,?5,?6,?7,?8 WHERE EXISTS (SELECT 1 FROM sources WHERE owner_id = ?1 AND source_id = ?3 AND revoked_at IS NULL) ON CONFLICT(owner_id,source_id,event_id) DO NOTHING').bind(ownerId,eventId,sourceId,entryId,JSON.stringify(envelope),receivedAt,expiresAt,entryId?'rule':'unassigned').run();
-    return {inserted:r.meta.changes===1,entryId};
+    return {inserted:r.meta.changes>=1,entryId};
   }
   async confirm(ownerId, sourceId, eventId, entryId, now=Date.now()) {
     if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
@@ -78,7 +78,7 @@ export class SourceEntryStore {
     const code=await this.cipher.decrypt(JSON.parse(row.envelope),context);
     const envelope=await this.cipher.encrypt(code,{...context,serviceId:entryId});
     const r=await this.db.prepare("UPDATE incoming_codes SET entry_id = ?1, assignment = 'confirmed', envelope = ?2 WHERE owner_id = ?3 AND source_id = ?4 AND event_id = ?5 AND entry_id IS NULL AND envelope = ?6 AND received_at<=?7 AND expires_at>?7 AND EXISTS (SELECT 1 FROM sources WHERE owner_id=?3 AND source_id=?4 AND revoked_at IS NULL) AND EXISTS (SELECT 1 FROM entries WHERE owner_id = ?3 AND entry_id = ?1)").bind(entryId,JSON.stringify(envelope),ownerId,sourceId,eventId,row.envelope,now).run();
-    return r.meta.changes===1;
+    return r.meta.changes>=1;
   }
 
   // Owner-private review surface. Never return source labels, sender metadata,

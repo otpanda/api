@@ -27,7 +27,8 @@ export function database(path = ':memory:') {
         bind(...values) { params = values.map(v => Array.isArray(v) ? new Uint8Array(v) : v); return query; },
         async first() { return statement.get(...params) ?? null; },
         async all() { return { results: statement.all(...params), success: true }; },
-        async run() { const r = statement.run(...params); return { success: true, meta: { changes: Number(r.changes) } }; },
+        // Real D1 (workerd) reports meta.changes as the connection's total_changes delta, so trigger writes are included.
+        async run() { const before = Number(sqlite.prepare('SELECT total_changes() n').get().n); statement.run(...params); const after = Number(sqlite.prepare('SELECT total_changes() n').get().n); return { success: true, meta: { changes: after - before } }; },
       };
       return query;
     },

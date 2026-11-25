@@ -90,7 +90,7 @@ export class RecoveryControls {
   if(r[0].meta.changes!==1)return;
   if(row.kind==='email-escape-on')return await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(o).first()?{emailEscape:true}:undefined;
   if(row.kind==='email-escape-off')return{emailEscape:false};
-  return r[1].meta.changes===1?{revoked:row.kind==='passkey-revoke'?'passkey':'session'}:undefined;
+  return r[1].meta.changes>=1?{revoked:row.kind==='passkey-revoke'?'passkey':'session'}:undefined;
  }
  // proof: PasskeyService.finishAuthentication result for purpose 'step-up'. A
  // device-key (possession-only) proof is refused here.
@@ -121,7 +121,7 @@ export class RecoveryControls {
     return r.meta.changes===1?{revoked:'passkey'}:undefined;
    }
    const r=await this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE device_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now,target).run();
-   return r.meta.changes===1?{revoked:'session'}:undefined;
+   return r.meta.changes>=1?{revoked:'session'}:undefined;
   }catch{return;}
  }
 }

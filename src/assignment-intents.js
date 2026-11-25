@@ -61,7 +61,7 @@ export class AssignmentIntents {
    this.db.prepare(`UPDATE incoming_codes SET entry_id=?1,assignment='confirmed',envelope=?2 WHERE owner_id=?3 AND source_id=?4 AND event_id=?5 AND entry_id IS NULL AND envelope=?6 AND changes()=1 AND EXISTS(SELECT 1 FROM assignment_intents WHERE intent_id=?7 AND consumed_at=?8)`).bind(row.entry_id,envelope,row.owner_id,row.source_id,row.event_id,row.envelope,intentId,finished),
    this.db.prepare('INSERT INTO assignment_receipts(intent_id,assignment_changes) SELECT ?1,changes() WHERE EXISTS(SELECT 1 FROM assignment_intents WHERE intent_id=?1 AND consumed_at=?2)').bind(intentId,finished),
   ]);
-  if(results[0].meta.changes!==1||results[1].meta.changes!==1)return;
+  if(results[0].meta.changes!==1||results[1].meta.changes<1)return;
   committed=true;
   return{status:'assigned'};
   }finally{if(claimed&&!committed)await this.discard(intentId);}
