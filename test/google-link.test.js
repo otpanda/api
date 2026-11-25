@@ -116,3 +116,17 @@ test('a junk or replayed link start clears no cookie, so it cannot disturb an or
  for(const url of [API+'/auth/google/link/start?ticket='+'j'.repeat(43),API+'/auth/google/link/start',API+'/auth/google/link/start?ticket=x&y=1']){const r=await x.runtime.fetch(new Request(url,{headers:{cookie:ordinary}}),{clientAddress:'192.0.2.1'});assert.equal(r.status,303);assert.equal(r.headers.get('location').includes('link=restart'),true);assert.equal(r.headers.getSetCookie().length,0,url);}
  const none=await x.runtime.fetch(new Request(API+'/auth/google/link/start?ticket='+'j'.repeat(43)),{});assert.equal(none.headers.getSetCookie().length,0);
 });
+test('native link leg: an android device session returns to the verified /app-return landing with the same fragment; web sessions and every failure keep their own return',async()=>{
+ const {NativeSessionService}=await import('../src/native-sessions.js');
+ const mk=async email=>{const x=await setup();if(email)x.setEmail(email);
+  const k=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},false,['sign']),rk=base64urlEncode(new Uint8Array(await crypto.subtle.exportKey('raw',k.publicKey)));
+  const dev=await new NativeSessionService(x.db,{clock:x.clock}).issuePasskey({proof:{purpose:'authenticate',ownerId:'owner',credentialId:x.a.credential.id,generation:0,verifiedAt:x.clock()},renewalKey:rk});
+  const http=createGoogleLinkTicketHttp({db:x.db,sessions:x.sessions,clock:x.clock,native:true});
+  const t=await (await http.fetch(new Request(API+'/v1/manage/google/link/ticket',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+dev.access},body:JSON.stringify({state:STATE})}),{clientAddress:'192.0.2.1'})).json();
+  return {x,t,dev};};
+ const NATIVE=API+'/app-return';
+ {const {x,t}=await mk(),s=await x.start(t.ticket),r=await x.callback(s),loc=new URL(r.headers.get('location'));
+  assert.equal(r.status,303);assert.equal(loc.origin+loc.pathname,NATIVE);assert.equal(new URLSearchParams(loc.hash.slice(1)).get('state'),STATE);const pending=pendingOf(r);assert.equal(pending.kind,'link-only');assert.match(pending.token,/^otpda_/);}
+ {const {x,t}=await mk('other@gmail.com'),s=await x.start(t.ticket),r=await x.callback(s),loc=new URL(r.headers.get('location'));assert.equal(loc.origin+loc.pathname,NATIVE);assert.equal(loc.hash,'#link=mismatch&state='+STATE);}
+ {const x=await setup(),t=(await(await x.ticket()).json()).ticket,r=await x.callback(await x.start(t)),loc=new URL(r.headers.get('location'));assert.equal(loc.origin+loc.pathname,APP+'/app/','web session link leg unchanged');}
+});

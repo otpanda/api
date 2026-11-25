@@ -12,7 +12,8 @@ import {CodeCipher} from './code-cipher.js';
 import {DeviceSessionService} from './device-sessions.js';
 import {readCookie,cookie,securityHeaders,hashText} from './sessions.js';
 import {appFailure} from './silent-bridge.js';
-const linkFailure=(state,reason)=>{const t=new URL('https://otpanda.github.io/app/');t.hash=new URLSearchParams({link:reason,state:/^[A-Za-z0-9_-]{43}$/.test(state)?state:''});const h=new Headers({...securityHeaders,Location:t.href,'Referrer-Policy':'no-referrer'});h.append('Set-Cookie',cookie('__Host-otpanda_google','',0));h.append('Set-Cookie',cookie('__Host-otpanda_google_link','',0));return new Response(null,{status:303,headers:h});};
+import {linkReturnBase} from './native-link-return.js';
+const linkFailure=(state,reason,base='https://otpanda.github.io/app/')=>{const t=new URL(base);t.hash=new URLSearchParams({link:reason,state:/^[A-Za-z0-9_-]{43}$/.test(state)?state:''});const h=new Headers({...securityHeaders,Location:t.href,'Referrer-Policy':'no-referrer'});h.append('Set-Cookie',cookie('__Host-otpanda_google','',0));h.append('Set-Cookie',cookie('__Host-otpanda_google_link','',0));return new Response(null,{status:303,headers:h});};
 const ISSUER='https://accounts.google.com',APP='https://otpanda.github.io/app/';
 export async function createGoogleBrowserRuntime({db,keys,activeKeyId,clientId,clientSecret,clock=Date.now,oauthOptions={},mail}={}){
  if(typeof clientId!=='string'||!clientId.endsWith('.apps.googleusercontent.com')||typeof clientSecret!=='string'||!clientSecret)throw new TypeError('Google client configuration required');
@@ -46,9 +47,10 @@ export async function createGoogleBrowserRuntime({db,keys,activeKeyId,clientId,c
  // Signed-in link: never resolves an account, never issues a login or touches the device cookie. It only stores an owner-bound
  // pending link for the existing exact-identity passkey step-up (continue/begin and verify) and returns to the app.
  const completeLink=async({identity,appState,link,request})=>{
-  const binding=readCookie(request,'__Host-otpanda_google');if(!binding)return linkFailure(appState,'restart');
-  const pending=await continuations.create({identity,appState,challenge:'',binding,remember:false,link});if(!pending)return linkFailure(appState,'mismatch');
-  const target=new URL(APP);target.hash=new URLSearchParams({google:JSON.stringify(pending),state:appState});return new Response(null,{status:303,headers:{...securityHeaders,Location:target.href,'Referrer-Policy':'no-referrer'}});
+  const base=await linkReturnBase(db,link?.deviceId);
+  const binding=readCookie(request,'__Host-otpanda_google');if(!binding)return linkFailure(appState,'restart',base);
+  const pending=await continuations.create({identity,appState,challenge:'',binding,remember:false,link});if(!pending)return linkFailure(appState,'mismatch',base);
+  const target=new URL(base);target.hash=new URLSearchParams({google:JSON.stringify(pending),state:appState});return new Response(null,{status:303,headers:{...securityHeaders,Location:target.href,'Referrer-Policy':'no-referrer'}});
  };
  const flow=createGoogleBrowserFlow({completeLink,db,cipher,server,client:{client_id:clientId,id_token_signed_response_alg:'RS256'},clientAuthentication:oauth.ClientSecretPost(clientSecret),clock,oauthOptions,complete});
  const protectionHttp=createGoogleProtectionHttp({db,service:protection,cipher,complete,clock});
