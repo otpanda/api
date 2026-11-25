@@ -20,9 +20,12 @@ function checkedFrame(response) {
 }
 const ALGORITHMS = Object.freeze([-7, -257]); // ES256 and RS256, explicit offer/verify parity.
 export class PasskeyVerifier {
-  constructor({ androidOrigins = [] } = {}) {
+  // nativeOnly: accept ONLY the configured android apk-key-hash origins (never the web origin), so a web-origin assertion can never satisfy a native ceremony.
+  constructor({ androidOrigins = [], nativeOnly = false } = {}) {
+    if (typeof nativeOnly !== 'boolean') throw new TypeError('Verified signing origins required');
     if (!Array.isArray(androidOrigins) || androidOrigins.some(o => typeof o !== 'string' || !/^android:apk-key-hash:[A-Za-z0-9_-]{43}$/.test(o))) throw new TypeError('Verified signing origins required');
-    this.origins = [WEB_ORIGIN, ...new Set(androidOrigins)];
+    if (nativeOnly && !androidOrigins.length) throw new TypeError('Verified signing origins required');
+    this.origins = [...(nativeOnly ? [] : [WEB_ORIGIN]), ...new Set(androidOrigins)];
   }
   async registrationOptions({ ownerId, email, challenge, excludeCredentials = [] }) {
     if (typeof ownerId !== 'string' || !ownerId || ownerId.length > 64 || typeof email !== 'string' || !email || typeof challenge !== 'string' || challenge.length < 32 || challenge.length > 256) throw new TypeError('Server registration binding required');

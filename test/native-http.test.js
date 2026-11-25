@@ -36,7 +36,7 @@ test('assetlinks fails closed with no fingerprints, then lists exactly the confi
  assert.equal(r.status,200);assert.deepEqual(b[0].target,{namespace:'android_app',package_name:'app.otpanda',sha256_cert_fingerprints:[FPR]});});
 test('approve: explicit Continue page, intent-bound CSRF, then 303 to the exact App Link with code+state in the FRAGMENT',async()=>{
  const f=await fixture(),ap=await approve(f,f.web.refresh);
- assert.equal(ap.g.status,200);assert.match(ap.html,/Continue/);assert.match(ap.g.headers.get('content-security-policy'),/form-action 'self'/);assert.match(ap.g.headers.get('set-cookie'),/__Host-otpanda_native=.*Secure.*HttpOnly/);
+ assert.equal(ap.g.status,200);assert.equal(ap.g.headers.get('referrer-policy'),'same-origin','form POST must retain a same-origin Origin header in Chromium');assert.match(ap.html,/Continue/);assert.match(ap.g.headers.get('content-security-policy'),/form-action 'self'/);assert.match(ap.g.headers.get('set-cookie'),/__Host-otpanda_native=.*Secure.*HttpOnly/);
  const r=await ap.post();assert.equal(r.status,303);const loc=new URL(r.headers.get('location'));
  assert.equal(loc.origin+loc.pathname,NATIVE_REDIRECT);assert.equal(loc.search,'');const h=new URLSearchParams(loc.hash.slice(1));assert.equal(h.get('state'),ap.i.state);assert.ok(h.get('code'));
  // rotated web cookie is reissued; a native exchange completes with PKCE and the bound key

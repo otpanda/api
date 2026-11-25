@@ -45,7 +45,7 @@ export class NativeGoogle{
   return {nonce:s.token,expiresAt:now+NONCE_TTL};
  }
  // status: ok | browser_required | denied | unavailable
- async complete({idToken,renewalKey}){
+ async complete({idToken,renewalKey,recognition,remember}){
   if(!this.configured)return {status:'unavailable'};
   if(!await importRenewalKey(renewalKey))return {status:'denied'};
   const now=this.now(),claims=await verifyGoogleIdToken({token:idToken,audiences:this.audiences,authorizedParties:this.authorizedParties,getKey:this.getKey,now});if(!claims)return {status:'denied'};
@@ -56,8 +56,14 @@ export class NativeGoogle{
   let identity;try{identity=googleEmailEvidence(claims);}catch{return {status:'denied'};}
   const account=await this.accounts.resolve(identity);
   if(!account||!['linked','created'].includes(account.status))return {status:'browser_required'};
-  const device=await this.native.issueProvider({ownerId:account.ownerId,generation:account.generation,issuer:identity.issuer,subject:identity.subject,renewalKey});
+  // Same recognition model as web: a presented token counts only for this owner, generation and Google link; remember mints one unless a valid one exists.
+  let recog;const parsed=recognition===undefined?undefined:parseAccessToken(recognition);
+  if(parsed)recog={id:parsed.tokenId,digest:digestToHex(await digestSecret(parsed.secret))};
+  const valid=recog?await this.db.prepare('SELECT 1 x FROM recognized_browsers r JOIN provider_identities g ON g.identity_id=r.provider_identity_id WHERE r.recognition_id=?1 AND r.secret_digest=?2 AND r.owner_id=?3 AND r.generation=?4 AND r.revoked_at IS NULL AND g.revoked_at IS NULL AND g.issuer=?5 AND g.subject=?6').bind(recog.id,recog.digest,account.ownerId,account.generation,identity.issuer,identity.subject).first():null;
+  let fresh;if(remember===true&&!valid){const t=generateAccessToken();fresh={id:t.tokenId,digest:digestToHex(await digestSecret(t.secret)),token:t.token};}
+  const device=await this.native.issueProvider({ownerId:account.ownerId,generation:account.generation,issuer:identity.issuer,subject:identity.subject,renewalKey,recognition:valid?recog:undefined,newRecognition:fresh});
   if(!device)return {status:'browser_required'};
+  if(fresh&&device.recorded)device.recognition=fresh.token;
   // Optional first-method grant (Google-only account, 120 s, key possession only). Absent when any strong method already exists.
   const grant=await this.enrollment.issue({ownerId:account.ownerId,deviceId:device.deviceId,generation:account.generation,issuer:identity.issuer,subject:identity.subject,verifiedAt:now}).catch(()=>undefined);
   return {status:'ok',device:grant?{...device,enrollGrant:grant.token}:device};

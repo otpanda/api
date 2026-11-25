@@ -9,3 +9,16 @@ test('module fetch maps env and ctx and preserves shared bounded delivery across
 });
 test('module adapter does not mount unrelated routes or confuse ctx with env',async()=>{const adapter=createSignupWorkerAdapter();assert.equal((await adapter.fetch(new Request(API+'/health'),{},{})).status,404);assert.equal((await adapter.fetch(new Request(API+'/auth/signup/start'),undefined,{waitUntil(){}})).status,503);});
 test('unrelated incomplete env cannot poison singleton',async()=>{const db=database(),adapter=createSignupWorkerAdapter({resolveTrustedIngress:async()=> '192.0.2.1'}),env={DB:db,BREVO_API_KEY:'synthetic',BREVO_SENDER_EMAIL:'project@example.test',BREVO_REPLY_TO_EMAIL:'project@example.test',SIGNUP_ADDRESS_LIMIT:yes,SIGNUP_GLOBAL_LIMIT:yes,SIGNUP_VERIFY_ADDRESS_LIMIT:yes,SIGNUP_VERIFY_GLOBAL_LIMIT:yes},ctx={waitUntil(){}};assert.equal((await adapter.fetch(new Request(API+'/health'),{},{})).status,404);assert.equal((await adapter.fetch(new Request(API+'/auth/signup/start?'+new URLSearchParams({challenge:'a'.repeat(43),state:'b'.repeat(43),redirect_uri:'https://otpanda.github.io/app/'})),env,ctx)).status,200);db.sqlite.close();});
+test('malformed native fingerprint config disables native signup only: web signup stays available, native paths 404, valid config serves native',async()=>{
+ const db=database(),ctx={waitUntil(){}},base={DB:db,BREVO_API_KEY:'synthetic',BREVO_SENDER_EMAIL:'project@example.test',BREVO_REPLY_TO_EMAIL:'project@example.test',SIGNUP_ADDRESS_LIMIT:yes,SIGNUP_GLOBAL_LIMIT:yes,SIGNUP_VERIFY_ADDRESS_LIMIT:yes,SIGNUP_VERIFY_GLOBAL_LIMIT:yes},start=API+'/auth/signup/start?'+new URLSearchParams({challenge:'a'.repeat(43),state:'b'.repeat(43),redirect_uri:'https://otpanda.github.io/app/'});
+ const nativeReq=()=>new Request(API+'/auth/native/signup/email',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+ try{for(const bad of ['05c6','zz:zz','AB:CD']){
+  const adapter=createSignupWorkerAdapter({resolveTrustedIngress:async()=> '192.0.2.1'}),env={...base,NATIVE_AUTH_ENABLED:'1',NATIVE_ASSET_FINGERPRINTS:bad};
+  assert.equal((await adapter.fetch(new Request(start),env,ctx)).status,200,'web signup available with malformed native config '+bad);
+  assert.equal((await adapter.fetch(nativeReq(),env,ctx)).status,404,'native 404');}
+  const off=createSignupWorkerAdapter({resolveTrustedIngress:async()=> '192.0.2.1'}),good={...base,NATIVE_AUTH_ENABLED:'1',NATIVE_ASSET_FINGERPRINTS:Array(32).fill('AB').join(':')};
+  assert.equal((await off.fetch(new Request(start),good,ctx)).status,200);
+  assert.notEqual((await off.fetch(nativeReq(),good,ctx)).status,404,'valid signer serves native routes');
+  const disabled=createSignupWorkerAdapter({resolveTrustedIngress:async()=> '192.0.2.1'});assert.equal((await disabled.fetch(nativeReq(),{...good,NATIVE_AUTH_ENABLED:'0'},ctx)).status,404);
+ }finally{db.sqlite.close();}
+});

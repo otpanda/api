@@ -2,16 +2,18 @@ import {json,securityHeaders,takeRateLimit} from './sessions.js';
 import {createDeviceSessionAuth} from './device-session-auth.js';
 import {AddPasskeyEnrollment,ADD_ACTION} from './additional-passkey.js';
 import {PasskeyService} from './passkey-service.js';
-const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
+const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',webCors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
 const PATHS=['verify-begin','verify-finish','register-begin','register-finish'];
 async function body(request){const reader=request.body?.getReader();if(!reader)return;let out='',n=0;const d=new TextDecoder('utf-8',{fatal:true});try{for(;;){const r=await reader.read();if(r.done)break;n+=r.value.byteLength;if(n>24576){await reader.cancel();return;}out+=d.decode(r.value,{stream:true});}return JSON.parse(out+d.decode());}catch{return;}finally{reader.releaseLock();}}
-export function createAddPasskeyHttp({db,sessions,clock=Date.now,passkeys=new PasskeyService(db,{clock}),enrollment=new AddPasskeyEnrollment(db,{clock,passkeys})}={}){
- const auth=createDeviceSessionAuth({sessions});
+// native: also accept the Android client (no Origin, android access kind); passkeys must then accept the android signing origin.
+export function createAddPasskeyHttp({db,sessions,clock=Date.now,native=false,passkeys=new PasskeyService(db,{clock}),enrollment=new AddPasskeyEnrollment(db,{clock,passkeys})}={}){
+ const auth=createDeviceSessionAuth({sessions,native});
  return{async fetch(request,{clientAddress}={}){
   const u=new URL(request.url),step=u.pathname.slice('/v1/manage/passkey/add/'.length);
   if(u.origin!==API||!u.pathname.startsWith('/v1/manage/passkey/add/')||!PATHS.includes(step)||u.search)return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
-  if(request.method==='OPTIONS')return request.headers.get('access-control-request-method')==='POST'&&(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(h=>h.trim()).filter(Boolean).every(h=>['authorization','content-type','x-otpanda-enrollment'].includes(h))?new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Authorization, Content-Type, X-OTPanda-Enrollment'}}):json({error:'forbidden'},403,cors);
+  const origin=request.headers.get('origin'),cors=origin===APP?webCors:{};
+  if(origin!==APP&&!(native&&origin===null))return json({error:'forbidden'},403);
+  if(request.method==='OPTIONS'&&origin===APP)return request.headers.get('access-control-request-method')==='POST'&&(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(h=>h.trim()).filter(Boolean).every(h=>['authorization','content-type','x-otpanda-enrollment'].includes(h))?new Response(null,{status:204,headers:{...securityHeaders,...webCors,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Authorization, Content-Type, X-OTPanda-Enrollment'}}):json({error:'forbidden'},403,cors);
   if(request.method!=='POST'||request.headers.get('content-type')!=='application/json')return json({error:'invalid_request'},400,cors);
   if(typeof clientAddress!=='string'||!clientAddress)return json({error:'unavailable'},503,cors);
   if(!(await takeRateLimit(db,'add-passkey:'+clientAddress,{now:clock(),limit:20})).allowed)return json({error:'busy'},429,cors);

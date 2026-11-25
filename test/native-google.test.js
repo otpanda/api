@@ -68,3 +68,20 @@ test('revoked identity link or generation drift at write time refuses the device
  assert.equal(await f.native.issueProvider({ownerId:'o1',generation:5,issuer:'https://accounts.google.com',subject:'g-sub-1',renewalKey:k}),undefined);
  f.db.sqlite.exec("UPDATE provider_identities SET revoked_at=1");assert.equal(await f.native.issueProvider({ownerId:'o1',generation:0,issuer:'https://accounts.google.com',subject:'g-sub-1',renewalKey:k}),undefined);
  assert.equal(f.q('SELECT count(*) n FROM native_keys').n,0);f.db.sqlite.close();});
+test('remember/recognition reuses web recognized_browsers: minted only with remember:true, satisfies protection only for the same owner+link, revocation ends it',async()=>{
+ const f=await fixture(),login=async(extra={})=>{const b=await (await f.post('/auth/native/google/begin','')).json();return f.post('/auth/native/google/complete',{id_token:await idToken({nonce:b.nonce}),renewal_key:await newKey(),...extra});};
+ let r=await login(),body=await r.json();assert.equal(r.status,200);assert.equal(body.recognition,undefined);assert.equal(f.q('SELECT count(*) n FROM recognized_browsers').n,0,'no remember, no recognition');
+ r=await login({remember:false});assert.equal((await r.json()).recognition,undefined);
+ r=await login({remember:true});body=await r.json();assert.equal(r.status,200);assert.match(body.recognition,/^otpda_/);assert.equal(f.q('SELECT count(*) n FROM recognized_browsers').n,1);
+ const rec=body.recognition,owner=f.q('SELECT owner_id o FROM accounts').o,row=f.q('SELECT owner_id,provider_identity_id,generation,secret_digest FROM recognized_browsers');
+ assert.equal(row.owner_id,owner);assert.notEqual(row.provider_identity_id,null);assert.equal(JSON.stringify(row).includes(rec),false,'only a digest is stored');
+ r=await login({remember:true,recognition:rec});assert.equal((await r.json()).recognition,undefined,'valid recognition is not re-minted');assert.equal(f.q('SELECT count(*) n FROM recognized_browsers').n,1);
+ const gen=f.q('SELECT generation g FROM account_security').g;
+ f.db.sqlite.exec(`INSERT INTO new_device_verification(owner_id,enabled_at,generation) VALUES('${owner}',0,${gen})`);
+ r=await login();assert.equal(r.status,409,'protected owner, no recognition');
+ r=await login({remember:true});assert.equal(r.status,409,'remember alone never bypasses protection');assert.equal(f.q('SELECT count(*) n FROM recognized_browsers').n,1);
+ r=await login({recognition:'otpda_'+'Z'.repeat(55)});assert.equal(r.status,409,'unknown recognition');
+ r=await login({recognition:rec});assert.equal(r.status,200,'valid recognition passes protection');
+ f.db.sqlite.exec('UPDATE recognized_browsers SET revoked_at=1');r=await login({recognition:rec});assert.equal(r.status,409,'revoked recognition');
+ for(const bad of [{remember:'yes'},{recognition:5},{recognition:'x'.repeat(201)},{other:1}])assert.equal((await login(bad)).status,400);
+ f.db.sqlite.close();});
