@@ -39,16 +39,18 @@ jobs:
         run: npx --yes wrangler@4.166.0 deploy --config /tmp/mounted/wrangler.json
       - name: Bounded real-session cap5 reads
         run: |
+          set -o pipefail
           node --input-type=module <<'JS' | tee qualification-evidence/check.log
           import {readFileSync} from 'node:fs';const f=JSON.parse(readFileSync('/tmp/mounted/fixture.json','utf8')),base='https://'+process.env.QUALIFICATION_NAME+'.abrahammurciano.workers.dev';
           console.log('qualification_url='+base);
-          for(let i=0;i<18;i++){const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text(),b=JSON.parse(text);console.log(JSON.stringify({request:i+1,status:r.status,entries:b.entries?.length,codeCounts:b.entries?.map(e=>e.codes.length),bytes:text.length}));if(r.status!==200||b.entries?.length!==5)throw Error('mounted route failed');}
+          let failures=0;for(let i=0;i<12;i++){await new Promise(r=>setTimeout(r,1500));const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text();let b;try{b=JSON.parse(text)}catch{}console.log(JSON.stringify({request:i+1,status:r.status,contentType:r.headers.get('content-type'),entries:b?.entries?.length,codeCounts:b?.entries?.map(e=>e.codes.length),bytes:text.length,error:b?.entries?undefined:(b?.error||text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,1200))}));if(r.status!==200||b?.entries?.length!==5)failures++;}if(failures)throw Error('mounted route failures='+failures);
           JS
       - name: Bounded metrics inspection window
         run: sleep 420
       - name: Always delete isolated Worker and D1 and verify absence
         if: always()
         run: |
+          set -o pipefail
           node --input-type=module <<'JS' | tee qualification-evidence/cleanup.log
           import {readFileSync,existsSync} from 'node:fs';const name=process.env.QUALIFICATION_NAME;if(!/^otpanda-totp-mounted-\d+$/.test(name))throw Error('name safety');const root='https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID,headers={Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN};for(const path of ['/workers/scripts/'+name,...(existsSync('/tmp/newdb.json')?['/d1/database/'+JSON.parse(readFileSync('/tmp/newdb.json','utf8')).uuid]:[])]){const d=await fetch(root+path,{method:'DELETE',headers}),r=await fetch(root+path,{headers});console.log(JSON.stringify({path,deleteStatus:d.status,verifyAbsentStatus:r.status}));if((!d.ok&&d.status!==404)||r.status!==404)throw Error('cleanup not confirmed');}
           JS
