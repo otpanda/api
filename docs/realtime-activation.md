@@ -58,3 +58,16 @@ return guarded routes to 404. Keep the Durable Object class migration history;
 do not reuse its tag or attempt to undo it by deleting persisted objects.
 Migration0037 and its trigger write costs remain. Code rollback floor is
 82ad9aa (the count precursor), not older exact-change-count code.
+
+
+## Dedicated drain cron increment
+
+Adds only `*/5 * * * *`, separate from the existing fifteen-minute identity
+cleanup. Existing scheduled dispatch handles it in its own invocation and
+returns before identity work. Each drain allows20D1queries and25hub calls,
+combined45maximum. It skips without the hub; inactive accounts receive no hub
+call. This adds288 scheduled invocations per day and real bounded D1/DO work,
+not a cost-free background task. No new mailbox polling, client or permission.
+Remove only this cron to stop periodic draining, foreground delivery remains.
+Free plan remains required. Pending hints retry on later drains; no strict
+five-minute delivery guarantee or paid capacity is promised.
