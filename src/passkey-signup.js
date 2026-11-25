@@ -2,6 +2,7 @@
 import { AccountIdentityService, canonicalAccountEmail } from './account-identity.js';
 import { PasskeyVerifier } from './passkey-verifier.js';
 import { verifiedRegistration } from './passkey-service.js';
+import {storeAaguid} from './passkey-providers.js';
 import { generateAccessToken, parseAccessToken, digestSecret, digestToHex, base64urlEncode } from './tokens.js';
 import { hashText } from './sessions.js';
 const TTL=120_000;
@@ -38,6 +39,7 @@ export class PasskeySignupService {
         this.db.prepare('INSERT INTO passkey_credentials (credential_id, owner_id, public_key, counter, transports, device_type, backed_up, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)').bind(c.id,pending.owner_id,Array.from(c.publicKey),c.counter,JSON.stringify(transports),deviceType,backedUp,completedAt),
       ]);
     }catch{return undefined;}
+    await storeAaguid(this.db,{credentialId:c.id,ownerId:pending.owner_id,aaguid:record.aaguid});
     return {ownerId:pending.owner_id,credentialId:c.id,generation:0};
   }
   async cleanupExpired({limit=100}={}){
