@@ -73,3 +73,20 @@ test('native first-passkey happy path and boundary',async()=>{
  assert.equal((await call(f.http,F+'finish',{token:c.token,response:resp},{auth:f.dev.access,grant:f.grant})).status,403,'replay');
  const off=await firstFixture(false);assert.equal((await call(off.http,F+'begin',{},{auth:off.dev.access,grant:off.grant})).status,403,'native flag off');
 });
+test('regression: managed (web+android) service still completes the WEB flow with the web origin, and kinds/devices cannot cross ceremonies',async()=>{
+ const f=await addFixture(),n=authenticator();
+ const vb=await (await call(f.http,P+'verify-begin',{},{auth:f.web.access,origin:APP})).json();
+ const vf=await call(f.http,P+'verify-finish',{token:vb.token,response:f.a.assertion({expected:vb.options.challenge})},{auth:f.web.access,origin:APP});assert.equal(vf.status,200);
+ const grant=(await vf.json()).token,rb=await (await call(f.http,P+'register-begin',{},{auth:f.web.access,origin:APP,grant})).json();
+ assert.equal((await call(f.http,P+'register-finish',{token:rb.token,response:n.registration({expected:rb.options.challenge})},{auth:f.web.access,origin:APP,grant})).status,200,'web origin still accepted by the managed service');
+ // a ceremony begun by the web device cannot be finished by the android device (binding includes the device id)
+ const g=await addFixture(),wb=await (await call(g.http,P+'verify-begin',{},{auth:g.web.access,origin:APP})).json();
+ assert.equal((await call(g.http,P+'verify-finish',{token:wb.token,response:g.a.assertion({origin:ORIGIN,expected:wb.options.challenge})},{auth:g.android.access})).status,403);
+ assert.equal((await call(g.http,P+'verify-finish',{token:wb.token,response:g.a.assertion({expected:wb.options.challenge})},{auth:g.web.access,origin:APP})).status,200,'a foreign device attempt neither finishes nor burns the ceremony');
+});
+test('native first-passkey grant stays bound to its device id and generation',async()=>{
+ const f=await firstFixture(),other=await new NativeSessionService(f.db,{clock:()=>NOW}).issueProvider({ownerId:'o1',generation:0,issuer:'https://accounts.google.com',subject:'g-sub-1',renewalKey:await newKey()});
+ assert.equal((await call(f.http,F+'begin',{},{auth:other.access,grant:f.grant})).status,403,'grant of another device');
+ f.db.sqlite.exec('UPDATE account_security SET generation=1');
+ assert.equal((await call(f.http,F+'begin',{},{auth:f.dev.access,grant:f.grant})).status,401,'generation moved: session no longer valid');
+});

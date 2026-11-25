@@ -24,12 +24,13 @@ export const realtimeConfiguration=env=>{
 // Native Android routes exist only when the deployment explicitly sets NATIVE_AUTH_ENABLED to the string 1. Default is off: 404 before any
 // setup, limiter or database access, for every native path.
 const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
-const signupPaths=new Set(['/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify']);
+const signupPaths=new Set(['/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify','/auth/native/signup/email','/auth/native/signup/begin','/auth/native/signup/finish']);
 export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now,signupAllowed}={}){
  const signup=createSignupWorkerAdapter({resolveTrustedIngress,fetchImpl,clock,signupAllowed});let identity,configuration,google,googleConfiguration;
  return{async fetch(request,env,ctx){
   const u=new URL(request.url);if(u.origin!==API)return json({error:'not_found'},404);
   if(nativePaths.has(u.pathname)&&env?.NATIVE_AUTH_ENABLED!=='1')return json({error:'not_found'},404);
+  if(u.pathname.startsWith('/auth/native/signup/')&&env?.NATIVE_AUTH_ENABLED!=='1')return json({error:'not_found'},404);
   if(signupPaths.has(u.pathname))return signup.fetch(request,env,ctx);
   if(['/auth/google/start','/auth/google/link/start','/auth/callback'].includes(u.pathname)||u.pathname.startsWith('/auth/google/continue/')||u.pathname.startsWith('/auth/google/protection/')){
    const current=[env?.DB,env?.ACTIVE_KEY_ID,env?.ENCRYPTION_KEYRING,env?.GOOGLE_CLIENT_ID,env?.GOOGLE_CLIENT_SECRET,env?.IDENTITY_ADDRESS_LIMIT,env?.IDENTITY_AUTH_GLOBAL_LIMIT,env?.BREVO_API_KEY,env?.BREVO_SENDER_EMAIL,env?.BREVO_REPLY_TO_EMAIL];if(googleConfiguration&&current.some((v,i)=>v!==googleConfiguration[i]))return createIdentityEdgeHost().fetch(request);googleConfiguration??=current;

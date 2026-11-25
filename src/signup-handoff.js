@@ -42,6 +42,15 @@ export class SignupHandoffService {
   const r=await this.db.prepare('INSERT INTO web_login_handoffs (handoff_id,secret_digest,binding_digest,owner_id,credential_id,generation,verified_at,challenge,state,created_at,expires_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?7,?10 WHERE EXISTS (SELECT 1 FROM passkey_credentials p JOIN account_security s ON s.owner_id=p.owner_id WHERE p.credential_id=?5 AND p.owner_id=?4 AND p.revoked_at IS NULL AND s.generation=?6)').bind(handoff.tokenId,digestToHex(await digestSecret(handoff.secret)),await hashText(c.cookie_digest),proof.ownerId,proof.credentialId,proof.generation,verifiedAt,c.challenge,c.state,expiresAt).run();
   return r.meta.changes===1?{handoff:handoff.token,expiresAt}:undefined;
  }
+ // Native Android: same ceremony and mailbox receipt, bound to this install's key binding instead of a cookie. Returns the signup proof; the caller issues the android session.
+ async verifyNative({token,response,cookieBinding}={}){
+  const p=parseAccessToken(token);if(!p||typeof cookieBinding!=='string'||cookieBinding.length<32||cookieBinding.length>512)return undefined;const now=this.now();
+  const c=await this.db.prepare('DELETE FROM web_signup_starts WHERE signup_id=?1 AND secret_digest=?2 AND cookie_digest=?3 AND created_at<=?4 AND expires_at>?4 RETURNING cookie_digest,challenge,state,expires_at').bind(p.tokenId,digestToHex(await digestSecret(p.secret)),await hashText(cookieBinding),now).first();if(!c)return undefined;
+  const proof=await this.signup.finish({token,response,binding:await binding({cookieDigest:c.cookie_digest,challenge:c.challenge,state:c.state})});if(!proof)return undefined;
+  await this.db.prepare('DELETE FROM signup_mail_bindings WHERE email=?1').bind(await this.identity.emailForOwner(proof.ownerId)).run();
+  const verifiedAt=this.now();if(verifiedAt<now||verifiedAt>=c.expires_at)return undefined;
+  return {ownerId:proof.ownerId,credentialId:proof.credentialId,generation:proof.generation,verifiedAt,purpose:'authenticate'};
+ }
  async completeBrowser(args){return this.login.completeBrowser(args);}
  async cleanup({limit=100}={}){if(!Number.isSafeInteger(limit)||limit<1||limit>500)throw new TypeError('Bounded cleanup required');const r=await this.db.prepare('DELETE FROM web_signup_starts WHERE signup_id IN (SELECT signup_id FROM web_signup_starts WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(this.now(),limit).run();return r.meta.changes;}
 }
