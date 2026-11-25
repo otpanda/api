@@ -20,6 +20,22 @@
       "migrations_dir": "migrations"
     }
   ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "REALTIME_HUB",
+        "class_name": "RealtimeHub"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "realtime-v1",
+      "new_sqlite_classes": [
+        "RealtimeHub"
+      ]
+    }
+  ],
   "triggers": {
     "crons": [
       "*/15 * * * *"
@@ -82,6 +98,30 @@
       "namespace_id": "68022007",
       "simple": {
         "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "REALTIME_ADDRESS_LIMIT",
+      "namespace_id": "68022008",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "REALTIME_GLOBAL_LIMIT",
+      "namespace_id": "68022009",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "REALTIME_TICKET_LIMIT",
+      "namespace_id": "68022010",
+      "simple": {
+        "limit": 12,
         "period": 60
       }
     }
