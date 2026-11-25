@@ -26,7 +26,7 @@ function guardJson(guard,viewerId) {
  return JSON.stringify(guard);
 }
 function sessionGuard(param,now) {
- return `(?${param} IS NULL OR EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=json_extract(?${param},'$.deviceId') AND d.owner_id=?1 AND d.generation=json_extract(?${param},'$.generation') AND s.generation=d.generation AND d.revoked_at IS NULL AND ${MA} AND d.client_kind='web' AND d.created_at<=?${now} AND d.expires_at>?${now} AND json_extract(?${param},'$.expiresAt')>?${now}))`;
+ return `(?${param} IS NULL OR EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=json_extract(?${param},'$.deviceId') AND d.owner_id=?1 AND d.generation=json_extract(?${param},'$.generation') AND s.generation=d.generation AND d.revoked_at IS NULL AND ${MA} AND d.client_kind IN ('web','android') AND d.created_at<=?${now} AND d.expires_at>?${now} AND json_extract(?${param},'$.expiresAt')>?${now}))`;
 }
 // Internal service only, not an HTTP route. viewerId must come from validated
 // session identity, never from body/path or the owner of a shared entry. Tags

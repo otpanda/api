@@ -63,7 +63,7 @@ export class RecoveryControls {
  async beginApproval({user,changeId,keyId,deviceKeys}){
   if(!this.localVerification)return;
   const row=await this.#approvable({...user,changeId});if(!row||typeof keyId!=='string')return;
-  return deviceKeys.beginProof({keyId,purpose:'step-up',actionDigest:await this.approvalDigest({changeId,kind:row.kind,target:row.target,ownerId:user.ownerId,generation:user.generation}),browserBinding:await this.approvalBinding({ownerId:user.ownerId,deviceId:user.deviceId,changeId})});
+  return deviceKeys.beginProof({owner:user.ownerId,keyId,purpose:'step-up',actionDigest:await this.approvalDigest({changeId,kind:row.kind,target:row.target,ownerId:user.ownerId,generation:user.generation}),browserBinding:await this.approvalBinding({ownerId:user.ownerId,deviceId:user.deviceId,changeId})});
  }
  // Step 2: verify the signature server-side, then record the approval.
  async approveChange({user,changeId,token,signature,deviceKeys}){

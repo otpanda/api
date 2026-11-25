@@ -11,12 +11,12 @@ function fields(body,keys){if(Object.keys(body).length!==keys.length||keys.some(
 // Unmounted adapter. Only authenticated web access sessions, never automation
 // tokens. No user identifier is accepted from the client. Preference mutations
 // do not grant access or change shared entry metadata.
-export function createPersonalOrganizationHttp({db,sessions,organization,clock=Date.now}={}){
- const auth=createDeviceSessionAuth({sessions});
+export function createPersonalOrganizationHttp({db,sessions,organization,clock=Date.now,native=false}={}){
+ const auth=createDeviceSessionAuth({sessions,native});
  return {async fetch(request){
   const url=new URL(request.url);
   if(url.origin!==API||!['/v1/manage/organization','/v1/manage/organization-copy'].includes(url.pathname))return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   const reply=(body,status=200,headers={})=>json(body,status,{...cors,...headers});
   if(url.search)return reply({error:'invalid_request'},400);
   const copy=url.pathname.endsWith('-copy');

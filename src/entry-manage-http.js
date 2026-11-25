@@ -7,21 +7,27 @@ const PATHS=new Set(['/v1/manage/entry/rename','/v1/manage/entry/account']);
 // Web device bearer only (no cookie, automation token or native token), owner-only by SQL: a recipient or stranger gets 404.
 // Same stack as passkey rename: no extra proof. The write is bound to the live device session; label/account triggers bump
 // entries.mutation_revision (invalidating pending assignments) and write the realtime outbox row.
-export function createEntryManageHttp({db,sessions,clock=Date.now}={}){
- const auth=createDeviceSessionAuth({sessions});
+// native=true additionally serves ANDROID: a request with NO Origin header and an android device bearer, no CORS, exact application/json.
+// Same fields, rate limit, owner scoping and write as web. A browser (Origin present) can only take the web path; an android token
+// with an Origin or a web token without one is refused by the session auth.
+export function createEntryManageHttp({db,sessions,clock=Date.now,native=false}={}){
+ const webAuth=createDeviceSessionAuth({sessions}),androidAuth=native?createDeviceSessionAuth({sessions,native:true}):undefined;
  return {async fetch(request){
   const url=new URL(request.url);
   if(url.origin!==API||!PATHS.has(url.pathname))return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
-  const reply=(body,status=200,headers={})=>json(body,status,{...cors,...headers});
+  const android=request.headers.get('origin')===null;
+  if(android?!native:request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  const auth=android?androidAuth:webAuth,kind=android?'android':'web';
+  const reply=(body,status=200,headers={})=>json(body,status,android?{'Cache-Control':'no-store',...headers}:{...cors,...headers});
   if(url.search)return reply({error:'invalid_request'},400);
-  if(request.method==='OPTIONS'){
+  if(request.method==='OPTIONS'&&!android){
    const h=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
    return request.headers.get('access-control-request-method')==='POST'&&h.every(v=>['authorization','content-type'].includes(v))?new Response(null,{status:204,headers:{...cors,'Cache-Control':'no-store','Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Authorization, Content-Type','Access-Control-Max-Age':'600'}}):reply({error:'forbidden'},403);
   }
   if(request.method!=='POST')return reply({error:'method_not_allowed'},405);
   const viewer=await auth.authenticate(request);if(!viewer)return reply({error:'unauthorized'},401);
-  if((request.headers.get('content-type')??'').split(';')[0].trim()!=='application/json'||!request.body)return reply({error:'invalid_request'},400);
+  const ct=request.headers.get('content-type')??'';
+  if((android?ct!=='application/json':ct.split(';')[0].trim()!=='application/json')||!request.body)return reply({error:'invalid_request'},400);
   const reader=request.body.getReader(),parts=[];let size=0;
   try{for(;;){const p=await reader.read();if(p.done)break;size+=p.value.byteLength;if(size>4096){await reader.cancel();return reply({error:'invalid_request'},400);}parts.push(p.value);}}catch{return reply({error:'invalid_request'},400);}
   let body;try{const bytes=new Uint8Array(size);let i=0;for(const p of parts){bytes.set(p,i);i+=p.byteLength;}body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return reply({error:'invalid_request'},400);}
@@ -32,7 +38,7 @@ export function createEntryManageHttp({db,sessions,clock=Date.now}={}){
   const rate=await takeRateLimit(db,'entry-manage:'+viewer.ownerId,{now:clock(),limit:30});if(!rate.allowed)return reply({error:'rate_limited'},429,{'Retry-After':String(rate.retryAfter)});
   // Owner and live-session conditions sit inside the write. Triggers only fire on a real row update, so changes>=1 means this owner's entry changed.
   const now=clock(),column=rename?'label':'account_name';
-  const active=`EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?4 AND d.owner_id=?3 AND d.generation=?5 AND s.generation=?5 AND d.client_kind='web' AND d.revoked_at IS NULL AND ${MA} AND d.created_at<=?6 AND d.expires_at>?6)`;
+  const active=`EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?4 AND d.owner_id=?3 AND d.generation=?5 AND s.generation=?5 AND d.client_kind='${kind}' AND d.revoked_at IS NULL AND ${MA} AND d.created_at<=?6 AND d.expires_at>?6)`;
   const args=[value,body.entryId,viewer.ownerId,viewer.deviceId,viewer.generation,now];
   const r=await db.prepare(`UPDATE entries SET ${column}=?1 WHERE entry_id=?2 AND owner_id=?3 AND ${column} IS NOT ?1 AND ${active}`).bind(...args).run();
   if(r.meta.changes>=1)return reply({ok:true});

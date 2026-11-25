@@ -12,17 +12,19 @@ const TICKET=/^rt1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{43})$/;
 const cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
 const rand=n=>crypto.getRandomValues(new Uint8Array(n));
 const sha=async text=>digestToHex(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text))));
-const ACTIVE=`d.revoked_at IS NULL AND d.created_at<=?3 AND d.expires_at>?3 AND ${MA} AND s.generation=d.generation AND d.client_kind='web'`;
+const ACTIVE=`d.revoked_at IS NULL AND d.created_at<=?3 AND d.expires_at>?3 AND ${MA} AND s.generation=d.generation AND d.client_kind IN ('web','android')`;
 // limiter: a dedicated edge rate-limit binding (never the shared auth pool). Missing means fail closed.
 // connect(info, request): hands the upgrade to the account's hub.
-export function createRealtimeHttp({db,sessions,limiter,connect,clock=Date.now}={}){
+export function createRealtimeHttp({db,sessions,limiter,connect,clock=Date.now,native=false}={}){
  if(!db||!sessions||typeof connect!=='function')throw new TypeError('Realtime dependencies required');
- const auth=createDeviceSessionAuth({sessions});
+ const auth=createDeviceSessionAuth({sessions,native});
  const allowed=async key=>typeof limiter?.limit==='function'&&(await limiter.limit({key}))?.success===true;
  return {async fetch(request,{clientAddress}={}){
   const url=new URL(request.url);
   if(url.origin!==API||url.search||!['/auth/realtime/ticket','/auth/realtime'].includes(url.pathname))return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
+  // A native (no Origin) request is never a CORS preflight.
+  if(request.method==='OPTIONS'&&request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
   const ticketRoute=url.pathname==='/auth/realtime/ticket';
   if(request.method==='OPTIONS'){
    const h=request.headers.get('access-control-request-headers')?.toLowerCase().split(',').map(v=>v.trim()).filter(Boolean)??[];
@@ -53,7 +55,9 @@ export function createRealtimeHttp({db,sessions,limiter,connect,clock=Date.now}=
   if(typeof limiter?.limit!=='function')return json({error:'unavailable'},503,cors);
   if(!await allowed('connect:'+await hashText(clientAddress)))return json({error:'rate_limited'},429,{...cors,'Retry-After':'30'});
   // One winner: the ticket is deleted in the same statement that checks it, device state and generation included.
-  const row=await db.prepare(`DELETE FROM realtime_tickets WHERE ticket_id=?1 AND secret_digest=?2 AND expires_at>?3 AND close_at>?3 AND EXISTS (SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=realtime_tickets.device_id AND d.owner_id=realtime_tickets.owner_id AND d.generation=realtime_tickets.generation AND ${ACTIVE}) RETURNING owner_id,device_id,close_at`).bind(match[1],await sha(match[2]),now).first();
+  // The ticket must be redeemed by the same client kind that minted it: Origin shape decides (APP = web, none = android).
+  const kind=request.headers.get('origin')===APP?'web':'android';
+  const row=await db.prepare(`DELETE FROM realtime_tickets WHERE ticket_id=?1 AND secret_digest=?2 AND expires_at>?3 AND close_at>?3 AND EXISTS (SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=realtime_tickets.device_id AND d.owner_id=realtime_tickets.owner_id AND d.generation=realtime_tickets.generation AND ${ACTIVE} AND d.client_kind=?4) RETURNING owner_id,device_id,close_at`).bind(match[1],await sha(match[2]),now,kind).first();
   if(!row)return json({error:'invalid_grant'},401,cors);
   return connect({ownerId:row.owner_id,deviceId:row.device_id,closeAt:row.close_at},request);
  }};

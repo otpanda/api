@@ -21,9 +21,10 @@ export class DurableDeviceKeys {
   if(prior?.revoked_at!=null)return undefined; // Revocation is not restoration authority.
   const keyId=prior?.key_id??crypto.randomUUID();return this.issue({keyId,ownerId:p.ownerId,generation:p.generation,purpose:'enroll',actionDigest,publicJwk:keyText(jwk),browserBinding,credentialId:p.credentialId,maxExpiresAt:p.verifiedAt+TTL});
  }
- async beginProof({keyId,purpose,actionDigest,browserBinding}) {
+ async beginProof({keyId,purpose,actionDigest,browserBinding,owner}) {
+  if(owner!==undefined&&(typeof owner!=='string'||!owner))return undefined;
   if(!['step-up','recover-access'].includes(purpose)||!digest(actionDigest)||!binding(browserBinding)||typeof keyId!=='string'||keyId.length>128)return undefined;
-  const row=await this.db.prepare('SELECT k.owner_id,k.generation FROM durable_device_keys k JOIN account_security s ON s.owner_id=k.owner_id WHERE key_id=?1 AND k.revoked_at IS NULL AND s.generation=k.generation').bind(keyId).first();
+  const row=await this.db.prepare('SELECT k.owner_id,k.generation FROM durable_device_keys k JOIN account_security s ON s.owner_id=k.owner_id WHERE key_id=?1 AND k.revoked_at IS NULL AND s.generation=k.generation AND (?2 IS NULL OR k.owner_id=?2)').bind(keyId,owner??null).first();
   return row?this.issue({keyId,ownerId:row.owner_id,generation:row.generation,purpose,actionDigest,browserBinding}):undefined;
  }
  async issue({keyId,ownerId,generation,purpose,actionDigest,publicJwk=null,browserBinding,credentialId=null,maxExpiresAt=null}) {
@@ -35,7 +36,7 @@ export class DurableDeviceKeys {
  }
  async finish({token,browserBinding,signature}) {
   const parsed=parseAccessToken(token);if(!parsed||!binding(browserBinding))return undefined;const now=this.now();
-  const row=await this.db.prepare('DELETE FROM durable_device_challenges WHERE challenge_id=?1 AND secret_digest=?2 AND binding_digest=?3 AND created_at<=?4 AND expires_at>?4 RETURNING *').bind(parsed.tokenId,digestToHex(await digestSecret(parsed.secret)),await hashText(browserBinding),now).first();if(!row)return undefined;
+  const row=await this.db.prepare('DELETE FROM durable_device_challenges WHERE challenge_id=?1 AND secret_digest=?2 AND binding_digest=?3 AND created_at<=?4 AND expires_at>?4 AND consumed_at IS NULL RETURNING *').bind(parsed.tokenId,digestToHex(await digestSecret(parsed.secret)),await hashText(browserBinding),now).first();if(!row)return undefined;
   let jwk=row.public_jwk;
   if(row.purpose!=='enroll'){const key=await this.db.prepare('SELECT public_jwk FROM durable_device_keys WHERE key_id=?1 AND owner_id=?2 AND generation=?3 AND revoked_at IS NULL').bind(row.key_id,row.owner_id,row.generation).first();jwk=key?.public_jwk;}
   const challenge={ownerId:row.owner_id,keyId:row.key_id,generation:row.generation,purpose:row.purpose,actionDigest:row.action_digest,challenge:row.challenge,expiresAt:row.expires_at};

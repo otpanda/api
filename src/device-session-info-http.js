@@ -11,7 +11,7 @@ export function createDeviceSessionInfoHttp({db,sessions,native=false,clock=Date
  return {async fetch(request){
   const url=new URL(request.url);
   if(url.origin!==API||url.pathname!=='/v1/manage/session/describe')return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   const reply=(body,status=200,headers={})=>json(body,status,{...cors,...headers});
   if(url.search)return reply({error:'invalid_request'},400);
   if(request.method==='OPTIONS'){

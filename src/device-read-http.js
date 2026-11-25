@@ -5,12 +5,12 @@ import {createDeviceSessionAuth} from './device-session-auth.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
 const paths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
 const cors={'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'};
-export function createDeviceReadHttp({db,sessions,sources,access,clock=Date.now}={}){
+export function createDeviceReadHttp({db,sessions,sources,access,clock=Date.now,native=false}={}){
  if(!db||!sources||!access)throw new TypeError('Read dependencies required');
- const auth=createDeviceSessionAuth({sessions});
+ const auth=createDeviceSessionAuth({sessions,native});
  return {async fetch(request,{clientAddress}={}){
   const url=new URL(request.url);if(url.origin!==API||!paths.has(url.pathname))return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   if(request.method==='OPTIONS'){
    const h=request.headers.get('access-control-request-headers')?.toLowerCase().split(',').map(v=>v.trim())??[];
    return request.headers.get('access-control-request-method')==='GET'&&h.every(v=>v==='authorization')

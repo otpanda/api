@@ -1,0 +1,11 @@
+{
+ "_note": "Exact request bodies the server accepts (key sets are exact, any extra or missing key is 400). Values are synthetic shapes only. All POST application/json, no Origin header, Authorization: Bearer <android access>.",
+ "/v1/manage/device-key/enroll-begin": {"grant":"otpda_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","publicJwk":{"kty":"EC","crv":"P-256","x":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","y":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}},
+ "/v1/manage/device-key/enroll-finish": {"grant":"otpda_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","token":"otpda_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+ "/v1/manage/device-key/enroll-status": {"digest":"0000000000000000000000000000000000000000000000000000000000000000"},
+ "/v1/manage/device-key/adopt-begin": {"digest":"0000000000000000000000000000000000000000000000000000000000000000"},
+ "/v1/manage/device-key/adopt-finish": {"digest":"0000000000000000000000000000000000000000000000000000000000000000","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","token":"otpda_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+ "/v1/manage/assignment/begin (android)": {"sourceId":"s","eventId":"e","entryId":"t","keyId":"k"},
+ "/v1/manage/assignment/finish (android)": {"intentId":"i","action":"[...]","signature":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","token":"otpda_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},
+ "/v1/manage/assignment/status": {"intentId":"i"}
+}
