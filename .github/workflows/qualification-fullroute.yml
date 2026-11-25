@@ -1,7 +1,7 @@
 name: Isolated pinned noble cap5 mounted-route CPU qualification
 on:
   push:
-    branches: [qualify/totp-mounted-noble-paused]
+    branches: [qualify/totp-mounted-cap5]
 permissions:
   contents: read
 concurrency:
