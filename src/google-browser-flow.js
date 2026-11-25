@@ -5,8 +5,9 @@ import {generateAccessToken} from './tokens.js';
 import {hashText,readCookie,cookie,securityHeaders,takeRateLimit} from './sessions.js';
 import {googleEmailEvidence} from './account-identity.js';
 import {appFailure} from './silent-bridge.js';
+import {linkReturnBase} from './native-link-return.js';
 // Link failures return to the plain app URL with no #auth hash and no cookie change, so they can never look like a sign-in result.
-const linkFailure=(state,reason,clear=true)=>{const t=new URL('https://otpanda.github.io/app/');t.hash=new URLSearchParams({link:reason,state:/^[A-Za-z0-9_-]{43}$/.test(state)?state:''});const h=new Headers({...securityHeaders,Location:t.href,'Referrer-Policy':'no-referrer'});if(clear){h.append('Set-Cookie',cookie('__Host-otpanda_google','',0));h.append('Set-Cookie',cookie('__Host-otpanda_google_link','',0));}return new Response(null,{status:303,headers:h});};
+const linkFailure=(state,reason,clear=true,base='https://otpanda.github.io/app/')=>{const t=new URL(base);t.hash=new URLSearchParams({link:reason,state:/^[A-Za-z0-9_-]{43}$/.test(state)?state:''});const h=new Headers({...securityHeaders,Location:t.href,'Referrer-Policy':'no-referrer'});if(clear){h.append('Set-Cookie',cookie('__Host-otpanda_google','',0));h.append('Set-Cookie',cookie('__Host-otpanda_google_link','',0));}return new Response(null,{status:303,headers:h});};
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io/app/',CALLBACK=API+'/auth/callback',BIND='__Host-otpanda_google',MARK='__Host-otpanda_google_link',TTL=300000,OPAQUE=/^[A-Za-z0-9_-]{43}$/;
 export function createGoogleBrowserFlow({db,cipher,server,client,clientAuthentication,complete,completeLink,clock=Date.now,oauthOptions={}}={}){
  if(!db||!cipher||server?.issuer!=='https://accounts.google.com'||!client?.client_id||typeof complete!=='function')throw new TypeError('Google browser dependencies required');
@@ -33,11 +34,11 @@ export function createGoogleBrowserFlow({db,cipher,server,client,clientAuthentic
   const target=new URL(server.authorization_endpoint);target.search=new URLSearchParams({client_id:client.client_id,response_type:'code',redirect_uri:CALLBACK,scope:'openid email',state,nonce,code_challenge:await oauth.calculatePKCECodeChallenge(verifier),code_challenge_method:'S256'});
   const headers=new Headers({...securityHeaders,Location:target.href,'Referrer-Policy':'no-referrer'});headers.append('Set-Cookie',cookie(BIND,binding,TTL/1000));headers.append('Set-Cookie',cookie(MARK,'1',1800));return new Response(null,{status:303,headers});
  },async callback(request){
-  const u=new URL(request.url),states=u.searchParams.getAll('state'),binding=readCookie(request,BIND),clear={'Set-Cookie':cookie(BIND,'',0)};let appState='',isLink=false;const marked=readCookie(request,MARK)==='1';
+  const u=new URL(request.url),states=u.searchParams.getAll('state'),binding=readCookie(request,BIND),clear={'Set-Cookie':cookie(BIND,'',0)};let appState='',isLink=false,returnBase;const marked=readCookie(request,MARK)==='1';
   if(u.origin!==API||u.pathname!=='/auth/callback'||request.method!=='GET'||states.length!==1||states[0].length>256||typeof binding!=='string'||binding.length>128)return marked?linkFailure('', 'restart'):appFailure('', 'restart',clear);
   try{
    const id=await hashText(states[0]),now=clock(),row=await db.prepare('DELETE FROM oauth_transactions WHERE state_digest=?1 AND binding_digest=?2 AND created_at<=?3 AND expires_at>?3 RETURNING envelope,created_at,expires_at').bind(id,await hashText(binding),now).first();if(!row)return marked?linkFailure('', 'restart'):appFailure('', 'restart',clear);
-   const p=JSON.parse(await cipher.decrypt(JSON.parse(row.envelope),context(id,row.created_at,row.expires_at)));appState=p.appState;isLink=!!p.link;
+   const p=JSON.parse(await cipher.decrypt(JSON.parse(row.envelope),context(id,row.created_at,row.expires_at)));appState=p.appState;isLink=!!p.link;if(p.link)returnBase=await linkReturnBase(db,p.link.deviceId);
    if(p.link){if(!OPAQUE.test(appState)||typeof completeLink!=='function')throw Error();}else
    if(!OPAQUE.test(appState)||!OPAQUE.test(p.challenge)||typeof p.remember!=='boolean')throw Error();
    const params=oauth.validateAuthResponse(server,client,u,states[0]),response=await oauth.authorizationCodeGrantRequest(server,client,clientAuthentication,params,CALLBACK,p.verifier,oauthOptions);
@@ -47,6 +48,6 @@ export function createGoogleBrowserFlow({db,cipher,server,client,clientAuthentic
    if(p.link){const linked=await completeLink({identity:evidence,appState,link:p.link,request});if(!(linked instanceof Response))throw Error();linked.headers.append('Set-Cookie',cookie(BIND,'',0));linked.headers.append('Set-Cookie',cookie(MARK,'',0));return linked;}
    const completed=await complete({identity:evidence,appState,challenge:p.challenge,remember:p.remember,verifiedAt:clock(),request});
    if(!(completed instanceof Response))throw Error();completed.headers.append('Set-Cookie',cookie(BIND,'',0));if(marked)completed.headers.append('Set-Cookie',cookie(MARK,'',0));return completed;
-  }catch{return isLink||(marked&&!appState)?linkFailure(appState,'restart'):appFailure(appState,'restart',clear);}
+  }catch{return isLink||(marked&&!appState)?linkFailure(appState,'restart',true,returnBase):appFailure(appState,'restart',clear);}
  }};
 }
