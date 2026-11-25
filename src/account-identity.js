@@ -91,7 +91,7 @@ export class AccountIdentityService {
     // HTTP orchestration must separately require action-bound fresh step-up.
     // Challenge proves current mailbox and binds exact provider issuer+subject.
     if (!await this.claim({ token, purpose: 'link-provider', email: provider.email, ownerId, identity })) return false;
-    await this.db.prepare(`INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) SELECT ?5,?3,'google',?1,?2,?4,?6 WHERE EXISTS (SELECT 1 FROM account_emails WHERE owner_id = ?3 AND email = ?4) ON CONFLICT(issuer, subject) DO NOTHING`)
+    await this.db.prepare(`INSERT INTO provider_identities(identity_id,owner_id,provider,issuer,subject,email,created_at) SELECT ?5,?3,'google',?1,?2,?4,?6 WHERE EXISTS (SELECT 1 FROM account_emails WHERE owner_id = ?3 AND email = ?4) ON CONFLICT(issuer, subject) WHERE revoked_at IS NULL DO NOTHING`)
       .bind(provider.issuer, provider.subject, ownerId, provider.email,crypto.randomUUID(),instant(this.clock())).run();
     const row = await this.db.prepare('SELECT owner_id FROM provider_identities WHERE issuer = ?1 AND subject = ?2 AND revoked_at IS NULL').bind(provider.issuer, provider.subject).first();
     return row?.owner_id === ownerId;

@@ -1,6 +1,6 @@
 import {json,securityHeaders,takeRateLimit} from './sessions.js';
 import {createDeviceSessionAuth} from './device-session-auth.js';
-import {RecoveryControls,KINDS,recoveryAction} from './recovery-controls.js';
+import {RecoveryControls,KINDS,APPLY_KINDS,recoveryAction} from './recovery-controls.js';
 import {PasskeyService} from './passkey-service.js';
 import {EmailRecovery} from './email-recovery.js';
 import {DurableDeviceKeys} from './durable-device-keys.js';
@@ -38,16 +38,18 @@ export function createRecoveryControlsHttp({db,sessions,clock=Date.now,passkeys=
    const ok=step==='consume-change'?await service.consumeChange({...user,changeId:v.changeId}):await emailRecovery.cancel({...user,requestId:v.requestId});
    return ok?json(step==='consume-change'?ok:{status:'ok'},200,cors):json({error:'waiting'},409,cors);
   }
-  if(!KINDS.includes(v.kind))return json({error:'invalid_request'},400,cors);
+  if(!APPLY_KINDS.includes(v.kind))return json({error:'invalid_request'},400,cors);
   const needsTarget=v.kind==='passkey-revoke'||v.kind==='session-revoke',on=v.kind==='email-escape-on';
   const expected=['kind',...(needsTarget?['target']:[]),...(on?['warningAccepted']:[]),...(step==='finish'?['response','token']:[])].sort().join(',');
   if(Object.keys(v).sort().join(',')!==expected||(needsTarget&&(typeof v.target!=='string'||v.target.length>512))||(on&&v.warningAccepted!==true))return json({error:'invalid_request'},400,cors);
   if(step==='request-change'){const c=await service.createChange({...user,kind:v.kind,target:v.target,warningAccepted:v.warningAccepted});return c?json(c,200,cors):json({error:'restart'},403,cors);}
   const action=recoveryAction(v.kind,v.target),binding=JSON.stringify(['recovery',user.deviceId,user.generation]);
+  if(step==='begin'&&v.kind==='google-unlink'&&!await service.googleLinked(user.ownerId))return json({error:'not_linked'},409,cors);
   if(step==='begin'){const c=await passkeys.begin({purpose:'step-up',ownerId:user.ownerId,binding,action});return c&&await auth.authenticate(request)?json(c,200,cors):json({error:'reauthenticate'},403,cors);}
   const proof=await passkeys.finishAuthentication({token:v.token,response:v.response,ownerId:user.ownerId,binding,action});
   const result=proof?await service.apply({user,kind:v.kind,target:v.target,proof,warningAccepted:v.warningAccepted}):undefined;
-  const self=v.kind==='session-revoke'&&v.target===user.deviceId;
+  // Unlinking Google ends this very session when it was a Google sign-in, so success cannot be gated on re-auth.
+  const self=(v.kind==='session-revoke'&&v.target===user.deviceId)||v.kind==='google-unlink';
   return result&&(self||await auth.authenticate(request))?json(result,200,cors):json({error:'reauthenticate'},403,cors);
  }};
 }
