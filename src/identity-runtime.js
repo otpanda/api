@@ -8,6 +8,7 @@ import {createAddPasskeyHttp} from './additional-passkey-http.js';
 import {createRecoveryControlsHttp} from './recovery-controls-http.js';
 import {createEmailRecoveryHttp} from './email-recovery-http.js';
 import {createAccountOverviewHttp} from './account-overview-http.js';
+import {createGoogleLinkTicketHttp} from './google-link-http.js';
 // Inactive browser identity composition. Never mounts legacy mutations,
 // OIDC, signup delivery or automatic account creation. Deployment stays gated.
 import {AssignmentIntents} from './assignment-intents.js';
@@ -58,7 +59,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
  const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
- const overview=createAccountOverviewHttp({db,sessions,clock});
+ const overview=createAccountOverviewHttp({db,sessions,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock});
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
@@ -79,6 +80,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(url.pathname.startsWith('/v1/manage/recovery/'))handler=recovery;
    else if(url.pathname.startsWith('/auth/recovery/email/'))handler=emailRecovery;
    else if(url.pathname==='/v1/manage/account')handler=overview;
+   else if(url.pathname==='/v1/manage/google/link/ticket')handler=googleLink;
    else if(loginPaths.has(url.pathname))handler=loginHttp;
    else if(['/auth/restore','/auth/exchange','/auth/renew'].includes(url.pathname))handler=sessionHttp;
    else if(url.pathname==='/auth/device/logout')handler=logoutHttp;
