@@ -8,7 +8,7 @@ import { DeviceSessionService } from '../src/device-sessions.js';
 import { authenticator } from './passkey-fixture.js';
 const NOW=1_800_000_000_000,DAY=86400000;
 async function setup(){const db=database();let now=NOW;const identity=new AccountIdentityService(db,{clock:()=>now}),signup=new PasskeySignupService(db,{clock:()=>now});const {token}=await identity.issueEmailChallenge({purpose:'signup-email',email:'a@example.com'});const c=await signup.begin({email:'a@example.com',emailToken:token,binding:'binding'}),a=authenticator();const account=await signup.finish({token:c.token,binding:'binding',response:a.registration({expected:c.options.challenge})});const proof={...account,verifiedAt:NOW,purpose:'authenticate'};const service=new DeviceSessionService(db,{clock:()=>now});return {db,service,proof,setNow:v=>now=v};}
-import { AccessRenewal,renewalMessage,MAX_LINEAGES } from '../src/access-renewal.js';
+import { AccessRenewal,renewalMessage,resumeMessage,MAX_LINEAGES } from '../src/access-renewal.js';
 import { base64urlEncode } from '../src/tokens.js';
 import { createBrowserSessionHttp } from '../src/browser-session-http.js';
 const redirectUri='https://otpanda.github.io/app/',verifier='a'.repeat(43),API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
@@ -123,3 +123,46 @@ test('serverTime is the server clock reading the access expiry is derived from, 
  const f=await fixture(),k=await newKey(),e=await f.bind(k);assert.equal(e.renewal.serverTime,NOW);assert.equal(e.accessExpiresAt-e.renewal.serverTime,300000);
  f.setTime(NOW+200000);const r=await renew(f,k,e);assert.equal(r.renewal.serverTime,NOW+200000);assert.equal(r.accessExpiresAt-r.renewal.serverTime,300000);assert.ok(Number.isSafeInteger(r.renewal.serverTime));
  const plain=await f.bind(undefined,'c'.repeat(43));assert.deepEqual(Object.keys(plain).sort(),['access','accessExpiresAt']);f.db.sqlite.close();});
+
+async function resume(f,k,lineageId,handleId,over={}){const expiresAt=over.expiresAt??f.clock()+30000;const signature=over.signature??enc(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},k.priv,resumeMessage({lineageId,handleId,expiresAt})));return f.renewals.resume({lineageId,handleId,signature,expiresAt});}
+test('resume: after the access life (and after cleanup) the key alone renews; expired access stays dead; head moves once',async()=>{
+ const f=await fixture(),k=await newKey(),e=await f.bind(k),L=e.renewal.lineageId;
+ f.setTime(NOW+20*DAY);await f.service.cleanup({limit:500});
+ assert.equal(await f.service.authenticate(e.access),undefined);
+ assert.equal((await resume(f,await newKey(),L,e.renewal.handleId)).status,'denied','other key');
+ assert.equal((await resume(f,k,L,'x'.repeat(16))).status,'denied','not the head');
+ const exp=f.clock()+30000,sig=enc(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},k.priv,resumeMessage({lineageId:L,handleId:e.renewal.handleId,expiresAt:exp})));
+ const rs=await Promise.all(Array.from({length:6},()=>resume(f,k,L,e.renewal.handleId,{signature:sig,expiresAt:exp})));
+ assert.equal(rs.filter(r=>r.status==='renewed').length,1);assert.equal(rs.filter(r=>r.status!=='renewed'&&r.status!=='denied'&&r.status!=='renewed-elsewhere').length,0);
+ const r=rs.find(r=>r.status==='renewed');assert.equal(r.accessExpiresAt,f.clock()+300000);assert.equal((await f.service.authenticate(r.access)).deviceId,f.d.deviceId);
+ assert.equal(f.db.sqlite.prepare('SELECT head_handle_id h FROM access_lineages WHERE lineage_id=?').get(L).h,r.renewal.handleId);
+ assert.equal((await resume(f,k,L,e.renewal.handleId)).status,'denied','replaying the old head never works');
+ f.setTime(NOW+20*DAY+400000);const again=await resume(f,k,L,r.renewal.handleId);assert.equal(again.status,'renewed','chain continues');
+ assert.equal(f.db.sqlite.prepare('SELECT expires_at e FROM device_sessions').get().e,NOW+20*DAY+400000+30*DAY);f.db.sqlite.close();});
+test('resume refused: revoked device, generation bump, device idle expired (30d), wrong domain signature, bad skew; bearer and resume cannot both win',async()=>{
+ for(const kind of ['device','generation','idle','domain','skew','race']){
+  const f=await fixture(),k=await newKey(),e=await f.bind(k),L=e.renewal.lineageId,H=e.renewal.handleId;
+  if(kind==='device')await f.service.revoke({ownerId:f.proof.ownerId,deviceId:f.d.deviceId});
+  if(kind==='generation')f.db.sqlite.prepare('UPDATE account_security SET generation=generation+1').run();
+  if(kind==='idle')f.setTime(NOW+31*DAY);
+  const over=kind==='domain'?{signature:await sign(k,{lineageId:L,handleId:H,expiresAt:f.clock()+30000})}:kind==='skew'?{expiresAt:f.clock()+61000}:{};
+  if(kind==='race'){const b=await renew(f,k,e);assert.equal(b.status,'renewed');assert.equal((await resume(f,k,L,H)).status,'denied','old head after bearer renewal');
+   const f2=await fixture(),k2=await newKey(),e2=await f2.bind(k2);const r2=await resume(f2,k2,e2.renewal.lineageId,e2.renewal.handleId);assert.equal(r2.status,'renewed');assert.equal((await renew(f2,k2,e2)).status,'renewed-elsewhere','bearer after resume');f2.db.sqlite.close();}
+  else assert.notEqual((await resume(f,k,L,H,over)).status,'renewed',kind);
+  f.db.sqlite.close();}});
+test('resume over HTTP: no bearer allowed or read, same CORS/Origin/rate limits, expired access still 401 elsewhere',async()=>{
+ const f=await fixture(),k=await newKey(),e=await f.bind(k),http=createBrowserSessionHttp({sessions:f.service,exchanges:f.exchange,renewals:f.renewals,db:f.db,clock:f.clock});
+ f.setTime(NOW+3600000);const L=e.renewal.lineageId,H=e.renewal.handleId,exp=f.clock()+30000,signature=enc(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},k.priv,resumeMessage({lineageId:L,handleId:H,expiresAt:exp})));
+ const post=(body,headers={},o=APP)=>http.fetch(new Request(API+'/auth/renew',{method:'POST',headers:{Origin:o,'Content-Type':'application/json',...headers},body:JSON.stringify(body)}),{clientAddress:'t'});
+ const good={lineage_id:L,handle_id:H,expires_at:exp,signature};
+ assert.equal((await post(good,{Authorization:'Bearer '+e.access})).status,400,'a bearer on resume is refused, never read');
+ assert.equal((await post(good,{},'https://evil.example')).status,403);
+ assert.equal((await post({...good,extra:1})).status,400);assert.equal((await post({lineage_id:L,expires_at:exp,signature})).status,401,'bearer mode still requires its bearer');
+ const r=await post(good);assert.equal(r.status,200);const j=await r.json();assert.equal(j.renewal.lineageId,L);assert.notEqual(j.renewal.handleId,H);
+ assert.equal((await post(good)).status,401,'replay');f.db.sqlite.close();});
+import { cleanupIdentity } from '../src/identity-cleanup.js';
+test('identity cleanup keeps a lineage renewable for 30 days after its last renewal and then drops it',async()=>{
+ const f=await fixture(),k=await newKey(),e=await f.bind(k),L=e.renewal.lineageId,n=()=>f.db.sqlite.prepare('SELECT count(*) n FROM access_lineages WHERE lineage_id=?').get(L).n;
+ f.setTime(NOW+10*DAY);await cleanupIdentity({db:f.db,clock:f.clock,limit:500});assert.equal(n(),1);assert.equal((await resume(f,k,L,e.renewal.handleId)).status,'renewed');
+ f.setTime(NOW+10*DAY+29*DAY);await cleanupIdentity({db:f.db,clock:f.clock,limit:500});assert.equal(n(),1);
+ f.db.sqlite.prepare('UPDATE device_sessions SET expires_at=?').run(NOW+100*DAY);f.setTime(NOW+10*DAY+31*DAY);await cleanupIdentity({db:f.db,clock:f.clock,limit:500});assert.equal(n(),0);f.db.sqlite.close();});

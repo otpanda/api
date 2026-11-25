@@ -43,11 +43,16 @@ export function createBrowserSessionHttp({sessions,exchanges,renewals,db,clock=D
    const text=await boundedText(request,4096);if(text===undefined)return json({error:'invalid_request'},400,cors);
    let data;try{data=JSON.parse(text);}catch{return json({error:'invalid_request'},400,cors);}
    if(renew){
-    if(!data||Array.isArray(data)||Object.keys(data).sort().join(',')!=='expires_at,lineage_id,signature'||typeof data.lineage_id!=='string'||!/^[A-Za-z0-9_-]{8,64}$/.test(data.lineage_id))return json({error:'invalid_request'},400,cors);
-    const token=bearerToken(request.headers.get('authorization'));if(!token)return json({error:'invalid_grant'},401,cors);
+    const shape=data&&!Array.isArray(data)?Object.keys(data).sort().join(','):'';
+    const resume=shape==='expires_at,handle_id,lineage_id,signature';
+    if(!resume&&shape!=='expires_at,lineage_id,signature')return json({error:'invalid_request'},400,cors);
+    if(typeof data.lineage_id!=='string'||!/^[A-Za-z0-9_-]{8,64}$/.test(data.lineage_id)||(resume&&(typeof data.handle_id!=='string'||!/^[A-Za-z0-9_-]{8,64}$/.test(data.handle_id))))return json({error:'invalid_request'},400,cors);
+    // Resume carries no bearer at all: an expired access token is never read or accepted.
+    const token=resume?undefined:bearerToken(request.headers.get('authorization'));if(!resume&&!token)return json({error:'invalid_grant'},401,cors);
+    if(resume&&request.headers.get('authorization')!==null)return json({error:'invalid_request'},400,cors);
     // Per-lineage ceiling on top of the per-address one; failures and successes both count.
     if(!(await takeRateLimit(db,'renew:lineage:'+data.lineage_id,{now:clock(),limit:20})).allowed)return json({error:'rate_limited'},429,cors);
-    const r=await renewals.renew({token,lineageId:data.lineage_id,signature:data.signature,expiresAt:data.expires_at});
+    const r=resume?await renewals.resume({lineageId:data.lineage_id,handleId:data.handle_id,signature:data.signature,expiresAt:data.expires_at}):await renewals.renew({token,lineageId:data.lineage_id,signature:data.signature,expiresAt:data.expires_at});
     if(r.status==='renewed')return json({access:r.access,accessExpiresAt:r.accessExpiresAt,renewal:r.renewal},200,cors);
     return r.status==='renewed-elsewhere'?json({error:'renewed'},409,cors):json({error:'invalid_grant'},401,cors);
    }
