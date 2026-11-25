@@ -125,6 +125,6 @@ export class DeviceSessionService {
       this.db.prepare('DELETE FROM device_sessions WHERE device_id IN (SELECT device_id FROM device_sessions WHERE expires_at<=?1 OR revoked_at IS NOT NULL ORDER BY expires_at LIMIT ?2)').bind(now,limit),
     ]);return results.map(r=>r.meta.changes);
   }
-  async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes===1;}
-  async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL').bind(this.now(),ownerId).run();return r.meta.changes;}
-  }
+  async revoke({ownerId,deviceId}){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND device_id=?3 AND revoked_at IS NULL').bind(this.now(),ownerId,deviceId).run();return r.meta.changes>=1;}
+  async revokeAll(ownerId){const r=await this.db.prepare('UPDATE device_sessions SET revoked_at=?1 WHERE owner_id=?2 AND revoked_at IS NULL RETURNING device_id').bind(this.now(),ownerId).all();return r.results.length;}
+}
