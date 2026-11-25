@@ -31,12 +31,21 @@ function providerIdentity(identity) {
 }
 // Call only on an already signature/audience/issuer/nonce-validated Google ID
 // token. email_verified alone is not authoritative for arbitrary external mail.
+// The Google profile picture is only ever a plain https URL on a googleusercontent.com host, so a stored or returned value can
+// never point the client at an arbitrary site. Anything else is dropped, not an error.
+export function googlePictureUrl(value) {
+  if (typeof value !== 'string' || value.length > 512) return undefined;
+  let u; try { u = new URL(value); } catch { return undefined; }
+  if (u.protocol !== 'https:' || u.username || u.password || u.port || u.search || u.hash || !/^[a-z0-9-]+\.googleusercontent\.com$/.test(u.hostname)) return undefined;
+  return u.href === value ? value : undefined;
+}
 export function googleEmailEvidence(claims) {
   const identity = providerIdentity({ issuer: claims?.iss, subject: claims?.sub, email: claims?.email });
   if (claims.email_verified !== true) throw new TypeError('Verified provider email required');
   const domain = identity.email.split('@')[1];
   const authoritative = domain === 'gmail.com' || (typeof claims.hd === 'string' && claims.hd.toLowerCase() === domain);
-  return Object.freeze({ ...identity, authoritative });
+  const picture = googlePictureUrl(claims.picture);
+  return Object.freeze({ ...identity, authoritative, ...(picture ? { picture } : {}) });
 }
 export class AccountIdentityService {
   constructor(db, { clock = Date.now } = {}) { this.db = db; this.clock = clock; }
