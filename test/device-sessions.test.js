@@ -166,3 +166,15 @@ test('unexpected refresh/access child no-op never retires prior or leaves usable
   x.db.sqlite.close();
  }
 });
+
+test('revokeAll returns direct device count despite realtime trigger writes and stays idempotent',async()=>{
+ const {db,service,proof}=await setup();try{
+  const a=await service.issue({proof,clientKind:'web'}),b=await service.issue({proof,clientKind:'android'});
+  db.sqlite.exec('DELETE FROM realtime_outbox');
+  assert.equal(await service.revokeAll('other'),0);
+  assert.equal(await service.revokeAll(proof.ownerId),2);
+  assert.ok(db.sqlite.prepare('SELECT count(*) n FROM realtime_outbox').get().n>0);
+  assert.equal(await service.revokeAll(proof.ownerId),0);
+  for(const s of [a,b])assert.equal(await service.authenticate(s.access),undefined);
+ }finally{db.sqlite.close();}
+});

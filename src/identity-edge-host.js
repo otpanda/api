@@ -14,9 +14,36 @@ const methods=new Map([['/v1/manage/totp',['POST']],['/v1/manage/totp/begin',['P
 const corsPath=p=>((p.startsWith('/auth/google/continue/')||p.startsWith('/auth/google/protection/'))&&!p.endsWith('/complete'))||p.startsWith('/auth/recovery/email/')||p==='/auth/login/verify'||p==='/auth/exchange'||p==='/auth/renew'||p.startsWith('/v1/');
 const headers=p=>({...securityHeaders,...(corsPath(p)?{'Access-Control-Allow-Origin':APP,Vary:'Origin'}:{})});
 export const isIdentityPath=p=>methods.has(p);
-export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAddress,edgeAuthGlobal,edgeReadGlobal}={}){
+const realtimeMethods=new Map([['/auth/realtime/ticket',['POST']],['/auth/realtime',['GET']]]);
+// realtime (optional): {edgeAddress, edgeGlobal} are DEDICATED rate-limit bindings for ticket mint and upgrade. They never touch
+// the shared auth pool or the read pool. Absent, the realtime paths do not exist (404) and nothing about the other routes changes.
+export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAddress,edgeAuthGlobal,edgeReadGlobal,realtime}={}){
  let identity;
+  const realtimeFetch=async(request,ctx)=>{
+  const url=new URL(request.url),p=url.pathname,allowed=realtimeMethods.get(p),ticket=p==='/auth/realtime/ticket',origin=request.headers.get('origin');
+  const h={...securityHeaders,'Access-Control-Allow-Origin':APP,Vary:'Origin'};
+  const fail=(status,error='unavailable')=>json({error},status,{...h,...([429,503].includes(status)?{'Retry-After':'30'}:{})});
+  if(url.origin!==API||url.search)return json({error:'not_found'},404);
+  if(origin!==APP)return fail(403,'forbidden');
+  // Preflight is pure: no env, resolver, limiter or D1.
+  if(request.method==='OPTIONS'){
+   const requested=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
+   return ticket&&request.headers.get('access-control-request-method')==='POST'&&requested.every(v=>v==='authorization')?new Response(null,{status:204,headers:{...h,'Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'authorization'}}):fail(403,'forbidden');
+  }
+  if(!allowed.includes(request.method))return fail(405,'method_not_allowed');
+  try{
+   const L=realtime;
+   if(typeof initialize!=='function'||typeof resolveTrustedIngress!=='function'||typeof L.edgeAddress?.limit!=='function'||typeof L.edgeGlobal?.limit!=='function')return fail(503);
+   const address=canonicalClientAddress(await resolveTrustedIngress(request));if(!address)return fail(503);
+   if((await L.edgeAddress.limit({key:await hashText('realtime:'+address)}))?.success!==true)return fail(429,'busy');
+   if((await L.edgeGlobal.limit({key:'otpanda-realtime-v1'}))?.success!==true)return fail(429,'busy');
+   identity??=Promise.resolve().then(initialize);
+   return await(await identity).fetch(request,{waitUntil:typeof ctx?.waitUntil==='function'?q=>ctx.waitUntil(q):undefined});
+  }catch{return fail(503);}
+  };
  return{async fetch(request,ctx){
+  const rt=realtime&&realtimeMethods.get(new URL(request.url).pathname);
+  if(rt)return realtimeFetch(request,ctx);
   const url=new URL(request.url),p=url.pathname,allowed=methods.get(p),origin=request.headers.get('origin'),cors=corsPath(p);
   const fail=(status,error='unavailable')=>{const h={...headers(p),...([429,503].includes(status)?{'Retry-After':'60'}:{})};return cors?json({error},status,h):new Response(null,{status:303,headers:{...h,Location:'https://otpanda.github.io/app/#auth=retry'}});};
   if(url.origin!==API||!allowed)return json({error:'not_found'},404);
