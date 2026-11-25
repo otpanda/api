@@ -1,0 +1,70 @@
+name: One isolated synthetic TOTP CPU qualification
+on:
+  push:
+    branches: [qualify/totp-cpu-once]
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-totp-cpu-once
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      WRANGLER_SEND_METRICS: 'false'
+      QUALIFICATION_NAME: otpanda-totp-cpu-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Prepare synthetic-only Worker
+        run: |
+          mkdir -p /tmp/totp-cpu
+          base64 -d > /tmp/totp-cpu/source.tgz <<'PAYLOAD'
+          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
+          PAYLOAD
+          tar -xzf /tmp/totp-cpu/source.tgz -C /tmp/totp-cpu
+          node --input-type=module <<'JS'
+          import {writeFileSync} from 'node:fs';
+          writeFileSync('/tmp/totp-cpu/wrangler.json',JSON.stringify({name:process.env.QUALIFICATION_NAME,main:'worker.mjs',compatibility_date:'2026-11-01',workers_dev:true,observability:{enabled:true}}));
+          JS
+      - name: Deploy isolated fixture without bindings or production changes
+        run: npx wrangler deploy --config /tmp/totp-cpu/wrangler.json
+      - name: One bounded 36-request synthetic batch
+        run: |
+          mkdir -p qualification-evidence
+          node --input-type=module <<'JS' | tee qualification-evidence/check.log
+          const base='https://'+process.env.QUALIFICATION_NAME+'.abrahammurciano.workers.dev';
+          console.log('qualification_url='+base);
+          for(const entries of [1,5,10,20])for(const algorithm of ['SHA-1','SHA-256','SHA-512'])for(let i=0;i<3;i++){
+            const r=await fetch(base+'/?entries='+entries+'&algorithm='+algorithm,{signal:AbortSignal.timeout(15000)});
+            console.log(JSON.stringify({entries,algorithm,request:i+1,status:r.status,body:await r.text()}));
+          }
+          JS
+      - name: Bounded metrics inspection window
+        run: sleep 360
+      - name: Always delete isolated Worker and verify absence
+        if: always()
+        run: |
+          mkdir -p qualification-evidence
+          node --input-type=module <<'JS' | tee qualification-evidence/cleanup.log
+          const name=process.env.QUALIFICATION_NAME;
+          if(!/^otpanda-totp-cpu-\d+$/.test(name))throw Error('name safety');
+          const url='https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID+'/workers/scripts/'+name;
+          const headers={Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN};
+          const d=await fetch(url,{method:'DELETE',headers});console.log('delete_status='+d.status);
+          const r=await fetch(url,{headers});console.log('verify_absent_status='+r.status);
+          if((!d.ok&&d.status!==404)||r.status!==404)throw Error('cleanup not confirmed');
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: synthetic-totp-cpu-${{ github.run_id }}
+          path: qualification-evidence
+          retention-days: 3
