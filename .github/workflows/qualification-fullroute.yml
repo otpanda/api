@@ -1,0 +1,60 @@
+name: Isolated synthetic cap5 mounted-route CPU qualification
+on:
+  push:
+    branches: [qualify/totp-mounted-cap5]
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-mounted-cap5-once
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      WRANGLER_SEND_METRICS: 'false'
+      QUALIFICATION_NAME: otpanda-totp-mounted-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Prepare isolated synthetic Worker and create temporary D1
+        run: |
+          mkdir -p /tmp/mounted qualification-evidence
+          cat tool/qualification/payload1.b64 tool/qualification/payload2.b64 | base64 -d | tar xz -C /tmp/mounted
+          node --input-type=module <<'JS'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const response=await fetch('https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID+'/d1/database',{method:'POST',headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({name:process.env.QUALIFICATION_NAME})});const result=await response.json(),d=result.result;if(!response.ok||!d?.uuid)throw Error('temporary D1 create failed');writeFileSync('/tmp/newdb.json',JSON.stringify(d));
+          writeFileSync('/tmp/mounted/wrangler.json',JSON.stringify({name:process.env.QUALIFICATION_NAME,main:'bundle.mjs',compatibility_date:'2026-11-23',workers_dev:true,observability:{enabled:true},d1_databases:[{binding:'DB',database_name:process.env.QUALIFICATION_NAME,database_id:d.uuid,migrations_dir:'migrations'}],ratelimits:['IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT'].map((name,i)=>({name,namespace_id:String(9800+i),simple:{limit:1000,period:60}}))}));
+          console.log('temporary_database_id='+d.uuid);
+          JS
+          npx --yes wrangler@4.166.0 d1 migrations apply "$QUALIFICATION_NAME" --remote --config /tmp/mounted/wrangler.json
+          npx --yes wrangler@4.166.0 d1 execute "$QUALIFICATION_NAME" --remote --file /tmp/mounted/seed.sql --config /tmp/mounted/wrangler.json
+      - name: Deploy isolated full mounted route
+        run: npx --yes wrangler@4.166.0 deploy --config /tmp/mounted/wrangler.json
+      - name: Bounded real-session cap5 reads
+        run: |
+          node --input-type=module <<'JS' | tee qualification-evidence/check.log
+          import {readFileSync} from 'node:fs';const f=JSON.parse(readFileSync('/tmp/mounted/fixture.json','utf8')),base='https://'+process.env.QUALIFICATION_NAME+'.abrahammurciano.workers.dev';
+          console.log('qualification_url='+base);
+          for(let i=0;i<18;i++){const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text(),b=JSON.parse(text);console.log(JSON.stringify({request:i+1,status:r.status,entries:b.entries?.length,codeCounts:b.entries?.map(e=>e.codes.length),bytes:text.length}));if(r.status!==200||b.entries?.length!==5)throw Error('mounted route failed');}
+          JS
+      - name: Bounded metrics inspection window
+        run: sleep 420
+      - name: Always delete isolated Worker and D1 and verify absence
+        if: always()
+        run: |
+          node --input-type=module <<'JS' | tee qualification-evidence/cleanup.log
+          import {readFileSync,existsSync} from 'node:fs';const name=process.env.QUALIFICATION_NAME;if(!/^otpanda-totp-mounted-\d+$/.test(name))throw Error('name safety');const root='https://api.cloudflare.com/client/v4/accounts/'+process.env.CLOUDFLARE_ACCOUNT_ID,headers={Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN};for(const path of ['/workers/scripts/'+name,...(existsSync('/tmp/newdb.json')?['/d1/database/'+JSON.parse(readFileSync('/tmp/newdb.json','utf8')).uuid]:[])]){const d=await fetch(root+path,{method:'DELETE',headers}),r=await fetch(root+path,{headers});console.log(JSON.stringify({path,deleteStatus:d.status,verifyAbsentStatus:r.status}));if((!d.ok&&d.status!==404)||r.status!==404)throw Error('cleanup not confirmed');}
+          JS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: synthetic-mounted-cap5-${{ github.run_id }}
+          path: qualification-evidence
+          retention-days: 3
