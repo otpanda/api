@@ -23,8 +23,8 @@ export function createEntryApplication({db,sessions,sources,metadata,access,toke
    const auth=await sessions.authenticate(request,{mutation:request.method!=='GET'});
    if(!auth)return json({error:'unauthorized'},401);
    if(url.pathname==='/v1/manage/entries'&&request.method==='GET'){
-    const rows=await db.prepare('SELECT e.entry_id,e.service_id,e.label,e.account_name,e.owner_id AS capability_owner,s.name AS service_name,s.icon_key FROM entries e JOIN services s ON s.service_id=e.service_id WHERE e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL) ORDER BY e.entry_id LIMIT 100').bind(auth.ownerId).all();if(!await sessions.authenticate(request))return json({error:'unauthorized'},401);
-    return json({entries:rows.results.map(({capability_owner,...entry})=>({...entry,capabilities:{manage:capability_owner===auth.ownerId}}))});
+    const rows=await db.prepare('SELECT e.entry_id,e.service_id,e.label,e.account_name,e.catalog_id,e.owner_id AS capability_owner,s.name AS service_name,s.icon_key FROM entries e JOIN services s ON s.service_id=e.service_id WHERE e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL) ORDER BY e.entry_id LIMIT 100').bind(auth.ownerId).all();if(!await sessions.authenticate(request))return json({error:'unauthorized'},401);
+    return json({entries:rows.results.map(({capability_owner,catalog_id,...entry})=>({...entry,...(catalog_id===null||catalog_id===undefined?{}:{catalogId:catalog_id}),capabilities:{manage:capability_owner===auth.ownerId}}))});
    }
    if(url.pathname==='/v1/manage/unassigned'&&request.method==='GET'){
     const records=await sources.unassignedForOwner(auth.ownerId,clock());
