@@ -56,7 +56,8 @@ export function createTotpManagementHttp({db,sessions,getSeedCipher,clock=Date.n
     db.prepare(`INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,account_name) SELECT ?1,?2,?3,?4,?5,?6 WHERE ?9>?5 AND EXISTS(SELECT 1 FROM device_sessions d ${SESSION_METHOD_JOIN} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?7 AND d.owner_id=?2 AND d.generation=?8 AND s.generation=?8 AND d.revoked_at IS NULL AND d.expires_at>?5 AND ${SESSION_METHOD_ACTIVE.replaceAll('?3','?5')})`).bind(entryId,user.ownerId,'custom-totp',value.label.trim(),now,value.account.trim()||null,user.deviceId,user.generation,user.expiresAt),
     db.prepare('INSERT INTO totp_seeds(owner_id,entry_id,envelope,created_at,updated_at) SELECT ?1,?2,?3,?4,?4 WHERE EXISTS(SELECT 1 FROM entries WHERE owner_id=?1 AND entry_id=?2)').bind(user.ownerId,entryId,JSON.stringify(envelope),now),
    ]);
-   return rows[2].meta.changes===1?reply({entryId},201):reply({error:'unauthorized'},401);
+   // exact-count-ok: rows[2] inserts totp_seeds, which has no row-writing trigger.
+   return rows[2]/*exact-count-ok: untriggered totp_seeds insert*/.meta.changes===1?reply({entryId},201):reply({error:'unauthorized'},401);
   }catch{return reply({error:'unavailable'},503);}
  }};
-}
+   }
