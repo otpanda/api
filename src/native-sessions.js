@@ -58,12 +58,28 @@ export class NativeSessionService{
  }
  // Provider (Google) native device. The identity link, generation and "extra verification" gate are re-checked inside the write;
  // a protected owner (new_device_verification) is refused so the browser flow, which can verify, must be used.
- async issueProvider({ownerId,generation,issuer,subject,renewalKey}){
+ // recognition: {id,digest} presented by this install (same recognized_browsers row web uses). newRecognition: {id,digest} to record in the same batch.
+ async issueProvider({ownerId,generation,issuer,subject,renewalKey,recognition,newRecognition}){
   if(!await importRenewalKey(renewalKey)||typeof ownerId!=='string'||!Number.isSafeInteger(generation)||typeof issuer!=='string'||typeof subject!=='string')return undefined;
   const at=this.now(),dev=generateAccessToken().tokenId,access=generateAccessToken(),hash=digestToHex(await digestSecret(access.secret));
   const link=`(SELECT g.identity_id FROM provider_identities g WHERE g.issuer=?7 AND g.subject=?8 AND g.owner_id=?2 AND g.revoked_at IS NULL)`;
   const results=await this.db.batch([
-   this.db.prepare(`INSERT INTO device_sessions (device_id,owner_id,credential_id,provider_identity_id,generation,client_kind,created_at,last_used_at,expires_at) SELECT ?1,?2,NULL,${link},?4,'${KIND}',?5,?5,?6 WHERE ${link} IS NOT NULL AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?2 AND s.generation=?4) AND (SELECT count(*) FROM device_sessions WHERE owner_id=?2 AND revoked_at IS NULL AND expires_at>?5)<${MAX_DEVICES} AND NOT EXISTS(SELECT 1 FROM new_device_verification v WHERE v.owner_id=?2)`).bind(dev,ownerId,null,generation,at,at+IDLE,issuer,subject),
+   this.db.prepare(`INSERT INTO device_sessions (device_id,owner_id,credential_id,provider_identity_id,generation,client_kind,created_at,last_used_at,expires_at) SELECT ?1,?2,NULL,${link},?4,'${KIND}',?5,?5,?6 WHERE ${link} IS NOT NULL AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?2 AND s.generation=?4) AND (SELECT count(*) FROM device_sessions WHERE owner_id=?2 AND revoked_at IS NULL AND expires_at>?5)<${MAX_DEVICES} AND (NOT EXISTS(SELECT 1 FROM new_device_verification v WHERE v.owner_id=?2) OR EXISTS(SELECT 1 FROM recognized_browsers r WHERE r.recognition_id=?9 AND r.secret_digest=?10 AND r.owner_id=?2 AND r.generation=?4 AND r.revoked_at IS NULL AND r.provider_identity_id=${link}))`).bind(dev,ownerId,null,generation,at,at+IDLE,issuer,subject,recognition?.id??'',recognition?.digest??''),
+   this.db.prepare('INSERT INTO native_keys (device_id,public_key,created_at) SELECT ?1,?2,?3 WHERE EXISTS(SELECT 1 FROM device_sessions WHERE device_id=?1)').bind(dev,renewalKey,at),
+   this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS(SELECT 1 FROM native_keys WHERE device_id=?3)').bind(access.tokenId,hash,dev,at,at+ACCESS),
+   this.db.prepare('INSERT INTO recognized_browsers (recognition_id,secret_digest,owner_id,provider_identity_id,generation,created_at) SELECT ?1,?2,d.owner_id,d.provider_identity_id,d.generation,?4 FROM device_sessions d WHERE length(?1)>0 AND d.device_id=?3 AND d.provider_identity_id IS NOT NULL AND EXISTS(SELECT 1 FROM device_access_handles WHERE device_id=?3)').bind(newRecognition?.id??'',newRecognition?.digest??'',dev,at),
+  ]);
+  if(results[2].meta.changes<1)return undefined;
+  return {deviceId:dev,access:access.token,accessExpiresAt:at+ACCESS,idleExpiresAt:at+IDLE,recorded:!!newRecognition&&results[3].meta.changes>=1};
+ }
+ // Passkey native device: proof comes from a just-verified discoverable assertion (<=120 s). Credential, generation and device cap are
+ // re-checked inside the write. A passkey is itself a strong method, so the extra-verification gate does not apply.
+ async issuePasskey({proof,renewalKey}){
+  if(!await importRenewalKey(renewalKey)||!proof||proof.purpose!=='authenticate'||typeof proof.ownerId!=='string'||typeof proof.credentialId!=='string'||!Number.isSafeInteger(proof.generation)||!Number.isSafeInteger(proof.verifiedAt))return undefined;
+  const at=this.now();if(proof.verifiedAt>at||at-proof.verifiedAt>=120_000)return undefined;
+  const dev=generateAccessToken().tokenId,access=generateAccessToken(),hash=digestToHex(await digestSecret(access.secret));
+  const results=await this.db.batch([
+   this.db.prepare(`INSERT INTO device_sessions (device_id,owner_id,credential_id,provider_identity_id,generation,client_kind,created_at,last_used_at,expires_at) SELECT ?1,?2,?3,NULL,?4,'${KIND}',?5,?5,?6 WHERE EXISTS(SELECT 1 FROM passkey_credentials p WHERE p.credential_id=?3 AND p.owner_id=?2 AND p.revoked_at IS NULL) AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?2 AND s.generation=?4) AND (SELECT count(*) FROM device_sessions WHERE owner_id=?2 AND revoked_at IS NULL AND expires_at>?5)<${MAX_DEVICES}`).bind(dev,proof.ownerId,proof.credentialId,proof.generation,at,at+IDLE),
    this.db.prepare('INSERT INTO native_keys (device_id,public_key,created_at) SELECT ?1,?2,?3 WHERE EXISTS(SELECT 1 FROM device_sessions WHERE device_id=?1)').bind(dev,renewalKey,at),
    this.db.prepare('INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,?3,?4,?5 WHERE EXISTS(SELECT 1 FROM native_keys WHERE device_id=?3)').bind(access.tokenId,hash,dev,at,at+ACCESS),
   ]);

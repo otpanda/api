@@ -6,20 +6,23 @@ import {generateAccessToken,base64urlEncode} from './tokens.js';
 import {bearerToken} from './http.js';
 import {REFRESH_COOKIE} from './browser-session-http.js';
 import {NATIVE_REDIRECT} from './native-sessions.js';
+import {importRenewalKey} from './access-renewal.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',PACKAGE='app.otpanda',CSRF='__Host-otpanda_native',OPAQUE=/^[A-Za-z0-9_-]{43}$/,FP=/^([0-9A-F]{2}:){31}[0-9A-F]{2}$/;
 const none=(status,extra={})=>new Response(null,{status,headers:{...securityHeaders,'Cache-Control':'no-store',...extra}});
 async function boundedText(request,max){const reader=request.body?.getReader();if(!reader)return '';const chunks=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>max){await reader.cancel();return undefined;}chunks.push(value);}const all=new Uint8Array(size);let o=0;for(const c of chunks){all.set(c,o);o+=c.byteLength;}return new TextDecoder('utf-8',{fatal:true}).decode(all);}catch{return undefined;}finally{reader.releaseLock();}}
-async function jsonBody(request,keys){
- if(request.headers.get('content-type')!=='application/json'||Number(request.headers.get('content-length')??0)>4096)return undefined;
- const text=await boundedText(request,4096);if(text===undefined)return undefined;
+async function jsonBody(request,keys,max=4096){
+ if(request.headers.get('content-type')!=='application/json'||Number(request.headers.get('content-length')??0)>max)return undefined;
+ const text=await boundedText(request,max);if(text===undefined)return undefined;
  let d;try{d=JSON.parse(text);}catch{return undefined;}
  return d&&typeof d==='object'&&!Array.isArray(d)&&keys.includes(Object.keys(d).sort().join(','))?d:undefined;
 }
 const failure=(status,error)=>json({error},status,{'Cache-Control':'no-store'});
 // intent binding: the form carries a digest of the cookie token plus the exact native intent
 const bindOf=(token,challenge,state)=>hashText(JSON.stringify(['native-approve-v1',token,challenge,state,NATIVE_REDIRECT]));
-function page(nonce,body,extra={}){return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OTPanda</title><style nonce="${nonce}">body{font:16px system-ui,sans-serif;margin:2rem auto;max-width:28rem;padding:0 1rem}button{font:inherit;padding:.7rem 1.2rem}</style></head><body>${body}</body></html>`,{headers:{...securityHeaders,'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'no-referrer','Content-Security-Policy':`default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,...extra}});}
-export function createNativeHttp({sessions,native,db,google,assetFingerprints=[],clock=Date.now}={}){
+function page(nonce,body,extra={}){return new Response(`<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OTPanda</title><style nonce="${nonce}">body{font:16px system-ui,sans-serif;margin:2rem auto;max-width:28rem;padding:0 1rem}button{font:inherit;padding:.7rem 1.2rem}</style></head><body>${body}</body></html>`,{headers:{...securityHeaders,'Content-Type':'text/html; charset=utf-8','Cache-Control':'no-store','Referrer-Policy':'same-origin','Content-Security-Policy':`default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,...extra}});}
+// Android apk-key-hash origin for each configured release signer: base64url of the SHA-256 certificate digest.
+export function androidOriginsFromFingerprints(prints=[]){return [...new Set(prints.map(p=>{const hex=String(p).replaceAll(':','');if(!/^[0-9A-Fa-f]{64}$/.test(hex))throw new TypeError('SHA-256 certificate fingerprints required');return 'android:apk-key-hash:'+base64urlEncode(Uint8Array.from(hex.match(/../g),h=>parseInt(h,16)));}))];}
+export function createNativeHttp({sessions,native,db,google,passkeys,assetFingerprints=[],clock=Date.now}={}){
  if(!sessions||!native||!db)throw new TypeError('Native dependencies required');
  const prints=assetFingerprints.map(String);if(prints.some(p=>!FP.test(p)))throw new TypeError('SHA-256 certificate fingerprints required');
  return {async fetch(request,{clientAddress}={}){
@@ -33,7 +36,7 @@ export function createNativeHttp({sessions,native,db,google,assetFingerprints=[]
    if(request.method!=='GET')return none(405);const nonce=base64urlEncode(crypto.getRandomValues(new Uint8Array(18)));
    return page(nonce,'<h1>Open the OTPanda app</h1><p>Return to the OTPanda app to finish signing in. You can close this page.</p>');
   }
-  const approve=p==='/auth/native/approve',tokenRoute=['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete'].includes(p);
+  const approve=p==='/auth/native/approve',tokenRoute=['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete'].includes(p);
   if(!approve&&!tokenRoute)return failure(404,'not_found');
   if(typeof clientAddress!=='string'||!clientAddress||clientAddress.length>128)return failure(503,'unavailable');
   if(tokenRoute){
@@ -43,10 +46,23 @@ export function createNativeHttp({sessions,native,db,google,assetFingerprints=[]
    if(p==='/auth/native/google/begin'||p==='/auth/native/google/complete'){
     if(!google?.configured)return failure(503,'unavailable');// no audience configured: fail closed
     if(p.endsWith('/begin')){if((await boundedText(request,16))!=='')return failure(400,'invalid_request');const b=await google.begin();return b?json({nonce:b.nonce,expires_at:b.expiresAt},200,{'Cache-Control':'no-store'}):failure(503,'unavailable');}
-    const d=await jsonBody(request,['id_token,renewal_key']);if(!d)return failure(400,'invalid_request');
-    const r=await google.complete({idToken:d.id_token,renewalKey:d.renewal_key});
-    if(r.status==='ok')return json({device_id:r.device.deviceId,access:r.device.access,access_expires_at:r.device.accessExpiresAt,...(r.device.enrollGrant?{enroll_grant:r.device.enrollGrant}:{})},200,{'Cache-Control':'no-store'});
+    const d=await jsonBody(request,['id_token,renewal_key','id_token,recognition,renewal_key','id_token,remember,renewal_key','id_token,recognition,remember,renewal_key']);if(!d)return failure(400,'invalid_request');
+    if((d.recognition!==undefined&&(typeof d.recognition!=='string'||d.recognition.length>200))||(d.remember!==undefined&&typeof d.remember!=='boolean'))return failure(400,'invalid_request');
+    const r=await google.complete({idToken:d.id_token,renewalKey:d.renewal_key,recognition:d.recognition,remember:d.remember});
+    if(r.status==='ok')return json({device_id:r.device.deviceId,access:r.device.access,access_expires_at:r.device.accessExpiresAt,...(r.device.enrollGrant?{enroll_grant:r.device.enrollGrant}:{}),...(r.device.recognition?{recognition:r.device.recognition}:{})},200,{'Cache-Control':'no-store'});
     return r.status==='browser_required'?failure(409,'browser_required'):r.status==='unavailable'?failure(503,'unavailable'):failure(401,'invalid_grant');
+   }
+   if(p==='/auth/native/passkey/begin'||p==='/auth/native/passkey/complete'){
+    // OS Credential Manager sign-in. Discoverable ceremony bound to this install's renewal key; no Origin, no cookie. Fails closed if not wired.
+    if(!passkeys)return failure(503,'unavailable');
+    const begin=p.endsWith('/begin'),d=await jsonBody(request,[begin?'renewal_key':'renewal_key,response,token'],16384);
+    if(!d||typeof d.renewal_key!=='string'||!d.renewal_key||d.renewal_key.length>512||!await importRenewalKey(d.renewal_key))return failure(400,'invalid_request');// bad key refused before any OS prompt
+    const binding='native-passkey-v1:'+d.renewal_key;
+    if(begin){const c=await passkeys.begin({purpose:'authenticate',binding});return c?json({token:c.token,options:c.options,expires_at:c.expiresAt},200,{'Cache-Control':'no-store'}):failure(503,'unavailable');}
+    if(typeof d.token!=='string'||d.token.length>200||!d.response||typeof d.response!=='object'||Array.isArray(d.response))return failure(400,'invalid_request');
+    let proof;try{proof=await passkeys.finishAuthentication({token:d.token,binding,response:d.response});}catch{return failure(401,'invalid_grant');}
+    const dev=proof&&await native.issuePasskey({proof,renewalKey:d.renewal_key});
+    return dev?json({device_id:dev.deviceId,access:dev.access,access_expires_at:dev.accessExpiresAt},200,{'Cache-Control':'no-store'}):failure(401,'invalid_grant');
    }
    if(p==='/auth/native/exchange'){
     const d=await jsonBody(request,['code,redirect_uri,renewal_key,verifier']);if(!d)return failure(400,'invalid_request');
