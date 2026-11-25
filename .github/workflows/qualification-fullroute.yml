@@ -37,6 +37,8 @@ jobs:
           npx --yes wrangler@4.166.0 d1 execute "$QUALIFICATION_NAME" --remote --file /tmp/mounted/seed.sql --config /tmp/mounted/wrangler.json
       - name: Deploy isolated full mounted route
         run: npx --yes wrangler@4.166.0 deploy --config /tmp/mounted/wrangler.json
+      - name: Allow new isolated hostname propagation
+        run: sleep 15
       - name: Bounded real-session cap5 reads
         run: |
           set -o pipefail
@@ -46,6 +48,7 @@ jobs:
           let failures=0;for(let i=0;i<24;i++){await new Promise(r=>setTimeout(r,1500));const r=await fetch(base+'/v1/manage/totp-codes?'+f.ids.map(id=>'entry='+id).join('&'),{headers:{Authorization:'Bearer '+f.access},signal:AbortSignal.timeout(20000)});const text=await r.text();let b;try{b=JSON.parse(text)}catch{}console.log(JSON.stringify({request:i+1,status:r.status,contentType:r.headers.get('content-type'),entries:b?.entries?.length,codeCounts:b?.entries?.map(e=>e.codes.length),bytes:text.length,error:b?.entries?undefined:(b?.error||text.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').slice(0,1200))}));if(r.status!==200||b?.entries?.length!==5)failures++;}if(failures)throw Error('mounted route failures='+failures);
           JS
       - name: Bounded metrics inspection window
+        if: always()
         run: sleep 420
       - name: Always delete isolated Worker and D1 and verify absence
         if: always()
