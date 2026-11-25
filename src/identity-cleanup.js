@@ -4,7 +4,7 @@ import {cleanupRealtime} from './realtime-outbox.js';
 export const RETAIN_FAILED=7*24*60*60*1000;
 const TABLES=Object.freeze([
  ['human_email_codes','expires_at'],['pending_logins','expires_at'],['setting_changes','expires_at'],
- ['google_continuations','expires_at'],['google_enrollment_grants','expires_at'],['passkey_add_authorizations','expires_at'],['email_recovery_grants','expires_at'],['recovery_changes','expires_at'],['oauth_transactions','expires_at'],
+ ['google_continuations','expires_at'],['google_link_tickets','expires_at'],['google_enrollment_grants','expires_at'],['passkey_add_authorizations','expires_at'],['email_recovery_grants','expires_at'],['recovery_changes','expires_at'],['oauth_transactions','expires_at'],
  ['assignment_intents','result_expires_at'],
  ['browser_logout_bindings','expires_at'],['auth_challenges','expires_at'],['passkey_ceremonies','expires_at'],
  ['passkey_signups','expires_at'],['web_signup_starts','expires_at'],['signup_mail_bindings','expires_at'],['web_login_starts','expires_at'],
