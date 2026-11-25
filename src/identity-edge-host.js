@@ -12,7 +12,7 @@ const methods=new Map([['/v1/manage/totp',['POST']],['/v1/manage/totp/begin',['P
  ...['account','session','entries','active-codes','unassigned','sources'].map(p=>['/v1/manage/'+p,['GET']]),['/v1/manage/organization',['GET','PUT']],['/v1/manage/organization-copy',['POST']]
 ]);
 const corsPath=p=>((p.startsWith('/auth/google/continue/')||p.startsWith('/auth/google/protection/'))&&!p.endsWith('/complete'))||p.startsWith('/auth/recovery/email/')||p==='/auth/login/verify'||p==='/auth/exchange'||p==='/auth/renew'||p.startsWith('/v1/');
-const headers=p=>({...securityHeaders,...(corsPath(p)?{'Access-Control-Allow-Origin':APP,Vary:'Origin'}:{})});
+const headers=p=>({...securityHeaders,...(corsPath(p)?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'}:{})});
 export const isIdentityPath=p=>methods.has(p);
 const realtimeMethods=new Map([['/auth/realtime/ticket',['POST']],['/auth/realtime',['GET']]]);
 // realtime (optional): {edgeAddress, edgeGlobal} are DEDICATED rate-limit bindings for ticket mint and upgrade. They never touch
@@ -21,7 +21,7 @@ export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAdd
  let identity;
   const realtimeFetch=async(request,ctx)=>{
   const url=new URL(request.url),p=url.pathname,allowed=realtimeMethods.get(p),ticket=p==='/auth/realtime/ticket',origin=request.headers.get('origin');
-  const h={...securityHeaders,'Access-Control-Allow-Origin':APP,Vary:'Origin'};
+  const h={...securityHeaders,...(origin===APP?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'}:{})};
   const fail=(status,error='unavailable')=>json({error},status,{...h,...([429,503].includes(status)?{'Retry-After':'30'}:{})});
   if(url.origin!==API||url.search)return json({error:'not_found'},404);
   if(origin!==APP)return fail(403,'forbidden');
@@ -45,7 +45,7 @@ export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAdd
   const rt=realtime&&realtimeMethods.get(new URL(request.url).pathname);
   if(rt)return realtimeFetch(request,ctx);
   const url=new URL(request.url),p=url.pathname,allowed=methods.get(p),origin=request.headers.get('origin'),cors=corsPath(p);
-  const fail=(status,error='unavailable')=>{const h={...headers(p),...([429,503].includes(status)?{'Retry-After':'60'}:{})};return cors?json({error},status,h):new Response(null,{status:303,headers:{...h,Location:'https://otpanda.github.io/app/#auth=retry'}});};
+  const fail=(status,error='unavailable')=>{const h={...(origin===APP?headers(p):securityHeaders),...([429,503].includes(status)?{'Retry-After':'60'}:{})};return cors?json({error},status,h):new Response(null,{status:303,headers:{...h,Location:'https://otpanda.github.io/app/#auth=retry'}});};
   if(url.origin!==API||!allowed)return json({error:'not_found'},404);
   if(p.startsWith('/v1/manage/assignment/')&&url.search)return fail(400,'invalid_request');
   if(cors&&origin!==APP)return fail(403,'forbidden');

@@ -4,7 +4,7 @@ import {json,takeRateLimit,hashText} from './sessions.js';
 import {createDeviceSessionAuth} from './device-session-auth.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
 const paths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
-const cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
+const cors={'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'};
 export function createDeviceReadHttp({db,sessions,sources,access,clock=Date.now}={}){
  if(!db||!sources||!access)throw new TypeError('Read dependencies required');
  const auth=createDeviceSessionAuth({sessions});

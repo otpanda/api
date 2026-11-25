@@ -28,7 +28,7 @@ async function account(raw,email='a@example.com'){
  const e=await identity.issueEmailChallenge({purpose:'signup-email',email}),c=await signup.begin({email,emailToken:e.token,binding:'rt-'+email});
  const proof=await signup.finish({token:c.token,binding:'rt-'+email,response:a.registration({expected:c.options.challenge})});
  const issued=await new DeviceSessionService(raw).issue({proof:{...proof,purpose:'authenticate',verifiedAt:Date.now()},clientKind:'web'});
- return {ownerId:proof.ownerId,access:issued.access};
+ return {ownerId:proof.ownerId,access:issued.access,authenticator:a};
 }
 const pre=(worker,env,path,method='POST',headers='authorization')=>worker.fetch(req(path,{method:'OPTIONS',headers:{Origin:APP,'Access-Control-Request-Method':method,'Access-Control-Request-Headers':headers}}),env,{waitUntil(){}});
 test('without the full set of realtime bindings the realtime paths do not exist, preflight included, and nothing is charged',async()=>{
@@ -77,3 +77,17 @@ test('cron: */5 drains only with the hub bound, in its own invocation, within 20
  const noHub={...w.env};delete noHub.REALTIME_HUB;await worker.scheduled({cron:REALTIME_CRON},noHub,ctx);await Promise.all(waits);assert.equal(w.stub.n,0,'no hub bound: nothing runs');waits.length=0;
  const q1=w.meter.count();await worker.scheduled({cron:REALTIME_CRON},w.env,ctx);await Promise.all(waits);
  assert.ok(w.meter.count()-q1<=20,'cron D1 '+(w.meter.count()-q1));assert.ok(w.stub.n>0&&w.stub.n<=25,'cron hub '+w.stub.n);assert.ok((w.meter.count()-q1)+w.stub.n<=COMBINED_CEILING);w.raw.sqlite.close();});
+
+test('real passkey enrollment through public entry drains committed entry hint within combined ceiling; denied and begin never drain',async()=>{
+ const w=world(),worker=createAuthOnlyWorker(),{ownerId,access,authenticator:a}=await account(w.raw);
+ w.env.ACTIVE_KEY_ID='synthetic';w.env.ENCRYPTION_KEYRING=JSON.stringify([{id:'synthetic',key:Buffer.alloc(32,11).toString('base64url')}]);
+ await w.raw.prepare('INSERT OR REPLACE INTO realtime_activity VALUES (?,?)').bind(ownerId,Date.now()).run();
+ await w.raw.prepare('DELETE FROM realtime_outbox').run();const waits=[],ctx={waitUntil:p=>waits.push(p)},input={label:'Cross-device test',account:'fictional',secret:'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'};
+ const send=(path,v)=>worker.fetch(req(path,{method:'POST',headers:{Origin:APP,Authorization:'Bearer '+access,'Content-Type':'application/json'},body:JSON.stringify(v)}),w.env,ctx);
+ const begin=await send('/v1/manage/totp/begin',input);assert.equal(begin.status,200);assert.equal(waits.length,0);const challenge=await begin.json();
+ const response=a.assertion({expected:challenge.options.challenge});w.calls.length=0;const q0=w.meter.count();
+ const enrolled=await send('/v1/manage/totp',{...input,token:challenge.token,response});assert.equal(enrolled.status,201);await Promise.all(waits);assert.ok(waits.length>0);assert.equal(w.stub.n,1);
+ const total=w.calls.length+w.meter.count()-q0+w.stub.n;assert.ok(total<=COMBINED_CEILING,'total '+total);console.log('# authenticator enrollment combined calls '+total+' of45');
+ assert.equal((await w.raw.prepare('SELECT count(*) n FROM realtime_outbox').first()).n,0);assert.equal((await w.raw.prepare('SELECT count(*) n FROM totp_seeds').first()).n,1);
+ waits.length=0;assert.equal((await send('/v1/manage/totp',{...input,token:challenge.token,response})).status,403);assert.equal(waits.length,0);assert.equal(w.stub.n,1);w.raw.sqlite.close();
+});

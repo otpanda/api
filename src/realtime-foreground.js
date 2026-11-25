@@ -3,6 +3,7 @@
 import {drainSome,Budget,ROW_MIN_BUDGET,foregroundBudget,FOREGROUND_DELIVERY_MAX} from './realtime-outbox.js';
 import {createQueryMeter} from './query-meter.js';
 export const WRITERS=new Map([
+ ['POST /v1/manage/totp',[201]],
  ['POST /v1/manage/assignment/finish',[200]],['POST /auth/device/logout',[200,204,303]],['GET /auth/device/logout',[200,204,303]],
  ['POST /auth/recovery/email/complete-finish',[200,204]],['POST /v1/manage/recovery/consume-change',[200,204]],['PUT /v1/manage/organization',[200,204]],
  // Every writer of device_sessions.revoked_at and account_security.generation was audited: recovery/finish (session-revoke, passkey-revoke), consume-change,
