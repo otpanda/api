@@ -36,7 +36,7 @@ export function createNativeHttp({sessions,native,db,google,passkeys,assetFinger
    if(request.method!=='GET')return none(405);const nonce=base64urlEncode(crypto.getRandomValues(new Uint8Array(18)));
    return page(nonce,'<h1>Open the OTPanda app</h1><p>Return to the OTPanda app to finish signing in. You can close this page.</p>');
   }
-  const approve=p==='/auth/native/approve',tokenRoute=['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete'].includes(p);
+  const approve=p==='/auth/native/approve',tokenRoute=['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/google/continue/begin','/auth/native/google/continue/finish'].includes(p);
   if(!approve&&!tokenRoute)return failure(404,'not_found');
   if(typeof clientAddress!=='string'||!clientAddress||clientAddress.length>128)return failure(503,'unavailable');
   if(tokenRoute){
@@ -50,7 +50,18 @@ export function createNativeHttp({sessions,native,db,google,passkeys,assetFinger
     if((d.recognition!==undefined&&(typeof d.recognition!=='string'||d.recognition.length>200))||(d.remember!==undefined&&typeof d.remember!=='boolean'))return failure(400,'invalid_request');
     const r=await google.complete({idToken:d.id_token,renewalKey:d.renewal_key,recognition:d.recognition,remember:d.remember});
     if(r.status==='ok')return json({device_id:r.device.deviceId,access:r.device.access,access_expires_at:r.device.accessExpiresAt,...(r.device.enrollGrant?{enroll_grant:r.device.enrollGrant}:{}),...(r.device.recognition?{recognition:r.device.recognition}:{})},200,{'Cache-Control':'no-store'});
+    if(r.status==='continue_required')return json({status:'continue_required',kind:'link',continuation:r.continuation.token,email:r.continuation.email,expires_at:r.continuation.expiresAt},200,{'Cache-Control':'no-store'});
     return r.status==='browser_required'?failure(409,'browser_required'):r.status==='unavailable'?failure(503,'unavailable'):failure(401,'invalid_grant');
+   }
+   if(p==='/auth/native/google/continue/begin'||p==='/auth/native/google/continue/finish'){
+    // Existing-account Google link: passkey step-up for the OWNER, bound to the continuation made by google/complete for this install's key.
+    if(!google?.configured||typeof google.continueBegin!=='function')return failure(503,'unavailable');
+    const begin=p.endsWith('/begin'),d=await jsonBody(request,begin?['continuation,renewal_key']:['continuation,renewal_key,response,token','continuation,recognition,renewal_key,response,token'],16384);
+    if(!d||typeof d.continuation!=='string'||d.continuation.length>200||typeof d.renewal_key!=='string'||!d.renewal_key||d.renewal_key.length>512||!await importRenewalKey(d.renewal_key))return failure(400,'invalid_request');
+    if(begin){const c=await google.continueBegin({token:d.continuation,renewalKey:d.renewal_key});return c?json({token:c.token,options:c.options,expires_at:c.expiresAt},200,{'Cache-Control':'no-store'}):failure(401,'invalid_grant');}
+    if(typeof d.token!=='string'||d.token.length>200||!d.response||typeof d.response!=='object'||Array.isArray(d.response)||(d.recognition!==undefined&&(typeof d.recognition!=='string'||d.recognition.length>200)))return failure(400,'invalid_request');
+    const r=await google.continueFinish({token:d.continuation,renewalKey:d.renewal_key,ceremony:d.token,response:d.response,recognition:d.recognition});
+    return r.status==='ok'?json({device_id:r.device.deviceId,access:r.device.access,access_expires_at:r.device.accessExpiresAt,...(r.device.recognition?{recognition:r.device.recognition}:{})},200,{'Cache-Control':'no-store'}):failure(401,'invalid_grant');
    }
    if(p==='/auth/native/passkey/begin'||p==='/auth/native/passkey/complete'){
     // OS Credential Manager sign-in. Discoverable ceremony bound to this install's renewal key; no Origin, no cookie. Fails closed if not wired.

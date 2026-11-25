@@ -36,9 +36,15 @@ test('activation ON: each Android client route accepts the android token with NO
   const r=await h.fetch(req(p,{token:f.android,method:p==='/v1/manage/organization'?'PUT':'POST',body:'{}'}));assert.ok(![401,403,404,415].includes(r.status),p+' '+r.status);
   assert.equal((await h.fetch(req(p,{token:f.webAccess,method:p==='/v1/manage/organization'?'PUT':'POST',body:'{}'}))).status,401,'web token without Origin '+p);
  }
- // never native: batch codes, realtime, security, recovery, passkey, assignment, google link
- for(const [p,m] of [['/v1/manage/totp-codes','GET'],['/v1/manage/security/status','GET'],['/v1/manage/recovery/status','GET'],['/v1/manage/google/link/ticket','POST'],['/auth/realtime/ticket','POST']]){
+ // never native: batch codes, realtime
+ for(const [p,m] of [['/v1/manage/totp-codes','GET'],['/auth/realtime/ticket','POST']]){
   const r=await h.fetch(req(p,{token:f.android,method:m}));assert.ok([403,404].includes(r.status),p+' must stay refused for no-Origin native: '+r.status);
+ }
+ // Settings parity: security, recovery and google link ticket accept the android token with NO Origin, and stay segregated from web tokens and browser Origins.
+ for(const [p,m] of [['/v1/manage/security/status','GET'],['/v1/manage/recovery/status','GET'],['/v1/manage/passkey/rename','POST'],['/v1/manage/google/link/ticket','POST']]){
+  const r=await h.fetch(req(p,{token:f.android,method:m,...(m==='POST'?{body:'{}'}:{})}));assert.ok(![401,403,404,405].includes(r.status),'android '+p+' '+r.status);
+  assert.equal((await h.fetch(req(p,{token:f.webAccess,method:m,...(m==='POST'?{body:'{}'}:{})}))).status,401,'web token without Origin '+p);
+  assert.equal((await h.fetch(req(p,{token:f.android,method:m,origin:APP,...(m==='POST'?{body:'{}'}:{})}))).status,401,'android token with web Origin '+p);
  }
  for(const p of ['/v1/manage/assignment/begin','/v1/manage/assignment/finish','/v1/manage/assignment/status','/v1/manage/device-key/enroll-begin','/v1/manage/device-key/enroll-finish','/v1/manage/device-key/enroll-status','/v1/manage/device-key/adopt-begin','/v1/manage/device-key/adopt-finish','/v1/manage/device-key/add-request','/v1/manage/device-key/add-begin','/v1/manage/device-key/add-finish','/v1/manage/approval/status','/v1/manage/approval/approve-begin','/v1/manage/approval/approve-finish']){
   const r=await h.fetch(req(p,{token:f.android,method:'POST',body:'{}'}));assert.ok(![401,403,404,405,415].includes(r.status),'android '+p+' '+r.status);assert.equal(req(p,{token:f.android,method:'POST',body:'{}'}).headers.get('content-type'),'application/json','native client sends exactly application/json, no charset');

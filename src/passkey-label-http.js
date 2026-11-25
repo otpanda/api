@@ -4,8 +4,8 @@ import {normalLabel} from './passkey-providers.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'},ID=/^[A-Za-z0-9_-]{16,512}$/;
 // POST /v1/manage/passkey/rename {credentialId,label}. Web access session only, owner-scoped, live credential only. Cosmetic: grants nothing and
 // never changes authentication. Removing or revoking a passkey keeps its own step-up.
-export function createPasskeyLabelHttp({db,sessions,clock=Date.now}={}){
- const auth=createDeviceSessionAuth({sessions});
+export function createPasskeyLabelHttp({db,sessions,clock=Date.now,native=false}={}){
+ const auth=createDeviceSessionAuth({sessions,native:native===true});
  return {async fetch(request){
   const url=new URL(request.url);
   if(url.origin!==API||url.pathname!=='/v1/manage/passkey/rename')return json({error:'not_found'},404);

@@ -63,12 +63,12 @@ test('rename never touches a revoked credential; storeAaguid never overwrites an
  await storeAaguid({prepare(){throw Error('boom');}},{credentialId:'x',ownerId:'y',aaguid:BW});
  f.db.sqlite.close();
 });
-test('rename is routed through the edge host with a web Origin and refused for native no-Origin even when native is on',async()=>{
+test('rename is routed through the edge host with a web Origin and refused for a web token without Origin even when native is on (native routes need an android token)',async()=>{
  const {createIdentityEdgeHost}=await import('../src/identity-edge-host.js'),{createIdentityRuntime}=await import('../src/identity-runtime.js');
  const f=await fixture(BW),yes={limit:async()=>({success:true})};
  const host=createIdentityEdgeHost({nativeApi:true,resolveTrustedIngress:()=>'192.0.2.1',edgeAddress:yes,edgeAuthGlobal:yes,edgeReadGlobal:yes,initialize:async()=>createIdentityRuntime({db:f.db,keys:new Map(),activeKeyId:'x',trustedRequestKey:()=>'192.0.2.1',clock:()=>NOW,native:{enabled:true}})});
  const call=(origin)=>host.fetch(new Request(API+'/v1/manage/passkey/rename',{method:'POST',headers:{...(origin?{Origin:origin}:{}),Authorization:'Bearer '+f.access,'Content-Type':'application/json'},body:JSON.stringify({credentialId:f.credentialId,label:'Phone'})}));
- assert.equal((await call(APP)).status,200);assert.equal((await f.list())[0].label,'Phone');assert.equal((await call(null)).status,403);
+ assert.equal((await call(APP)).status,200);assert.equal((await f.list())[0].label,'Phone');assert.equal((await call(null)).status,401);
  const pre=await host.fetch(new Request(API+'/v1/manage/passkey/rename',{method:'OPTIONS',headers:{Origin:APP,'Access-Control-Request-Method':'POST','Access-Control-Request-Headers':'authorization, content-type'}}));assert.equal(pre.status,204);
  f.db.sqlite.close();
 });

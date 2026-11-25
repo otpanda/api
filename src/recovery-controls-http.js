@@ -7,12 +7,12 @@ import {DurableDeviceKeys} from './durable-device-keys.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
 export const RECOVERY_STEPS=['status','begin','finish','request-change','approve-begin','approve-change','consume-change','cancel-request'];
 async function body(request){const reader=request.body?.getReader();if(!reader)return;let out='',n=0;const d=new TextDecoder('utf-8',{fatal:true});try{for(;;){const r=await reader.read();if(r.done)break;n+=r.value.byteLength;if(n>24576){await reader.cancel();return;}out+=d.decode(r.value,{stream:true});}return JSON.parse(out+d.decode());}catch{return;}finally{reader.releaseLock();}}
-export function createRecoveryControlsHttp({db,sessions,clock=Date.now,passkeys=new PasskeyService(db,{clock}),service=new RecoveryControls(db,{clock}),emailRecovery=new EmailRecovery(db,{clock,passkeys}),deviceKeys=new DurableDeviceKeys(db,{clock})}={}){
- const auth=createDeviceSessionAuth({sessions});
+export function createRecoveryControlsHttp({db,sessions,clock=Date.now,passkeys=new PasskeyService(db,{clock}),service=new RecoveryControls(db,{clock}),emailRecovery=new EmailRecovery(db,{clock,passkeys}),deviceKeys=new DurableDeviceKeys(db,{clock}),native=false}={}){
+ const auth=createDeviceSessionAuth({sessions,native:native===true});
  return{async fetch(request,{clientAddress}={}){
   const u=new URL(request.url),step=u.pathname.slice('/v1/manage/recovery/'.length);
   if(u.origin!==API||!u.pathname.startsWith('/v1/manage/recovery/')||!RECOVERY_STEPS.includes(step)||u.search)return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   const method=step==='status'?'GET':'POST';
   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:{...securityHeaders,...cors,'Access-Control-Allow-Methods':method,'Access-Control-Allow-Headers':'Authorization, Content-Type'}});
   if(request.method!==method||(method==='POST'&&request.headers.get('content-type')!=='application/json'))return json({error:'invalid_request'},400,cors);
