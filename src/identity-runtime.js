@@ -95,6 +95,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
  const entryDomains=createEntryDomainsHttp({db,sessions,clock,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null});
  const entryManage=createEntryManageHttp({db,sessions,clock,native:nativeOn});
+ const realtimeExtensionHttp=realtime?.extensionLimiter&&extensionHttp?createRealtimeHttp({db,sessions,limiter:realtime.extensionLimiter,connect:realtime.connect,extension:true,extensionOrigins:extension.origins??[],clock}):undefined;
  const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,native:nativeOn,clock}):undefined;
  const deviceKey=createDeviceKeyHttp({db,sessions,enrollment:new GoogleDeviceEnrollment(db,{clock}),keys:new DurableDeviceKeys(db,{clock}),clock});
  const approvals=createApprovalsHttp({db,sessions,approvals:new EnrolledApprovals(db,{clock,keys:new DurableDeviceKeys(db,{clock})}),clock});
@@ -108,7 +109,8 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
    let handler;
-   if(url.pathname.startsWith('/auth/extension/')){handler=extensionHttp;if(!handler)return json({error:'not_found'},404);}
+   if(['/auth/extension/realtime/ticket','/auth/extension/realtime'].includes(url.pathname)){handler=realtimeExtensionHttp;if(!handler)return json({error:'not_found'},404);}
+   else if(url.pathname.startsWith('/auth/extension/')){handler=extensionHttp;if(!handler)return json({error:'not_found'},404);}
    else if(nativePaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=nativeHttp;}
    else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}
    else if(deviceKeyPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=deviceKey;}

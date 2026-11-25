@@ -128,6 +128,30 @@
         "limit": 12,
         "period": 60
       }
+    },
+    {
+      "name": "REALTIME_EXTENSION_ADDRESS_LIMIT",
+      "namespace_id": "68022011",
+      "simple": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "REALTIME_EXTENSION_GLOBAL_LIMIT",
+      "namespace_id": "68022012",
+      "simple": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "REALTIME_EXTENSION_TICKET_LIMIT",
+      "namespace_id": "68022013",
+      "simple": {
+        "limit": 12,
+        "period": 60
+      }
     }
   ]
 }
