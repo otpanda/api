@@ -21,6 +21,7 @@ export class RecoveryControls {
  constructor(db,{clock=Date.now,localVerification}={}){this.db=db;this.clock=clock;this.localVerification=typeof localVerification==='function'?localVerification:undefined;}
  get approvalAvailable(){return !!this.localVerification;}
  async googleLinked(ownerId){return !!await this.db.prepare("SELECT 1 x FROM provider_identities WHERE owner_id=?1 AND issuer=?2 AND revoked_at IS NULL").bind(ownerId,GOOGLE_ISSUER).first();}
+ async hasPasskey(ownerId){return !!await this.db.prepare('SELECT 1 x FROM passkey_credentials WHERE owner_id=?1 AND revoked_at IS NULL').bind(ownerId).first();}
  async status(user){
   const owner=user.ownerId,now=this.clock();
   const escape=!!await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(owner).first();
