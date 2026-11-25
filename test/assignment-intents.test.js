@@ -54,3 +54,15 @@ test('negative receipt is session-bound, retained and missing is never negative'
   f.setNow(NOW+600000);assert.equal(await f.intents.status(f.auth,b.intentId),undefined);
  }finally{f.db.sqlite.close();}
 });
+
+test('assignment commits when incoming-code trigger adds an outbox row to D1 change count',async()=>{
+ const f=await fixture();try{
+  const b=await f.begin();f.db.sqlite.exec('DELETE FROM realtime_outbox');
+  assert.deepEqual(await f.finish(b),{status:'assigned'});
+  assert.equal(f.db.sqlite.prepare('SELECT entry_id FROM incoming_codes').get().entry_id,f.entryId);
+  assert.equal(f.db.sqlite.prepare("SELECT count(*) n FROM realtime_outbox WHERE kind='entry' AND scope_id=?").get(f.entryId).n,1);
+  assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM assignment_receipts').get().n,1);
+  assert.deepEqual(await f.finish(b),{status:'assigned'});
+  assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM assignment_receipts').get().n,1);
+ }finally{f.db.sqlite.close();}
+});
