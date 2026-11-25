@@ -11,7 +11,7 @@ export class AssignmentIntents {
  async context(auth,sourceId,eventId,entryId){
   const now=this.now();
   if(!auth||![auth.ownerId,auth.deviceId,sourceId,eventId,entryId].every(id)||!Number.isSafeInteger(auth.generation))return;
-  return await this.db.prepare(`SELECT c.envelope,c.received_at,c.expires_at,e.label,e.account_name,e.service_id,e.mutation_revision,(SELECT count(*) FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.revoked_at IS NULL) AS recipients,(SELECT count(*) FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.revoked_at IS NULL AND m.allow_automation=1) AS automation_recipients FROM incoming_codes c JOIN sources s ON s.owner_id=c.owner_id AND s.source_id=c.source_id JOIN entries e ON e.owner_id=c.owner_id AND e.entry_id=?4 WHERE c.owner_id=?1 AND c.source_id=?2 AND c.event_id=?3 AND c.entry_id IS NULL AND s.revoked_at IS NULL AND c.received_at<=?5 AND c.expires_at>?5`).bind(auth.ownerId,sourceId,eventId,entryId,now).first();
+  return await this.db.prepare(`SELECT c.envelope,c.received_at,c.expires_at,e.label,e.account_name,e.service_id,e.mutation_revision,(SELECT count(*) FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.revoked_at IS NULL) AS recipients,((SELECT count(*) FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.revoked_at IS NULL AND m.allow_automation=1)+(SELECT count(*) FROM entry_tokens t WHERE t.entry_id=e.entry_id AND t.revoked_at IS NULL AND t.created_at<=?5 AND t.expires_at>?5)) AS automation_recipients FROM incoming_codes c JOIN sources s ON s.owner_id=c.owner_id AND s.source_id=c.source_id JOIN entries e ON e.owner_id=c.owner_id AND e.entry_id=?4 WHERE c.owner_id=?1 AND c.source_id=?2 AND c.event_id=?3 AND c.entry_id IS NULL AND s.revoked_at IS NULL AND c.received_at<=?5 AND c.expires_at>?5`).bind(auth.ownerId,sourceId,eventId,entryId,now).first();
  }
  async begin(auth,{sourceId,eventId,entryId}={}){
   const row=await this.context(auth,sourceId,eventId,entryId);if(!row)return;
@@ -22,9 +22,13 @@ export class AssignmentIntents {
   const inserted=await this.db.prepare(`INSERT INTO assignment_intents(intent_id,owner_id,device_id,generation,source_id,event_id,entry_id,entry_revision,envelope,received_at,code_expires_at,action_digest,created_at,expires_at,result_expires_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15 WHERE (SELECT count(*) FROM assignment_intents WHERE owner_id=?2 AND consumed_at IS NULL AND retired_at IS NULL AND expires_at>?13)<${MAX_PENDING} AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?3 AND d.owner_id=?2 AND d.generation=?4 AND s.generation=?4 AND d.client_kind='web' AND d.revoked_at IS NULL AND ${MA} AND d.created_at<=?13 AND d.expires_at>?13)`).bind(intentId,auth.ownerId,auth.deviceId,auth.generation,sourceId,eventId,entryId,row.mutation_revision,row.envelope,row.received_at,row.expires_at,await hashText(action),now,expiresAt,now+RECEIPT).run();
   if(inserted.meta.changes!==1)return;
   try {
+  const summary={operation:'assign-code',entryId,label:row.label,accountName:row.account_name,serviceId:row.service_id,activeRecipients:row.recipients,automationRecipients:row.automation_recipients,irreversible:true};
+  // Owner-private target: no recipient or automation disclosure exists, so the approved owner-confirm rule applies and no strong proof is
+  // issued. The zero counts are inside the hashed action; finish re-derives this only from the verified action and re-checks it in SQL.
+  if(Number(row.recipients)===0&&Number(row.automation_recipients)===0)return{intentId,expiresAt,summary,action,proofRequired:false};
   const ceremony=await this.passkeys.begin({purpose:'step-up',ownerId:auth.ownerId,binding:intentId,action:await hashText(action)});
   if(!ceremony){await this.discard(intentId,{unissued:true});return;}
-  return{intentId,token:ceremony.token,options:ceremony.options,expiresAt,summary:{operation:'assign-code',entryId,label:row.label,accountName:row.account_name,serviceId:row.service_id,activeRecipients:row.recipients,automationRecipients:row.automation_recipients,irreversible:true},action};
+  return{intentId,token:ceremony.token,options:ceremony.options,expiresAt,summary,action,proofRequired:true};
   }catch(error){await this.discard(intentId,{unissued:true});throw error;}
  }
  async discard(intentId,{unissued=false}={}){
@@ -46,21 +50,34 @@ export class AssignmentIntents {
   const now=this.now(),row=await this.db.prepare(`SELECT i.* FROM assignment_intents i WHERE i.intent_id=?1 AND i.owner_id=?3 AND i.device_id=?4 AND i.generation=?5 AND i.consumed_at IS NULL AND i.retired_at IS NULL AND i.created_at<=?2 AND i.expires_at>?2 AND ${active}`).bind(intentId,now,auth.ownerId,auth.deviceId,auth.generation).first();
   if(!row||await hashText(action)!==row.action_digest)return;
   let committed=false,claimed=false;
+  // Private only when the server-issued, hash-verified action says zero recipients and zero automation. A client cannot choose this.
+  let parsed;try{parsed=JSON.parse(action);}catch{return;}
+  const priv=Array.isArray(parsed)&&parsed[0]==='otpanda-assignment'&&parsed.length===16&&parsed[2]===intentId&&parsed[13]===0&&parsed[14]===0&&parsed[15]===true;
   try {
-  const proof=await this.passkeys.finishAuthentication({token,binding:intentId,ownerId:auth.ownerId,action:row.action_digest,response,onCeremonyClaimed:()=>{claimed=true;}});
+  let proof;
+  if(!priv){
+  proof=await this.passkeys.finishAuthentication({token,binding:intentId,ownerId:auth.ownerId,action:row.action_digest,response,onCeremonyClaimed:()=>{claimed=true;}});
   if(!proof||proof.purpose!=='step-up'||proof.ownerId!==auth.ownerId||proof.generation!==auth.generation||proof.actionDigest!==await hashText(row.action_digest))return;
+  }
   const context={ownerId:row.owner_id,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:'unassigned',receivedAt:row.received_at,expiresAt:row.code_expires_at};
   const code=await this.cipher.decrypt(JSON.parse(row.envelope),context),envelope=JSON.stringify(await this.cipher.encrypt(code,{...context,serviceId:row.entry_id}));
-  const finished=this.now();if(finished<proof.verifiedAt||finished-proof.verifiedAt>=TTL)return;
+  const finished=this.now();if(proof&&(finished<proof.verifiedAt||finished-proof.verifiedAt>=TTL))return;
   // First mark the intent only if every mutable predicate still holds. The
   // second statement writes only when that exact first statement changed1.
   // Both statements execute in one D1 batch. No intervening writer can run.
-  const guard=`i.intent_id=?1 AND i.consumed_at IS NULL AND i.retired_at IS NULL AND i.created_at<=?2 AND i.expires_at>?2 AND i.owner_id=?3 AND i.device_id=?4 AND i.generation=?5 AND ${active} AND EXISTS(SELECT 1 FROM passkey_credentials p WHERE p.credential_id=?6 AND p.owner_id=i.owner_id AND p.revoked_at IS NULL) AND EXISTS(SELECT 1 FROM incoming_codes c JOIN sources s ON s.owner_id=c.owner_id AND s.source_id=c.source_id WHERE c.owner_id=i.owner_id AND c.source_id=i.source_id AND c.event_id=i.event_id AND c.entry_id IS NULL AND c.envelope=i.envelope AND c.received_at=i.received_at AND c.expires_at=i.code_expires_at AND c.received_at<=?2 AND c.expires_at>?2 AND s.revoked_at IS NULL) AND EXISTS(SELECT 1 FROM entries e WHERE e.owner_id=i.owner_id AND e.entry_id=i.entry_id AND e.mutation_revision=i.entry_revision)`;
-  const results=await this.db.batch([
-   this.db.prepare(`UPDATE assignment_intents AS i SET consumed_at=?2 WHERE ${guard}`).bind(intentId,finished,auth.ownerId,auth.deviceId,auth.generation,proof.credentialId),
+  const guard=`i.intent_id=?1 AND i.consumed_at IS NULL AND i.retired_at IS NULL AND i.created_at<=?2 AND i.expires_at>?2 AND i.owner_id=?3 AND i.device_id=?4 AND i.generation=?5 AND ${active} AND ${priv?`NOT EXISTS(SELECT 1 FROM entry_shares m WHERE m.entry_id=i.entry_id AND m.revoked_at IS NULL) AND NOT EXISTS(SELECT 1 FROM entry_tokens t WHERE t.entry_id=i.entry_id AND t.revoked_at IS NULL AND t.created_at<=?2 AND t.expires_at>?2)`:`EXISTS(SELECT 1 FROM passkey_credentials p WHERE p.credential_id=?6 AND p.owner_id=i.owner_id AND p.revoked_at IS NULL)`} AND EXISTS(SELECT 1 FROM incoming_codes c JOIN sources s ON s.owner_id=c.owner_id AND s.source_id=c.source_id WHERE c.owner_id=i.owner_id AND c.source_id=i.source_id AND c.event_id=i.event_id AND c.entry_id IS NULL AND c.envelope=i.envelope AND c.received_at=i.received_at AND c.expires_at=i.code_expires_at AND c.received_at<=?2 AND c.expires_at>?2 AND s.revoked_at IS NULL) AND EXISTS(SELECT 1 FROM entries e WHERE e.owner_id=i.owner_id AND e.entry_id=i.entry_id AND e.mutation_revision=i.entry_revision)`;
+  // Private path has no ceremony to claim: a failed guarded batch retires the intent (definite not-assigned), never leaves it replayable.
+  if(priv)claimed=true;
+  let results;
+  try{results=await this.db.batch([
+   this.db.prepare(`UPDATE assignment_intents AS i SET consumed_at=?2 WHERE ${guard}`).bind(...[intentId,finished,auth.ownerId,auth.deviceId,auth.generation,...(priv?[]:[proof.credentialId])]),
    this.db.prepare(`UPDATE incoming_codes SET entry_id=?1,assignment='confirmed',envelope=?2 WHERE owner_id=?3 AND source_id=?4 AND event_id=?5 AND entry_id IS NULL AND envelope=?6 AND changes()=1 AND EXISTS(SELECT 1 FROM assignment_intents WHERE intent_id=?7 AND consumed_at=?8)`).bind(row.entry_id,envelope,row.owner_id,row.source_id,row.event_id,row.envelope,intentId,finished),
    this.db.prepare('INSERT INTO assignment_receipts(intent_id,assignment_changes) SELECT ?1,changes() WHERE EXISTS(SELECT 1 FROM assignment_intents WHERE intent_id=?1 AND consumed_at=?2)').bind(intentId,finished),
-  ]);
+  ]);}catch(error){
+   // Same-instant duplicate private finish: the loser's receipt CHECK rolls back only its own batch. Report the winner's committed outcome.
+   if(priv){const again=await this.status(auth,intentId);if(again?.status==='assigned')return again;}
+   throw error;
+  }
   if(results[0]/*exact-count-ok*/.meta.changes!==1||results[1].meta.changes<1)return;
   committed=true;
   return{status:'assigned'};
