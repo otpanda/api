@@ -22,7 +22,7 @@ export class ServiceMetadata {
  }
  async setEntryAccount(ownerId,entryId,accountName){
   if(accountName!==null)bounded(accountName,120);
-  const r=await this.db.prepare('UPDATE entries SET account_name = ?1 WHERE owner_id = ?2 AND entry_id = ?3').bind(accountName,ownerId,entryId).run();return r.meta.changes===1;
+  const r=await this.db.prepare('UPDATE entries SET account_name = ?1 WHERE owner_id = ?2 AND entry_id = ?3').bind(accountName,ownerId,entryId).run();return r.meta.changes>=1;
  }
  async setReceiver(ownerId,sourceId,receiver){
   const source=await this.db.prepare('SELECT kind FROM sources WHERE owner_id = ?1 AND source_id = ?2').bind(ownerId,sourceId).first();if(!source)return false;
