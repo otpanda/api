@@ -45,6 +45,8 @@ export function createRecoveryControlsHttp({db,sessions,clock=Date.now,passkeys=
   if(step==='request-change'){const c=await service.createChange({...user,kind:v.kind,target:v.target,warningAccepted:v.warningAccepted});return c?json(c,200,cors):json({error:'restart'},403,cors);}
   const action=recoveryAction(v.kind,v.target),binding=JSON.stringify(['recovery',user.deviceId,user.generation]);
   if(step==='begin'&&v.kind==='google-unlink'&&!await service.googleLinked(user.ownerId))return json({error:'not_linked'},409,cors);
+  // Defense in depth: finish and the atomic apply already need a live passkey; refuse before creating an empty ceremony.
+  if(step==='begin'&&v.kind==='google-unlink'&&!await service.hasPasskey(user.ownerId))return json({error:'no_passkey'},409,cors);
   if(step==='begin'){const c=await passkeys.begin({purpose:'step-up',ownerId:user.ownerId,binding,action});return c&&await auth.authenticate(request)?json(c,200,cors):json({error:'reauthenticate'},403,cors);}
   const proof=await passkeys.finishAuthentication({token:v.token,response:v.response,ownerId:user.ownerId,binding,action});
   const result=proof?await service.apply({user,kind:v.kind,target:v.target,proof,warningAccepted:v.warningAccepted}):undefined;
