@@ -99,3 +99,13 @@ test('auth matrix: each mode accepts only its own kind and Origin shape; extensi
  assert.throws(()=>createDeviceSessionAuth({sessions:f.sessions,extension:true,extensionOrigins:['https://x.example','chrome-extension://*']}));
  f.db.sqlite.close();
 });
+
+test('extension exchange requires its live minting web device, never null source; native migration null stays supported',async()=>{
+ for(const mode of ['null','revoked']){
+  const f=await fixture(),m=await f.ext.mint({sourceDeviceId:f.web.deviceId,challenge:await pkceChallenge(verifier),redirectUri:REDIR});assert.ok(m);
+  if(mode==='null')f.db.sqlite.prepare("UPDATE native_exchanges SET source_device_id=NULL WHERE client_kind='extension'").run();
+  else f.db.sqlite.prepare('UPDATE device_sessions SET revoked_at=? WHERE device_id=?').run(NOW,f.web.deviceId);
+  assert.equal(await f.ext.exchange({code:m.code,verifier,redirectUri:REDIR,renewalKey:(await newKey()).pub}),undefined,mode);
+  assert.equal(f.q("SELECT count(*) n FROM device_sessions WHERE client_kind='extension'").n,0);f.db.sqlite.close();
+ }
+});
