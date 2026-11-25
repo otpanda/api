@@ -1,6 +1,6 @@
 # Realtime staged rollout
 
-This source stage does not add bindings, a new cron or an app client. All realtime routes, including preflight, return404 unless REALTIME_HUB and all three dedicated rate limiters exist. Current wrangler configuration remains unchanged.
+The deployed source-only foundation did not add bindings, a new cron or an app client. All realtime routes, including preflight, return404 unless REALTIME_HUB and all three dedicated rate limiters exist. That source-only stage is now followed by the binding increment below.
 
 ## Deployment order
 
@@ -35,3 +35,26 @@ D1meta.changes includes trigger-written rows. Guarded unique-key mutations use >
 The test shim models total_changes deltas. The triggered-table guard test rejects unsafe exact checks near triggered writes, with explicit comments only for verified untriggered exceptions. tool/realtime-changes-parity-check.mjs compares the shim with local workerd D1 on22statements. Local rows_written is not Cloudflare billing evidence.
 
 One authorized isolated platform qualification succeeded on25November2026: https://github.com/otpanda/api/actions/runs/45560194195 . Synthetic writer/outbox/hint, clean4401revocation, clean4408expiry and actual hibernation eviction were observed. Temporary Worker/D1/DO resources were verified absent. This is bounded functional evidence, not broad load/capacity or billing proof, and no further cloud qualification run is part of this stage.
+
+## Binding increment
+
+This increment adds only the SQLite Durable Object class/binding and three
+native limiter bindings. It does not add a client or the five-minute drain
+cron. Routes become available when all bindings exist, so this is a runtime
+activation boundary even without a first-party client.
+
+Limits per 60 seconds: address 30, aggregate 60, authenticated device ticket 12.
+Cloudflare native limiters are approximate and per location. The aggregate
+binding is not a strict worldwide counter or a spending cap. Namespace IDs
+68022008 through 68022010 are separate from existing signup/identity limiters.
+The hub retains at most 16 sockets per account and closes sockets at access
+expiry. Relevant successful identity writes also begin the existing bounded foreground
+drain once the hub is bound. Without the five-minute cron, delayed outbox rows
+can wait for a later foreground drain. No mailbox, OAuth, sharing or
+data-recipient permission changes.
+
+Rollback: remove the three limiter bindings or the hub binding and deploy to
+return guarded routes to 404. Keep the Durable Object class migration history;
+do not reuse its tag or attempt to undo it by deleting persisted objects.
+Migration0037 and its trigger write costs remain. Code rollback floor is
+82ad9aa (the count precursor), not older exact-change-count code.
