@@ -1,7 +1,7 @@
 name: Isolated WebCrypto route baseline comparison
 on:
   push:
-    branches: [qualify/totp-mounted-noble-paused]
+    branches: [qualify/totp-mounted-cap5]
 permissions:
   contents: read
 concurrency:
