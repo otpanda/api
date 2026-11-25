@@ -76,3 +76,37 @@ test('reads on web, native and extension sessions show catalogId to owner and re
    assert.equal(e1.catalogId,'github.com',t);assert.equal('catalog_id' in e1,false);
    if(t!=='rcpt'){const e2=entries.find(e=>e.entry_id==='e2');assert.equal('catalogId' in e2,false,'omitted when absent');}}
  }finally{f.db.sqlite.close();}});
+const uri=(issuer,prefix=true)=>('otpauth://totp/'+(issuer&&prefix?encodeURIComponent(issuer)+':':'')+'a%40example.test?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ'+(issuer?'&issuer='+encodeURIComponent(issuer):''));
+test('scanned issuer comes only from a validated otpauth URI, is bound by the passkey action, survives rename, manual and legacy rows stay NULL',async()=>{
+ const f=await fx();try{
+  const moz={...f.base,secret:uri('Mozilla')},other={...f.base,secret:uri('Mozilla Firefox')},none={...f.base,secret:uri(null)};
+  assert.equal((await f.enroll(moz,other,2)).status,403,'issuer changed between begin and finish');
+  assert.equal((await f.enroll(moz,none,3)).status,403,'issuer dropped at finish');
+  assert.equal((await f.enroll(none,moz,4)).status,403,'issuer added at finish');
+  for(const t of ['entries','totp_seeds','service_routes'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+t).first()).n,0,t);
+  const r=await f.enroll(moz,moz,5);assert.equal(r.status,201);const {entryId}=await r.json();
+  const row=()=>f.db.prepare('SELECT service_id,catalog_id,issuer,label FROM entries WHERE entry_id=?').bind(entryId).first();
+  assert.deepEqual({...await row()},{service_id:'custom-totp',catalog_id:null,issuer:'Mozilla',label:'Test'});
+  await f.db.prepare("UPDATE entries SET label='Mozilla Firefox' WHERE entry_id=?").bind(entryId).run();
+  assert.deepEqual({...await row()},{service_id:'custom-totp',catalog_id:null,issuer:'Mozilla',label:'Mozilla Firefox'},'rename touches only label');
+  assert.equal((await f.db.prepare("SELECT count(*) n FROM services WHERE name LIKE 'Mozilla%'").first()).n,0,'issuer never reaches services');
+  const manual=await f.enroll(f.base,f.base,6);assert.equal(manual.status,201);assert.equal((await f.db.prepare('SELECT issuer FROM entries WHERE entry_id=?').bind((await manual.json()).entryId).first()).issuer,null,'manual key: NULL');
+  const noIssuerUri=await f.enroll(none,none,7);assert.equal(noIssuerUri.status,201);assert.equal((await f.db.prepare('SELECT issuer FROM entries WHERE entry_id=?').bind((await noIssuerUri.json()).entryId).first()).issuer,null,'URI without issuer: NULL');
+  // a request member named issuer is not accepted (the issuer is never client-asserted)
+  assert.equal((await f.send('/v1/manage/totp/begin',{...f.base,issuer:'Mozilla'})).status,400);
+  assert.throws(()=>f.db.sqlite.prepare("INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,issuer) VALUES ('x','owner','custom-totp','L',1,' pad ')").run());
+ }finally{f.db.sqlite.close();}});
+test('reads show issuer on web, native, extension and recipient only when set; legacy and absent omit it',async()=>{
+ const f=await fx();try{
+  await f.db.prepare("INSERT INTO services(service_id,name) VALUES ('custom-totp','Authenticator') ON CONFLICT DO NOTHING").run();
+  const ins=(id,iss)=>f.db.prepare("INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,issuer) VALUES (?,'owner','custom-totp','Renamed',1,?)").bind(id,iss).run();
+  await ins('e1','Mozilla');await ins('e2',null);await f.db.prepare("INSERT INTO entry_shares(entry_id,recipient_id,created_at) VALUES ('e1','rcpt',1)").run();
+  const kinds={web:['owner','web'],and:['owner','android'],ext:['owner','extension'],rcpt:['rcpt','web']};
+  const sessions={authenticate:async t=>kinds[t]?{ownerId:kinds[t][0],deviceId:'d',generation:0,clientKind:kinds[t][1],expiresAt:999999}:undefined};
+  const http=createDeviceReadHttp({db:f.db,sessions,sources:{},access:{},clock:()=>59000,native:true,extensionOrigins:[EXTO]});
+  const get=(t,origin)=>http.fetch(new Request(API+'/v1/manage/entries',{headers:{...(origin?{origin}:{}),authorization:'Bearer '+t}}),{clientAddress:'1.1.1.1'});
+  for(const [t,o] of [['web',APP],['and',undefined],['ext',undefined],['ext',EXTO],['rcpt',APP]]){
+   const {entries}=await (await get(t,o)).json(),e1=entries.find(e=>e.entry_id==='e1');
+   assert.equal(e1.issuer,'Mozilla',t);assert.equal(e1.label,'Renamed');assert.equal('catalogId' in e1,false);
+   if(t!=='rcpt')assert.equal('issuer' in entries.find(e=>e.entry_id==='e2'),false,'NULL omitted');}
+ }finally{f.db.sqlite.close();}});

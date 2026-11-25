@@ -31,16 +31,16 @@ export function createTotpManagementHttp({db,sessions,getSeedCipher,clock=Date.n
   try{
    const rate=await takeRateLimit(db,'totp-create:'+clientAddress,{now:clock(),limit:15});if(!rate.allowed)return reply({error:'rate_limited'},429);
    const user=await auth.authenticate(request);if(!user)return reply({error:'unauthorized'},401);
-   let value,secret,algorithm='SHA-1',digits=6,period=30;
+   let value,secret,algorithm='SHA-1',digits=6,period=30,issuer=null;
    try{
     value=await bodyOf(request);
     if(!value||Array.isArray(value)||![u.pathname.endsWith('/begin')?'account,label,secret':'account,label,response,secret,token',u.pathname.endsWith('/begin')?'account,catalogId,label,secret':'account,catalogId,label,response,secret,token'].includes(Object.keys(value).sort().join(','))||(Object.hasOwn(value,'catalogId')&&(typeof value.catalogId!=='string'||!CATALOG_ID.test(value.catalogId)))||typeof value.label!=='string'||!value.label.trim()||value.label.length>120||typeof value.account!=='string'||value.account.length>120||typeof value.secret!=='string'||value.secret.length>2048)throw Error();
-    if(value.secret.startsWith('otpauth:')){const p=parseTotpUri(value.secret);secret=p.secretBytes();({algorithm,digits,period}=p);}
+    if(value.secret.startsWith('otpauth:')){const p=parseTotpUri(value.secret);secret=p.secretBytes();({algorithm,digits,period}=p);issuer=typeof p.issuer==='string'&&p.issuer.trim()&&p.issuer.length<=254?p.issuer:null;}
     else secret=decodeBase32(value.secret.replaceAll(' ','').replaceAll('-',''));
     if(secret.byteLength<10||secret.byteLength>128)throw Error();
    }catch{return reply({error:'invalid_request'},400);}
    const binding=JSON.stringify(['totp-create',user.deviceId,user.generation]);
-   const action='totp-create:'+await hashText(JSON.stringify([value.label,value.account,base64urlEncode(secret),algorithm,digits,period,...(Object.hasOwn(value,'catalogId')?[value.catalogId]:[])]));
+   const action='totp-create:'+await hashText(JSON.stringify([value.label,value.account,base64urlEncode(secret),algorithm,digits,period,...(Object.hasOwn(value,'catalogId')?[value.catalogId]:[]),...(issuer!==null?[{issuer}]:[])]));
    if(u.pathname.endsWith('/begin')){
     secret.fill(0);value.secret='';
     if(!(await db.prepare('SELECT count(*) n FROM passkey_credentials WHERE owner_id=?1 AND revoked_at IS NULL').bind(user.ownerId).first()).n)return reply({error:'passkey_required'},409);
@@ -55,7 +55,7 @@ export function createTotpManagementHttp({db,sessions,getSeedCipher,clock=Date.n
    const now=clock();
    const rows=await db.batch([
     db.prepare("INSERT OR IGNORE INTO services(service_id,name) VALUES ('custom-totp','Authenticator')"),
-    db.prepare(`INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,account_name,catalog_id) SELECT ?1,?2,?3,?4,?5,?6,?10 WHERE ?9>?5 AND EXISTS(SELECT 1 FROM device_sessions d ${SESSION_METHOD_JOIN} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?7 AND d.owner_id=?2 AND d.generation=?8 AND s.generation=?8 AND d.revoked_at IS NULL AND d.expires_at>?5 AND ${SESSION_METHOD_ACTIVE.replaceAll('?3','?5')})`).bind(entryId,user.ownerId,'custom-totp',value.label.trim(),now,value.account.trim()||null,user.deviceId,user.generation,user.expiresAt,Object.hasOwn(value,'catalogId')?value.catalogId:null),
+    db.prepare(`INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,account_name,catalog_id,issuer) SELECT ?1,?2,?3,?4,?5,?6,?10,?11 WHERE ?9>?5 AND EXISTS(SELECT 1 FROM device_sessions d ${SESSION_METHOD_JOIN} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?7 AND d.owner_id=?2 AND d.generation=?8 AND s.generation=?8 AND d.revoked_at IS NULL AND d.expires_at>?5 AND ${SESSION_METHOD_ACTIVE.replaceAll('?3','?5')})`).bind(entryId,user.ownerId,'custom-totp',value.label.trim(),now,value.account.trim()||null,user.deviceId,user.generation,user.expiresAt,Object.hasOwn(value,'catalogId')?value.catalogId:null,issuer),
     db.prepare('INSERT INTO totp_seeds(owner_id,entry_id,envelope,created_at,updated_at) SELECT ?1,?2,?3,?4,?4 WHERE EXISTS(SELECT 1 FROM entries WHERE owner_id=?1 AND entry_id=?2)').bind(user.ownerId,entryId,JSON.stringify(envelope),now),
    ]);
    // exact-count-ok: rows[2] inserts totp_seeds, which has no row-writing trigger.
