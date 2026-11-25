@@ -23,7 +23,7 @@ export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...
  return{async fetch(request,env,ctx){
   const u=new URL(request.url);if(u.origin!==API)return json({error:'not_found'},404);
   if(signupPaths.has(u.pathname))return signup.fetch(request,env,ctx);
-  if(['/auth/google/start','/auth/callback'].includes(u.pathname)||u.pathname.startsWith('/auth/google/continue/')||u.pathname.startsWith('/auth/google/protection/')){
+  if(['/auth/google/start','/auth/google/link/start','/auth/callback'].includes(u.pathname)||u.pathname.startsWith('/auth/google/continue/')||u.pathname.startsWith('/auth/google/protection/')){
    const current=[env?.DB,env?.ACTIVE_KEY_ID,env?.ENCRYPTION_KEYRING,env?.GOOGLE_CLIENT_ID,env?.GOOGLE_CLIENT_SECRET,env?.IDENTITY_ADDRESS_LIMIT,env?.IDENTITY_AUTH_GLOBAL_LIMIT,env?.BREVO_API_KEY,env?.BREVO_SENDER_EMAIL,env?.BREVO_REPLY_TO_EMAIL];if(googleConfiguration&&current.some((v,i)=>v!==googleConfiguration[i]))return createIdentityEdgeHost().fetch(request);googleConfiguration??=current;
    google??=createIdentityEdgeHost({resolveTrustedIngress,edgeAddress:env?.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env?.IDENTITY_AUTH_GLOBAL_LIMIT,initialize:async()=>{const runtime=await createGoogleBrowserRuntime({db:env.DB,...await importBrowserKeyring(env),clientId:env.GOOGLE_CLIENT_ID,clientSecret:env.GOOGLE_CLIENT_SECRET,clock,mail:{apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL,fetchImpl},oauthOptions:{[oauth.customFetch]:fetchImpl}});return{fetch:async request=>runtime.fetch(request,{clientAddress:await resolveTrustedIngress(request)})};}});
    return google.fetch(request);
