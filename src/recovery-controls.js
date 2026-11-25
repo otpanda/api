@@ -1,3 +1,4 @@
+import {providerName} from './passkey-providers.js';
 // Recovery controls for an authenticated web session. Every mutation needs a
 // fresh passkey step-up bound to the exact action text, owner and generation.
 // Email, Google and remembered cookies are never proof here. All passkeys are
@@ -26,8 +27,8 @@ export class RecoveryControls {
   const owner=user.ownerId,now=this.clock();
   const escape=!!await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(owner).first();
   const protection=!!await this.db.prepare('SELECT 1 x FROM new_device_verification WHERE owner_id=?1').bind(owner).first();
-  const passkeys=(await this.db.prepare('SELECT credential_id id,created_at createdAt,last_used_at lastUsedAt FROM passkey_credentials WHERE owner_id=?1 AND revoked_at IS NULL ORDER BY created_at LIMIT 20').bind(owner).all()).results;
-  const sessions=(await this.db.prepare('SELECT device_id id,client_kind clientKind,created_at createdAt,last_used_at lastUsedAt FROM device_sessions WHERE owner_id=?1 AND generation=?2 AND revoked_at IS NULL AND expires_at>?3 ORDER BY created_at LIMIT 50').bind(owner,user.generation,now).all()).results.map(s=>({...s,current:s.id===user.deviceId}));
+  const passkeys=(await this.db.prepare('SELECT p.credential_id id,p.created_at createdAt,p.last_used_at lastUsedAt,m.aaguid,m.label FROM passkey_credentials p LEFT JOIN passkey_metadata m ON m.credential_id=p.credential_id AND m.owner_id=p.owner_id WHERE p.owner_id=?1 AND p.revoked_at IS NULL ORDER BY p.created_at LIMIT 20').bind(owner).all()).results.map(({aaguid,label,...p})=>({...p,provider:providerName(aaguid),label:label??null}));
+  const sessions=(await this.db.prepare('SELECT d.device_id id,d.client_kind clientKind,d.created_at createdAt,d.last_used_at lastUsedAt,i.browser,i.os,i.name FROM device_sessions d LEFT JOIN device_session_info i ON i.device_id=d.device_id AND i.owner_id=d.owner_id WHERE d.owner_id=?1 AND d.generation=?2 AND d.revoked_at IS NULL AND d.expires_at>?3 ORDER BY d.created_at LIMIT 50').bind(owner,user.generation,now).all()).results.map(s=>({...s,browser:s.browser??null,os:s.os??null,name:s.name??null,current:s.id===user.deviceId}));
   const changes=await this.listChanges(user);
   return{emailEscape:{enabled:escape,delayDays:DELAY_MS/86_400_000,blockedByGoogleProtection:protection},passkeys,sessions,changes};
  }
