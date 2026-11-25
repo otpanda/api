@@ -2,11 +2,11 @@ import {json,takeRateLimit} from './sessions.js';
 import {createDeviceSessionAuth} from './device-session-auth.js';
 import {googlePictureUrl} from './account-identity.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
-export function createAccountOverviewHttp({db,sessions,clock=Date.now}={}){
- const auth=createDeviceSessionAuth({sessions});
+export function createAccountOverviewHttp({db,sessions,clock=Date.now,native=false}={}){
+ const auth=createDeviceSessionAuth({sessions,native});
  return{async fetch(request,{clientAddress}={}){
   const u=new URL(request.url);if(u.origin!==API||u.pathname!=='/v1/manage/account')return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   if(request.method==='OPTIONS')return request.headers.get('access-control-request-method')==='GET'&&(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').every(h=>h.trim()==='authorization')?new Response(null,{status:204,headers:{...cors,'Access-Control-Allow-Methods':'GET','Access-Control-Allow-Headers':'Authorization'}}):json({error:'forbidden'},403,cors);
   if(request.method!=='GET'||u.search)return json({error:'invalid_request'},400,cors);
   if(typeof clientAddress!=='string'||!clientAddress)return json({error:'unavailable'},503,cors);

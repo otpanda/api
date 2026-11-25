@@ -9,13 +9,13 @@ const cors={'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'R
 function entryOf(url){if(url.search.length>512||[...url.searchParams.keys()].length!==1||!url.searchParams.has('entry'))return undefined;const entry=url.searchParams.get('entry');return entry&&entry.length<=256&&!/[\u0000-\u0020\u007f]/u.test(entry)?entry:undefined;}
 const same=(a,b)=>a&&b&&a.ownerId===b.ownerId&&a.deviceId===b.deviceId&&a.generation===b.generation;
 function timestamp(clock){const now=clock();if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid server clock required');return now;}
-export function createTotpReadHttp({db,sessions,generator,clock=Date.now}={}){
+export function createTotpReadHttp({db,sessions,generator,clock=Date.now,native=false}={}){
  if(!db||typeof generator?.generateForActor!=='function'||typeof clock!=='function')throw new TypeError('TOTP read dependencies required');
- const auth=createDeviceSessionAuth({sessions});
+ const auth=createDeviceSessionAuth({sessions,native});
  return {async fetch(request,{clientAddress}={}){
   const url=new URL(request.url);
   if(url.origin!==API||url.pathname!==PATH)return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   const reply=(body,status=200,headers={})=>json(body,status,{...cors,...headers});
   if(request.method==='OPTIONS'){
    const headers=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);

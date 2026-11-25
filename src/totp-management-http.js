@@ -14,12 +14,12 @@ async function bodyOf(request){
  const reader=request.body?.getReader();if(!reader)throw Error();let size=0,text='';const decoder=new TextDecoder('utf-8',{fatal:true});
  try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>24576){await reader.cancel();throw Error();}text+=decoder.decode(value,{stream:true});}return JSON.parse(text+decoder.decode());}finally{reader.releaseLock();}
 }
-export function createTotpManagementHttp({db,sessions,getSeedCipher,clock=Date.now,passkeys=new PasskeyService(db,{clock})}){
- const auth=createDeviceSessionAuth({sessions});
+export function createTotpManagementHttp({db,sessions,getSeedCipher,clock=Date.now,native=false,passkeys=new PasskeyService(db,{clock})}){
+ const auth=createDeviceSessionAuth({sessions,native});// native: no Origin header + android access kind; step-up still requires a UV passkey bound to this device/generation/action
  return{async fetch(request,{clientAddress}={}){
   const u=new URL(request.url),reply=(v,status=200)=>json(v,status,cors);
   if(u.origin!==API||![PATH,PATH+'/begin'].includes(u.pathname)||u.search)return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   if(request.method==='OPTIONS'){
    const h=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
    return request.headers.get('access-control-request-method')==='POST'&&h.every(v=>['authorization','content-type'].includes(v))?new Response(null,{status:204,headers:{...cors,'Cache-Control':'no-store','Access-Control-Allow-Methods':'POST','Access-Control-Allow-Headers':'Authorization, Content-Type'}}):reply({error:'forbidden'},403);

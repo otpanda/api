@@ -67,3 +67,49 @@ test('signed-in Google link routes are mounted in the actual auth-only deploymen
   const post=await worker.fetch(request('/auth/google/link/start',{method:'POST',headers:{Origin:API}}),env,ctx);assert.notEqual(post.status,200);assert.notEqual(post.status,404);assert.equal(post.headers.getSetCookie().length,0);
  }finally{db.sqlite.close?.();}
 });
+test('native Android routes are mounted in the auth-only entry: JSON, no CORS, no Origin, fail closed without config',async()=>{
+ const db=database(),worker=createAuthOnlyWorker(),env={...config(db),NATIVE_AUTH_ENABLED:'1'},ctx={waitUntil(){}},go=(p,o={})=>worker.fetch(request(p,o),env,ctx);
+ try{
+  const post={method:'POST',headers:{'Content-Type':'application/json'},body:'{}'};
+  for(const p of ['exchange','challenge','renew','logout'])assert.equal((await go('/auth/native/'+p,post)).status,400,p+' mounted: strict body check, not 404');
+  assert.equal((await go('/auth/native/exchange',{...post,headers:{...post.headers,Origin:APP}})).status,403,'browser origins refused');
+  assert.equal((await go('/auth/native/exchange',{method:'GET'})).status,405);
+  assert.equal((await go('/auth/native/exchange?x=1',post)).status,403,'no query');
+  for(const p of ['begin','complete'])assert.equal((await go('/auth/native/google/'+p,post)).status,503,'google fails closed without audience/JWKS');
+  assert.equal((await go('/auth/native/nope',post)).status,404);
+  const approve=await go('/auth/native/approve');assert.equal(approve.status,400);assert.equal(approve.headers.get('access-control-allow-origin'),null);
+  const landing=await go('/app-return');assert.equal(landing.status,200);assert.match(landing.headers.get('content-type'),/text\/html/);assert.equal(landing.headers.get('access-control-allow-origin'),null);
+  assert.equal((await go('/.well-known/assetlinks.json')).status,404,'no fingerprints, fail closed');
+  assert.equal((await go('/app-return',{method:'POST'})).status,405);
+ }finally{db.sqlite.close?.();}
+});
+test('native assetlinks serves only configured SHA-256 signer fingerprints; approve POST needs the API origin',async()=>{
+ const db=database(),worker=createAuthOnlyWorker(),fp=Array.from({length:32},(_,i)=>(i*7%256).toString(16).padStart(2,'0').toUpperCase()).join(':'),env={...config(db),NATIVE_AUTH_ENABLED:'1',NATIVE_ASSET_FINGERPRINTS:fp},ctx={waitUntil(){}};
+ try{
+  const r=await worker.fetch(request('/.well-known/assetlinks.json'),env,ctx);assert.equal(r.status,200);
+  assert.deepEqual(await r.json(),[{relation:['delegate_permission/common.handle_all_urls'],target:{namespace:'android_app',package_name:'app.otpanda',sha256_cert_fingerprints:[fp]}}]);
+  const post={method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'x=1'};
+  assert.equal((await worker.fetch(request('/auth/native/approve',post),env,ctx)).status,403);
+  assert.equal((await worker.fetch(request('/auth/native/approve',{...post,headers:{...post.headers,Origin:APP}}),env,ctx)).status,403);
+ }finally{db.sqlite.close?.();}
+});
+
+test('native Android routes are OFF by default: every native path is 404 before any database or limiter access, flag must be exactly 1',async()=>{
+ const touched=[],db=new Proxy(database(),{get(t,k){touched.push(String(k));return t[k];}});
+ const base=config(db),limiter={limit:async()=>{touched.push('limiter');return {success:true};}};
+ const paths=['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/approve','/app-return','/.well-known/assetlinks.json'];
+ try{
+  for(const flag of [undefined,'','0','true','TRUE','yes',' 1','1 '])for(const p of paths)for(const method of ['GET','POST','OPTIONS']){
+   const worker=createAuthOnlyWorker(),env={...base,IDENTITY_ADDRESS_LIMIT:limiter,IDENTITY_AUTH_GLOBAL_LIMIT:limiter,IDENTITY_READ_GLOBAL_LIMIT:limiter,NATIVE_ASSET_FINGERPRINTS:Array(32).fill('AB').join(':'),...(flag===undefined?{}:{NATIVE_AUTH_ENABLED:flag})};
+   const before=touched.length,r=await worker.fetch(request(p,{method,headers:{'Content-Type':'application/json'},...(method==='POST'?{body:'{}'}:{})}),env,ctx0);
+   assert.equal(r.status,404,String(flag)+' '+method+' '+p);assert.equal(touched.length,before,'no database or limiter use: '+p);
+  }
+ }finally{db.sqlite?.close?.();}
+});
+const ctx0={waitUntil(){}};
+test('NATIVE_AUTH_ENABLED is part of the latched configuration: flipping it on a live isolate fails closed (503), never half-enables native',async()=>{
+ const db=database(),worker=createAuthOnlyWorker(),env=config(db),ctx1={waitUntil(){}};
+ const first=await worker.fetch(request('/v1/manage/session',{headers:{Origin:'https://otpanda.github.io',Authorization:'Bearer '+'a'.repeat(43)}}),env,ctx1);assert.notEqual(first.status,503);
+ const flipped=await worker.fetch(request('/v1/manage/session',{headers:{Origin:'https://otpanda.github.io',Authorization:'Bearer '+'a'.repeat(43)}}),{...env,NATIVE_AUTH_ENABLED:'1'},ctx1);assert.equal(flipped.status,503);
+ db.sqlite?.close?.();
+});

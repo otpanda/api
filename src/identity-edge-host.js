@@ -3,28 +3,36 @@
 import{canonicalClientAddress}from'./client-address.js';
 import{hashText,json,securityHeaders}from'./sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
-const methods=new Map([['/v1/manage/totp',['POST']],['/v1/manage/totp/begin',['POST']],['/v1/manage/totp-code',['GET']],...['status','begin','verify'].map(p=>['/auth/google/protection/'+p,['POST']]),['/auth/google/protection/complete',['GET','POST']],... ['begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>['/v1/manage/security/'+p,['POST']]),['/v1/manage/security/status',['GET']],...['email','begin','verify'].map(p=>['/auth/google/continue/'+p,['POST']]),['/auth/google/continue/complete',['GET','POST']],['/auth/google/start',['GET']],['/auth/google/link/start',['GET']],['/v1/manage/google/link/ticket',['POST']],['/auth/callback',['GET']],
+const methods=new Map([...['exchange','challenge','renew','logout','google/begin','google/complete'].map(p=>['/auth/native/'+p,['POST']]),['/auth/native/approve',['GET','POST']],['/app-return',['GET']],['/.well-known/assetlinks.json',['GET']],['/v1/manage/totp',['POST']],['/v1/manage/totp/begin',['POST']],['/v1/manage/totp-code',['GET']],...['status','begin','verify'].map(p=>['/auth/google/protection/'+p,['POST']]),['/auth/google/protection/complete',['GET','POST']],... ['begin','finish','approve','deny','request-change','approve-change','consume-change'].map(p=>['/v1/manage/security/'+p,['POST']]),['/v1/manage/security/status',['GET']],...['email','begin','verify'].map(p=>['/auth/google/continue/'+p,['POST']]),['/auth/google/continue/complete',['GET','POST']],['/auth/google/start',['GET']],['/auth/google/link/start',['GET']],['/v1/manage/google/link/ticket',['POST']],['/auth/callback',['GET']],
  ['/auth/login/start',['GET']],['/auth/login/verify',['POST']],['/auth/login/complete',['GET','POST']],['/auth/restore',['GET','POST']],['/auth/exchange',['POST']],['/auth/renew',['POST']],['/auth/device/logout',['GET','POST']],
  ...['begin','finish'].map(p=>['/v1/manage/first-passkey/'+p,['POST']]),
  ...['verify-begin','verify-finish','register-begin','register-finish'].map(p=>['/v1/manage/passkey/add/'+p,['POST']]),['/v1/manage/passkey/rename',['POST']],['/v1/manage/session/describe',['POST']],
  ...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>['/auth/recovery/email/'+p,['POST']]),['/v1/manage/recovery/status',['GET']],...['begin','finish','request-change','approve-begin','approve-change','consume-change','cancel-request'].map(p=>['/v1/manage/recovery/'+p,['POST']]),
  ...['begin','finish','status'].map(p=>['/v1/manage/assignment/'+p,['POST']]),...['rename','account'].map(p=>['/v1/manage/entry/'+p,['POST']]),
+ ...['enroll-begin','enroll-finish','enroll-status','adopt-begin','adopt-finish','add-request','add-begin','add-finish'].map(p=>['/v1/manage/device-key/'+p,['POST']]),
+ ...['passkey/add/approval-request','passkey/add/approval-authorize','approval/status','approval/approve-begin','approval/approve-finish'].map(p=>['/v1/manage/'+p,['POST']]),
  ...['account','session','entries','active-codes','unassigned','sources'].map(p=>['/v1/manage/'+p,['GET']]),['/v1/manage/organization',['GET','PUT']],['/v1/manage/organization-copy',['POST']]
 ]);
+// Native Android routes: not browser CORS routes, JSON failures, never the Pages retry redirect.
+const nativePath=p=>p.startsWith('/auth/native/')||p==='/app-return'||p==='/.well-known/assetlinks.json';
+// Exactly the /v1/manage routes the Android client calls. Realtime, batch codes, security, recovery, passkey, assignment and Google-link routes are NOT native.
+const nativeManage=new Set(['account','session','entries','active-codes','unassigned','sources','organization','organization-copy','totp-code','totp','totp/begin','session/describe','device-key/enroll-begin','device-key/enroll-finish','device-key/enroll-status','device-key/adopt-begin','device-key/adopt-finish','device-key/add-request','device-key/add-begin','device-key/add-finish','entry/rename','entry/account','approval/status','approval/approve-begin','approval/approve-finish','assignment/begin','assignment/finish','assignment/status'].map(v=>'/v1/manage/'+v));
 const corsPath=p=>((p.startsWith('/auth/google/continue/')||p.startsWith('/auth/google/protection/'))&&!p.endsWith('/complete'))||p.startsWith('/auth/recovery/email/')||p==='/auth/login/verify'||p==='/auth/exchange'||p==='/auth/renew'||p.startsWith('/v1/');
 const headers=p=>({...securityHeaders,...(corsPath(p)?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'}:{})});
 export const isIdentityPath=p=>methods.has(p);
 const realtimeMethods=new Map([['/auth/realtime/ticket',['POST']],['/auth/realtime',['GET']]]);
 // realtime (optional): {edgeAddress, edgeGlobal} are DEDICATED rate-limit bindings for ticket mint and upgrade. They never touch
 // the shared auth pool or the read pool. Absent, the realtime paths do not exist (404) and nothing about the other routes changes.
-export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAddress,edgeAuthGlobal,edgeReadGlobal,realtime}={}){
+export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAddress,edgeAuthGlobal,edgeReadGlobal,realtime,nativeApi=false}={}){
  let identity;
   const realtimeFetch=async(request,ctx)=>{
   const url=new URL(request.url),p=url.pathname,allowed=realtimeMethods.get(p),ticket=p==='/auth/realtime/ticket',origin=request.headers.get('origin');
-  const h={...securityHeaders,...(origin===APP?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'}:{})};
+  // Native Android realtime: only when native is enabled, only with NO Origin header, never for a preflight. A browser always sends Origin.
+  const nativeRt=nativeApi===true&&origin===null&&request.method!=='OPTIONS';
+  const h={...securityHeaders,...(origin===APP?{'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After'}:{}),Vary:'Origin'};
   const fail=(status,error='unavailable')=>json({error},status,{...h,...([429,503].includes(status)?{'Retry-After':'30'}:{})});
   if(url.origin!==API||url.search)return json({error:'not_found'},404);
-  if(origin!==APP)return fail(403,'forbidden');
+  if(origin!==APP&&!nativeRt)return fail(403,'forbidden');
   // Preflight is pure: no env, resolver, limiter or D1.
   if(request.method==='OPTIONS'){
    const requested=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
@@ -45,10 +53,13 @@ export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAdd
   const rt=realtime&&realtimeMethods.get(new URL(request.url).pathname);
   if(rt)return realtimeFetch(request,ctx);
   const url=new URL(request.url),p=url.pathname,allowed=methods.get(p),origin=request.headers.get('origin'),cors=corsPath(p);
-  const fail=(status,error='unavailable')=>{const h={...(origin===APP?headers(p):securityHeaders),...([429,503].includes(status)?{'Retry-After':'60'}:{})};return cors?json({error},status,h):new Response(null,{status:303,headers:{...h,Location:'https://otpanda.github.io/app/#auth=retry'}});};
+  const fail=(status,error='unavailable')=>{const h={...(origin===APP?headers(p):securityHeaders),...([429,503].includes(status)?{'Retry-After':'60'}:{})};return cors||nativePath(p)?json({error},status,h):new Response(null,{status:303,headers:{...h,Location:'https://otpanda.github.io/app/#auth=retry'}});};
   if(url.origin!==API||!allowed)return json({error:'not_found'},404);
   if(p.startsWith('/v1/manage/assignment/')&&url.search)return fail(400,'invalid_request');
-  if(cors&&origin!==APP)return fail(403,'forbidden');
+  if(nativePath(p)&&nativeApi!==true)return json({error:'not_found'},404);
+  // Native token routes carry NO Origin header (never a foreign one). Only when native is enabled, only the exact list above, never preflight.
+  const nativeNoOrigin=nativeApi===true&&nativeManage.has(p)&&origin===null&&request.method!=='OPTIONS';
+  if(cors&&origin!==APP&&!nativeNoOrigin)return fail(403,'forbidden');
   // Preflight is pure: no env/key import, resolver, edge counters or D1.
   if(request.method==='OPTIONS'){
    const requested=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
@@ -56,10 +67,10 @@ export function createIdentityEdgeHost({initialize,resolveTrustedIngress,edgeAdd
    return cors&&allowed.includes(request.headers.get('access-control-request-method'))&&requested.every(v=>fields.includes(v))?new Response(null,{status:204,headers:{...headers(p),'Access-Control-Allow-Methods':allowed.join(', '),'Access-Control-Allow-Headers':fields.join(', ')}}):fail(403,'forbidden');
   }
   if(!allowed.includes(request.method))return fail(405,'method_not_allowed');
-  if(!cors&&request.method==='POST'&&origin!==API)return fail(403,'forbidden');
+  if(!cors&&!nativePath(p)&&request.method==='POST'&&origin!==API)return fail(403,'forbidden');// native routes enforce their own Origin rules
   try{
    // Mutation ceremonies share the tighter auth budget, not the read budget.
-   const readBudget=p.startsWith('/v1/')&&!p.startsWith('/v1/manage/first-passkey/')&&!p.startsWith('/v1/manage/passkey/add/')&&(!p.startsWith('/v1/manage/totp')||p==='/v1/manage/totp-code')&&(!p.startsWith('/v1/manage/security/')||p.endsWith('/status'))&&(!p.startsWith('/v1/manage/recovery/')||p.endsWith('/status'))&&(!p.startsWith('/v1/manage/assignment/')||p.endsWith('/status'));
+   const readBudget=p==='/app-return'||p==='/.well-known/assetlinks.json'||p.startsWith('/v1/')&&!p.startsWith('/v1/manage/first-passkey/')&&!p.startsWith('/v1/manage/passkey/add/')&&(!p.startsWith('/v1/manage/totp')||p==='/v1/manage/totp-code')&&(!p.startsWith('/v1/manage/security/')||p.endsWith('/status'))&&(!p.startsWith('/v1/manage/recovery/')||p.endsWith('/status'))&&(!p.startsWith('/v1/manage/assignment/')||p.endsWith('/status'));
    const global=readBudget?edgeReadGlobal:edgeAuthGlobal;
    if(typeof initialize!=='function'||typeof resolveTrustedIngress!=='function'||typeof edgeAddress?.limit!=='function'||typeof global?.limit!=='function')return fail(503);
    const address=canonicalClientAddress(await resolveTrustedIngress(request));if(!address)return fail(503);

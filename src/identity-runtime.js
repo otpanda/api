@@ -1,6 +1,9 @@
 import {SeedCipher} from './seed-cipher.js';
 import {TotpSeedStore,EntryTotpGenerator} from './totp-seeds.js';
 import {createTotpReadHttp} from './totp-read-http.js';
+import {createNativeHttp} from './native-http.js';
+import {NativeSessionService} from './native-sessions.js';
+import {NativeGoogle} from './native-google.js';
 import {createTotpManagementHttp} from './totp-management-http.js';
 import {createExtraVerificationHttp} from './extra-verification-http.js';
 import {createFirstPasskeyHttp} from './first-passkey-http.js';
@@ -14,6 +17,11 @@ import {createGoogleLinkTicketHttp} from './google-link-http.js';
 import {createEntryManageHttp} from './entry-manage-http.js';
 import {AssignmentIntents} from './assignment-intents.js';
 import {createAssignmentIntentHttp} from './assignment-intent-http.js';
+import {createDeviceKeyHttp} from './device-key-http.js';
+import {createApprovalsHttp,APPROVAL_PATHS} from './approvals-http.js';
+import {EnrolledApprovals} from './enrolled-approvals.js';
+import {GoogleDeviceEnrollment} from './google-device-enrollment.js';
+import {DurableDeviceKeys} from './durable-device-keys.js';
 import {CodeCipher} from './code-cipher.js';
 import {SourceEntryStore} from './source-entries.js';
 import {ServiceMetadata} from './service-metadata.js';
@@ -36,7 +44,7 @@ import {createPasskeyLabelHttp} from './passkey-label-http.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
 import {createRealtimeHttp} from './realtime-http.js';
 import {createForegroundDrain} from './realtime-foreground.js';
-export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,clock=Date.now}={}) {
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
  // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
@@ -57,17 +65,28 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
   sourcesForOwner:async(...args)=>(await encrypted()).sources.sourcesForOwner(...args),
  };
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
- const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,clock});
- const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},clock});
- const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,clock});
+ const nativeOn=native?.enabled===true;// explicit default-off activation: native token acceptance and native routes both depend on it
+ const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,native:nativeOn,clock});
+// Native Android boundary. Without native.assetFingerprints assetlinks is 404; without native.google the Google routes are 503.
+ const nativeSessionService=new NativeSessionService(db,{clock});
+ // Google routes need an injected NativeGoogle OR audiences plus a key lookup; with neither they stay 503 (fail closed).
+ const nativeGoogle=native?.google??(Array.isArray(native?.googleAudiences)&&native.googleAudiences.length&&typeof native.googleGetKey==='function'?new NativeGoogle(db,{native:nativeSessionService,audiences:native.googleAudiences,authorizedParties:native.googleAuthorizedParties??[],getKey:native.googleGetKey,clock}):undefined);
+ const nativeHttp=createNativeHttp({sessions,native:nativeSessionService,db,google:nativeGoogle,assetFingerprints:native?.assetFingerprints??[],clock});
+ const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
+ const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,clock});
+ const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock});
  const security=createExtraVerificationHttp({db,sessions,clock});
  const firstPasskey=createFirstPasskeyHttp({db,sessions,clock}),addPasskey=createAddPasskeyHttp({db,sessions,clock,passkeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys});
- const deviceInfo=createDeviceSessionInfoHttp({db,sessions,clock}),passkeyLabel=createPasskeyLabelHttp({db,sessions,clock}),overview=createAccountOverviewHttp({db,sessions,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock});
- const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),clock});
- const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock});
+ const deviceInfo=createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock}),passkeyLabel=createPasskeyLabelHttp({db,sessions,clock}),overview=createAccountOverviewHttp({db,sessions,native:nativeOn,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock});
+ const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock});
+ const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn});
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
- const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,clock}):undefined;
- const entryManage=createEntryManageHttp({db,sessions,clock});
+ const entryManage=createEntryManageHttp({db,sessions,clock,native:nativeOn});
+ const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,native:nativeOn,clock}):undefined;
+ const deviceKey=createDeviceKeyHttp({db,sessions,enrollment:new GoogleDeviceEnrollment(db,{clock}),keys:new DurableDeviceKeys(db,{clock}),clock});
+ const approvals=createApprovalsHttp({db,sessions,approvals:new EnrolledApprovals(db,{clock,keys:new DurableDeviceKeys(db,{clock})}),clock});
+ const approvalPaths=new Set(APPROVAL_PATHS);
+ const deviceKeyPaths=new Set(['enroll-begin','enroll-finish','enroll-status','adopt-begin','adopt-finish'].map(p=>'/v1/manage/device-key/'+p));
  const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));
  const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
  const loginPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete']);
@@ -76,7 +95,10 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
    let handler;
-   if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
+   if(nativePaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=nativeHttp;}
+   else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}
+   else if(deviceKeyPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=deviceKey;}
+   else if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
    else if(['/v1/manage/totp','/v1/manage/totp/begin'].includes(url.pathname))handler=totpManage;
    else if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;

@@ -8,6 +8,10 @@ import{createSignupWorkerAdapter}from'./signup-worker-adapter.js';
 import{createRecoveryMailDelivery}from'./recovery-mail-transport.js';
 import{createIdentityEdgeHost,isIdentityPath}from'./identity-edge-host.js';
 import{importBrowserKeyring}from'./browser-keyring.js';
+import{createGoogleJwks}from'./google-jwks.js';
+// Audiences accepted for native Google ID tokens: explicit NATIVE_GOOGLE_AUDIENCES, else the project's web OAuth client id (the
+// serverClientId Credential Manager requests tokens for). Empty keeps the Google routes 503.
+export const nativeGoogleAudiences=env=>String(env?.NATIVE_GOOGLE_AUDIENCES??env?.GOOGLE_CLIENT_ID??'').split(',').map(v=>v.trim()).filter(Boolean);
 import{json}from'./sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
 const realtimePaths=new Set(['/auth/realtime/ticket','/auth/realtime']);
@@ -17,11 +21,15 @@ export const realtimeConfiguration=env=>{
  const hub=env?.REALTIME_HUB,ok=typeof hub?.idFromName==='function'&&typeof hub?.get==='function'&&['REALTIME_ADDRESS_LIMIT','REALTIME_GLOBAL_LIMIT','REALTIME_TICKET_LIMIT'].every(k=>typeof env[k]?.limit==='function');
  return ok?{edgeAddress:env.REALTIME_ADDRESS_LIMIT,edgeGlobal:env.REALTIME_GLOBAL_LIMIT,limiter:env.REALTIME_TICKET_LIMIT,connect:(info,request)=>hubConnect(hub,info,request),deliver:hubDeliver(hub)}:undefined;
 };
+// Native Android routes exist only when the deployment explicitly sets NATIVE_AUTH_ENABLED to the string 1. Default is off: 404 before any
+// setup, limiter or database access, for every native path.
+const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
 const signupPaths=new Set(['/auth/signup/app','/auth/signup/start','/auth/signup/email','/auth/signup/begin','/auth/signup/verify']);
 export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now,signupAllowed}={}){
  const signup=createSignupWorkerAdapter({resolveTrustedIngress,fetchImpl,clock,signupAllowed});let identity,configuration,google,googleConfiguration;
  return{async fetch(request,env,ctx){
   const u=new URL(request.url);if(u.origin!==API)return json({error:'not_found'},404);
+  if(nativePaths.has(u.pathname)&&env?.NATIVE_AUTH_ENABLED!=='1')return json({error:'not_found'},404);
   if(signupPaths.has(u.pathname))return signup.fetch(request,env,ctx);
   if(['/auth/google/start','/auth/google/link/start','/auth/callback'].includes(u.pathname)||u.pathname.startsWith('/auth/google/continue/')||u.pathname.startsWith('/auth/google/protection/')){
    const current=[env?.DB,env?.ACTIVE_KEY_ID,env?.ENCRYPTION_KEYRING,env?.GOOGLE_CLIENT_ID,env?.GOOGLE_CLIENT_SECRET,env?.IDENTITY_ADDRESS_LIMIT,env?.IDENTITY_AUTH_GLOBAL_LIMIT,env?.BREVO_API_KEY,env?.BREVO_SENDER_EMAIL,env?.BREVO_REPLY_TO_EMAIL];if(googleConfiguration&&current.some((v,i)=>v!==googleConfiguration[i]))return createIdentityEdgeHost().fetch(request);googleConfiguration??=current;
@@ -34,9 +42,9 @@ export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...
   if(request.method==='OPTIONS')return createIdentityEdgeHost({realtime:realtimePath?{}:undefined}).fetch(request);
   const unavailable=()=>createIdentityEdgeHost().fetch(request);
   if(!env||typeof env!=='object')return unavailable();
-  const current=[env.BROWSER_CONFIGURATION_VERSION,env.DB,env.ACTIVE_KEY_ID,env.ENCRYPTION_KEYRING,env.IDENTITY_ADDRESS_LIMIT,env.IDENTITY_AUTH_GLOBAL_LIMIT,env.IDENTITY_READ_GLOBAL_LIMIT,env.BREVO_API_KEY,env.BREVO_SENDER_EMAIL,env.BREVO_REPLY_TO_EMAIL,env.REALTIME_HUB,env.REALTIME_ADDRESS_LIMIT,env.REALTIME_GLOBAL_LIMIT,env.REALTIME_TICKET_LIMIT];
+  const current=[env.BROWSER_CONFIGURATION_VERSION,env.DB,env.ACTIVE_KEY_ID,env.ENCRYPTION_KEYRING,env.IDENTITY_ADDRESS_LIMIT,env.IDENTITY_AUTH_GLOBAL_LIMIT,env.IDENTITY_READ_GLOBAL_LIMIT,env.BREVO_API_KEY,env.BREVO_SENDER_EMAIL,env.BREVO_REPLY_TO_EMAIL,env.REALTIME_HUB,env.REALTIME_ADDRESS_LIMIT,env.REALTIME_GLOBAL_LIMIT,env.REALTIME_TICKET_LIMIT,env.NATIVE_ASSET_FINGERPRINTS,env.NATIVE_AUTH_ENABLED,env.NATIVE_GOOGLE_AUDIENCES,env.NATIVE_GOOGLE_AUTHORIZED_PARTIES,env.GOOGLE_CLIENT_ID];
   if(configuration&&current.some((v,i)=>v!==configuration[i]))return unavailable();
-  if(!identity){configuration=current;identity=createIdentityEdgeHost({resolveTrustedIngress,edgeAddress:env.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env.IDENTITY_AUTH_GLOBAL_LIMIT,edgeReadGlobal:env.IDENTITY_READ_GLOBAL_LIMIT,realtime:rt?{edgeAddress:rt.edgeAddress,edgeGlobal:rt.edgeGlobal}:undefined,initialize:async()=>createIdentityRuntime({db:env.DB,realtime:rt?{limiter:rt.limiter,connect:rt.connect,deliver:rt.deliver}:undefined,loadCodeKeys:()=>importBrowserKeyring(env),trustedRequestKey:resolveTrustedIngress,deliverRecoveryMail:env.BREVO_API_KEY?createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL,fetchImpl}):undefined,clock})});}
+  if(!identity){configuration=current;identity=createIdentityEdgeHost({nativeApi:env.NATIVE_AUTH_ENABLED==='1',resolveTrustedIngress,edgeAddress:env.IDENTITY_ADDRESS_LIMIT,edgeAuthGlobal:env.IDENTITY_AUTH_GLOBAL_LIMIT,edgeReadGlobal:env.IDENTITY_READ_GLOBAL_LIMIT,realtime:rt?{edgeAddress:rt.edgeAddress,edgeGlobal:rt.edgeGlobal}:undefined,initialize:async()=>createIdentityRuntime({db:env.DB,native:{enabled:env.NATIVE_AUTH_ENABLED==='1',assetFingerprints:String(env.NATIVE_ASSET_FINGERPRINTS??'').split(',').map(v=>v.trim()).filter(Boolean),googleAudiences:nativeGoogleAudiences(env),googleAuthorizedParties:String(env.NATIVE_GOOGLE_AUTHORIZED_PARTIES??'').split(',').map(v=>v.trim()).filter(Boolean),googleGetKey:createGoogleJwks({fetchImpl,clock})},realtime:rt?{limiter:rt.limiter,connect:rt.connect,deliver:rt.deliver}:undefined,loadCodeKeys:()=>importBrowserKeyring(env),trustedRequestKey:resolveTrustedIngress,deliverRecoveryMail:env.BREVO_API_KEY?createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL,fetchImpl}):undefined,clock})});}
   return identity.fetch(request,ctx);
  }};
 }
