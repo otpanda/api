@@ -5,7 +5,8 @@ import {TotpSeedStore,EntryTotpGenerator} from './totp-seeds.js';
 import {createTotpReadHttp} from './totp-read-http.js';
 import {createNativeHttp,androidOriginsFromFingerprints} from './native-http.js';
 import {PasskeyVerifier} from './passkey-verifier.js';
-import {NativeSessionService} from './native-sessions.js';
+import {createExtensionHttp} from './extension-http.js';
+import {NativeSessionService,extensionProfile} from './native-sessions.js';
 import {NativeGoogle} from './native-google.js';
 import {createTotpManagementHttp} from './totp-management-http.js';
 import {createExtraVerificationHttp} from './extra-verification-http.js';
@@ -49,7 +50,7 @@ import {createPasskeyLabelHttp} from './passkey-label-http.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
 import {createRealtimeHttp} from './realtime-http.js';
 import {createForegroundDrain} from './realtime-foreground.js';
-export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,clock=Date.now}={}) {
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
  // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
@@ -71,7 +72,9 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  };
  const access={activeRecent:async(...args)=>(await encrypted()).access.activeRecent(...args)};
  const nativeOn=native?.enabled===true;// explicit default-off activation: native token acceptance and native routes both depend on it
- const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,native:nativeOn,clock});
+ let extensionHttp;
+ if(extension?.enabled===true){try{extensionHttp=createExtensionHttp({db,sessions,clock,redirects:extension.redirects,extensionOrigins:extension.origins??[],extension:new NativeSessionService(db,{clock,profile:extensionProfile(Object.values(extension.redirects??{}))})});}catch{/* Invalid extension config fails closed, never affects web/native. */}}
+ const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock});
 // Native Android boundary. Without native.assetFingerprints assetlinks is 404; without native.google the Google routes are 503.
  const nativeSessionService=new NativeSessionService(db,{clock});
  // Google routes need an injected NativeGoogle OR audiences plus a key lookup; with neither they stay 503 (fail closed).
@@ -90,7 +93,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn});
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
- const entryDomains=createEntryDomainsHttp({db,sessions,clock,native:nativeOn});
+ const entryDomains=createEntryDomainsHttp({db,sessions,clock,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null});
  const entryManage=createEntryManageHttp({db,sessions,clock,native:nativeOn});
  const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,native:nativeOn,clock}):undefined;
  const deviceKey=createDeviceKeyHttp({db,sessions,enrollment:new GoogleDeviceEnrollment(db,{clock}),keys:new DurableDeviceKeys(db,{clock}),clock});
@@ -105,7 +108,8 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
    let handler;
-   if(nativePaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=nativeHttp;}
+   if(url.pathname.startsWith('/auth/extension/')){handler=extensionHttp;if(!handler)return json({error:'not_found'},404);}
+   else if(nativePaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=nativeHttp;}
    else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}
    else if(deviceKeyPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=deviceKey;}
    else if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
