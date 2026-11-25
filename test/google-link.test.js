@@ -17,7 +17,7 @@ async function setup({email='a@gmail.com',passkey=true,linked=false}={}){
  const fetchMock=async(url,options)=>{
   if(String(url)==='https://accounts.google.com/.well-known/openid-configuration')return Response.json({...server,code_challenge_methods_supported:['S256'],token_endpoint_auth_methods_supported:['client_secret_post']});
   if(String(url)===server.jwks_uri)return Response.json({keys:[jwk]});tokenCalls++;
-  const t=Math.floor(Date.now()/1000),h=base64urlEncode(enc.encode(JSON.stringify({alg:'RS256',kid:'key-1'}))),p=base64urlEncode(enc.encode(JSON.stringify({iss:server.issuer,sub:'sub-1',aud:'client.apps.googleusercontent.com',iat:t,exp:t+300,email:googleEmail,email_verified:true,nonce})));
+  const t=Math.floor(Date.now()/1000),h=base64urlEncode(enc.encode(JSON.stringify({alg:'RS256',kid:'key-1'}))),p=base64urlEncode(enc.encode(JSON.stringify({iss:server.issuer,sub:'sub-1',aud:'client.apps.googleusercontent.com',iat:t,exp:t+300,email:googleEmail,email_verified:true,picture:'https://lh3.googleusercontent.com/a/linked=s96-c',nonce})));
   const sig=new Uint8Array(await crypto.subtle.sign('RSASSA-PKCS1-v1_5',signing.privateKey,enc.encode(h+'.'+p)));return Response.json({access_token:'x',token_type:'Bearer',id_token:h+'.'+p+'.'+base64urlEncode(sig)});};
  const runtime=await createGoogleBrowserRuntime({db,keys:new Map([['test',key]]),activeKeyId:'test',clientId:'client.apps.googleusercontent.com',clientSecret:'synthetic-secret',clock,oauthOptions:{[oauth.customFetch]:fetchMock}});
  const ticketHttp=createGoogleLinkTicketHttp({db,sessions,clock});
@@ -38,7 +38,7 @@ test('signed-in link: ticket, start, callback make an owner-bound pending link w
  const p=pendingOf(cb);assert.equal(p.kind,'link-only');assert.equal(x.q('SELECT count(*) n FROM device_sessions').n,before);assert.equal(x.q('SELECT count(*) n FROM provider_identities').n,0);assert.equal(x.q('SELECT count(*) n FROM pending_logins').n,0);
  const c=x.runtime.continuations,ceremony=await c.beginLink(p.token);assert.ok(ceremony);
  assert.equal(await c.verify({token:p.token,ceremony:ceremony.token,response:x.a.assertion({expected:ceremony.options.challenge,counter:1})}),true);
- assert.equal(x.q("SELECT count(*) n FROM provider_identities WHERE owner_id='owner' AND revoked_at IS NULL").n,1);assert.equal(x.q('SELECT count(*) n FROM google_continuations').n,0,'single use');
+ assert.equal(x.q("SELECT count(*) n FROM provider_identities WHERE owner_id='owner' AND revoked_at IS NULL").n,1);assert.equal(x.q('SELECT picture FROM provider_identities WHERE owner_id=\'owner\' AND revoked_at IS NULL').picture,'https://lh3.googleusercontent.com/a/linked=s96-c','link stores the validated picture');assert.equal(x.q('SELECT count(*) n FROM google_continuations').n,0,'single use');
  assert.equal(await c.consume({token:p.token,binding:'x'}),undefined);assert.equal(await c.verify({token:p.token,ceremony:ceremony.token,response:{}}),false,'replay');
  assert.ok(await x.sessions.authenticate(x.pk.access),'existing session untouched');
 });
