@@ -18,6 +18,7 @@ import {createAccountOverviewHttp} from './account-overview-http.js';
 import {createGoogleLinkTicketHttp} from './google-link-http.js';
 // Inactive browser identity composition. Never mounts legacy mutations,
 // OIDC, signup delivery or automatic account creation. Deployment stays gated.
+import {createEntryDomainsHttp} from './entry-domains-http.js';
 import {createEntryManageHttp} from './entry-manage-http.js';
 import {AssignmentIntents} from './assignment-intents.js';
 import {createAssignmentIntentHttp} from './assignment-intent-http.js';
@@ -89,6 +90,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock});
  const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn});
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
+ const entryDomains=createEntryDomainsHttp({db,sessions,clock,native:nativeOn});
  const entryManage=createEntryManageHttp({db,sessions,clock,native:nativeOn});
  const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,native:nativeOn,clock}):undefined;
  const deviceKey=createDeviceKeyHttp({db,sessions,enrollment:new GoogleDeviceEnrollment(db,{clock}),keys:new DurableDeviceKeys(db,{clock}),clock});
@@ -124,6 +126,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(url.pathname==='/auth/device/logout')handler=logoutHttp;
    else if(readPaths.has(url.pathname))handler=reads;
    else if(assignmentPaths.has(url.pathname))handler=assignment;
+   else if(url.pathname==='/v1/manage/entry/domains')handler=entryDomains;
    else if(['/v1/manage/entry/rename','/v1/manage/entry/account'].includes(url.pathname))handler=entryManage;
    else if(['/v1/manage/organization','/v1/manage/organization-copy'].includes(url.pathname))handler=organization;
    else if(realtimeHttp&&['/auth/realtime/ticket','/auth/realtime'].includes(url.pathname))handler=realtimeHttp;
