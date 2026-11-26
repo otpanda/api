@@ -13,10 +13,12 @@ export function createLocalLockRecoveryHttp({db,sessions,passkeys=new PasskeySer
   if(u.origin!==API||!u.pathname.startsWith('/v1/manage/local-lock/')||!['begin','finish'].includes(step)||u.search)return json({error:'not_found'},404);
   if(request.headers.has('origin')||!auth.originAllowed(request))return json({error:'forbidden'},403);
   if(request.method!=='POST'||request.headers.get('content-type')!=='application/json')return json({error:'invalid_request'},400);
-  if(!clientAddress||!(await takeRateLimit(db,'local-lock:'+clientAddress,{now:clock(),limit:20})).allowed)return json({error:'busy'},429);
+  if(!clientAddress)return json({error:'unavailable'},503);
   const user=await auth.authenticate(request);if(!user)return json({error:'unauthorized'},401);
+  if(!(await takeRateLimit(db,'local-lock:'+user.ownerId+':'+user.deviceId,{now:clock(),limit:20})).allowed)return json({error:'busy'},429);
   const value=await body(request),fields=step==='begin'?'intent,lockGeneration':'intent,lockGeneration,response,token';
   if(!value||Array.isArray(value)||Object.keys(value).sort().join(',')!==fields||!INTENTS.has(value.intent)||typeof value.lockGeneration!=='string'||!/^[A-Za-z0-9_-]{32,128}$/.test(value.lockGeneration))return json({error:'invalid_request'},400);
+  if(step==='finish'&&(typeof value.token!=='string'||!/^otpda_[A-Za-z0-9_-]{55}$/.test(value.token)))return json({error:'invalid_request'},400);
   const binding=JSON.stringify(['local-lock-v1',user.ownerId,user.deviceId,user.generation,value.lockGeneration]),action=value.intent;
   if(step==='begin'){const result=await passkeys.begin({purpose:'step-up',ownerId:user.ownerId,binding,action});return result?json(result):json({error:'restart'},403);}
   const proof=await passkeys.finishAuthentication({ownerId:user.ownerId,binding,action,token:value.token,response:value.response});
