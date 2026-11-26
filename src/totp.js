@@ -41,3 +41,25 @@ export async function totp(secret, { unixSeconds, period = 30, digits = 6, algor
   if (!Number.isSafeInteger(period) || period <= 0) throw new RangeError('Invalid period');
   return hotp(secret, BigInt(Math.floor(unixSeconds / period)), { digits, algorithm });
 }
+
+// Codes for consecutive periods with a single HMAC key import. Equivalent to
+// calling totp() for each period start; `count` is bounded by the caller.
+export async function totpWindow(secret, { unixSeconds, period = 30, digits = 6, algorithm = 'SHA-1', count } = {}) {
+  if (!(secret instanceof Uint8Array) || secret.byteLength < 10) throw new TypeError('Secret must contain at least 80 bits');
+  if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0) throw new RangeError('Explicit nonnegative integer Unix time required');
+  if (!Number.isSafeInteger(period) || period <= 0) throw new RangeError('Invalid period');
+  if (!Number.isInteger(digits) || digits < 6 || digits > 8) throw new RangeError('Digits must be 6 through 8');
+  if (!ALGORITHMS.has(algorithm)) throw new RangeError('Unsupported HMAC algorithm');
+  if (!Number.isInteger(count) || count < 1 || count > 64) throw new RangeError('Invalid window count');
+  const first = BigInt(Math.floor(unixSeconds / period));
+  const key = await crypto.subtle.importKey('raw', secret, { name: 'HMAC', hash: algorithm }, false, ['sign']);
+  const codes = [];
+  for (let i = 0n; i < BigInt(count); i++) {
+    const message = new Uint8Array(8);
+    new DataView(message.buffer).setBigUint64(0, first + i);
+    const digest = new Uint8Array(await crypto.subtle.sign('HMAC', key, message));
+    const offset = digest.at(-1) & 15;
+    codes.push(String((new DataView(digest.buffer).getUint32(offset) & 0x7fffffff) % 10 ** digits).padStart(digits, '0'));
+  }
+  return codes;
+}

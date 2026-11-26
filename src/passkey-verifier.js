@@ -1,7 +1,14 @@
 // Exact-origin, UV-required WebAuthn adapter. No persistence or HTTP endpoint.
 // Caller supplies server-stored challenges and atomic credential state changes.
 import { base64urlDecode } from './tokens.js';
-import { generateRegistrationOptions, generateAuthenticationOptions, verifyRegistrationResponse, verifyAuthenticationResponse } from '@simplewebauthn/server';
+// Defer unrelated WebAuthn library initialization until a passkey ceremony.
+// Batch/session requests never need its certificate/registration machinery.
+let webauthn;
+const library=()=>webauthn??=import('@simplewebauthn/server').catch(error=>{webauthn=undefined;throw error;});
+const generateRegistrationOptions=async(...args)=>(await library()).generateRegistrationOptions(...args);
+const generateAuthenticationOptions=async(...args)=>(await library()).generateAuthenticationOptions(...args);
+const verifyRegistrationResponse=async(...args)=>(await library()).verifyRegistrationResponse(...args);
+const verifyAuthenticationResponse=async(...args)=>(await library()).verifyAuthenticationResponse(...args);
 const RP_ID = 'otpanda.github.io';
 const WEB_ORIGIN = 'https://otpanda.github.io';
 function checkedChallenge(value) {

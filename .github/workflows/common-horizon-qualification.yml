@@ -1,0 +1,87 @@
+name: Common-horizon actual Worker CPU qualification
+on:
+  push:
+    branches: [feat/common-horizon-generator-prep]
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-common-horizon-cpu
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - uses: dart-lang/setup-dart@2286a0c042b44434fe26d292bbce8d34f7ec662b
+      - run: npm ci --ignore-scripts
+      - name: Read-only Workers account plan check
+        run: node qualification/account-plan.mjs
+      - name: Create isolated resources, measure and delete
+        shell: bash
+        run: |
+          set -euo pipefail
+          config=qualification/wrangler.json
+          dbid=''
+          deployed=0
+          cleanup() {
+            set +e
+            sleep 10
+            if [ -n "${tailpid:-}" ]; then kill "$tailpid"; wait "$tailpid"; fi
+            if [ "$deployed" = 1 ]; then
+              node qualification/delete-worker.mjs
+            fi
+            if [ -n "$dbid" ]; then
+              npx wrangler d1 delete "$dbid" --skip-confirmation --config "$config"
+            fi
+          }
+          trap cleanup EXIT
+          name="otpanda-batch-qual-${GITHUB_RUN_ID}"
+          npx wrangler d1 create "$name" --config "$config" > qualification/database-create.txt
+          dbid=$(node -e 'const fs=require("fs");const x=fs.readFileSync("qualification/database-create.txt","utf8");const m=x.match(/"database_id"\s*:\s*"([0-9a-f-]{36})"/);if(m)process.stdout.write(m[1])')
+          test -n "$dbid"
+          node - "$dbid" "$name" <<'JS'
+          const fs=require('fs'),crypto=require('crypto');
+          const p='qualification/wrangler.json',x=JSON.parse(fs.readFileSync(p));
+          x.name='otpanda-batch-qual-'+process.env.GITHUB_RUN_ID;
+          x.vars.FIXTURE_PREFIX='qualification-'+crypto.randomBytes(12).toString('hex');
+          x.d1_databases[0].database_id=process.argv[2];
+          x.d1_databases[0].database_name=process.argv[3];
+          fs.writeFileSync(p,JSON.stringify(x,null,2));
+          JS
+          npx wrangler d1 migrations apply "$name" --remote --config "$config"
+          npx wrangler d1 execute "$name" --remote --config "$config" --file qualification/seed.sql
+          # Set before deploy: cleanup must cover an interrupted successful upload.
+          deployed=1
+          npx wrangler deploy --config "$config"
+          npx wrangler tail --config "$config" --format json > qualification/tail.jsonl 2> qualification/tail-errors.txt &
+          tailpid=$!
+          sleep 12
+          prefix=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/wrangler.json")).vars.FIXTURE_PREFIX)')
+          worker=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/wrangler.json")).name)')
+          base="https://$worker.abrahammurciano.workers.dev/$prefix"
+          node qualification/driver.mjs "$base"
+          dart qualification/client-http.dart "$base"
+          echo 'Fixture measurement finished. Logs captured, cleaning up.'
+          sleep 8
+          kill "$tailpid" || true
+          wait "$tailpid" || true
+      - name: Preserve synthetic aggregate results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: isolated-qualification-results
+          path: |
+            qualification/*-result.json
+            qualification/tail.jsonl
+            qualification/tail-errors.txt
+          retention-days: 2

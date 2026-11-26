@@ -1,0 +1,48 @@
+{
+  "name": "otpanda-batch-qualification",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-23",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "FIXTURE_PREFIX": "synthetic-batch-qualification"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "otpanda-batch-qualification",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "../migrations"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "ratelimits": [
+    {
+      "name": "IDENTITY_ADDRESS_LIMIT",
+      "namespace_id": "9898010",
+      "simple": {
+        "limit": 1000,
+        "period": 60
+      }
+    },
+    {
+      "name": "IDENTITY_AUTH_GLOBAL_LIMIT",
+      "namespace_id": "9898011",
+      "simple": {
+        "limit": 1000,
+        "period": 60
+      }
+    },
+    {
+      "name": "IDENTITY_READ_GLOBAL_LIMIT",
+      "namespace_id": "9898012",
+      "simple": {
+        "limit": 1000,
+        "period": 60
+      }
+    }
+  ]
+}
