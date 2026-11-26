@@ -40,6 +40,7 @@ function fakeGoogle(state){
    const dm=P.match(/^\/(labels|settings\/filters)\/([^/]+)$/);
    if(dm){if(M==='DELETE'&&state.beforeDelete)await state.beforeDelete();const T=dm[1]==='labels'?L:F;if(M==='DELETE'){if(state.deleteThrow)throw new Error('net');if(state.deleteFail)return ok({},500);return T.delete(dm[2])?new Response(null,{status:204}):ok({},404);}return T.has(dm[2])?ok({id:dm[2]}):ok({},404);}
   }
+  if(url==='https://oauth2.googleapis.com/revoke'){(state.revokes??=[]).push(new URLSearchParams(init.body).get('token'));if(state.revokeThrow)throw new Error('net');return ok({},state.revokeStatus??200);}
   if(url==='https://oauth2.googleapis.com/token'){const p=new URLSearchParams(init.body);
    if(p.get('grant_type')==='authorization_code'){if(p.get('code')!=='good-code'||!p.get('code_verifier'))return ok({error:'invalid_grant'},400);return ok({access_token:'at1',refresh_token:'rt-secret',scope:state.scope??(state.labelFilter?GMAIL_SCOPES_LABEL_FILTER.join(' '):'https://www.googleapis.com/auth/gmail.readonly')});}
    if(state.revoked)return ok({error:'invalid_grant'},400);return ok({access_token:'at2'});}
@@ -809,4 +810,33 @@ test('dev maintenance: scoped to the one mailbox, only due rows, no inbox pollin
  assert.deepEqual((await s.store.connectionsWithDue(NOW,5)).map(x=>x.mailbox).sort(),['me@gmail.test','other@gmail.test']);
  assert.deepEqual((await s.store.connectionsWithDue(NOW,5,'Me@Gmail.test')).map(x=>x.mailbox),['me@gmail.test']);
  s.db.sqlite.close();
+});
+
+const revokesOf=s=>s.state.revokes??[];
+test('post-exchange refusal of a mailbox with no stored connection revokes only the newly issued grant, with no Gmail write',async()=>{
+ const s=await setup({labelFilter:LF,devMailbox:'someone-else@gmail.test'});const c=await connect(s);
+ assert.equal(c.res.reason,'mailbox_not_allowed');assert.equal(c.res.grantRevoked,true);assert.deepEqual(revokesOf(s),['rt-secret']);
+ assert.equal((s.state.reqs??[]).filter(x=>x.m!=='GET'&&!x.p.includes('oauth2.googleapis.com')).length,0);assert.equal(lrow(s),undefined);assert.equal(await s.store.opFor('someone-else@gmail.test'),undefined);s.db.sqlite.close();
+});
+test('a failed reconnect never revokes the grant while a stored connection holds an envelope for the mailbox',async()=>{
+ const s=await setup({labelFilter:LF});const first=await connect(s);assert.equal(first.res.ok,true);assert.deepEqual(revokesOf(s),[]);
+ s.state.filterFail=true;const second=await connect(s);assert.equal(second.res.ok,false);assert.notEqual(second.res.grantRevoked,true);assert.deepEqual(revokesOf(s),[]);
+ const row=s.db.sqlite.prepare('SELECT refresh_envelope e FROM gmail_connections').get();assert.ok(row);s.db.sqlite.close();
+});
+test('another owner holding the mailbox is never revoked (mailbox_in_use)',async()=>{
+ const s=await setup({labelFilter:LF});assert.equal((await connect(s,'a')).res.ok,true);const r=await connect(s,'b');
+ assert.equal(r.res.reason,'mailbox_in_use');assert.notEqual(r.res.grantRevoked,true);assert.deepEqual(revokesOf(s),[]);s.db.sqlite.close();
+});
+test('successful connect revokes nothing',async()=>{const s=await setup({labelFilter:LF});assert.equal((await connect(s)).res.ok,true);assert.deepEqual(revokesOf(s),[]);s.db.sqlite.close();});
+test('without a dev op or a known mailbox ownership cannot be established, so nothing is revoked',async()=>{
+ let s=await setup({});const st=await begin(s,'a');s.sess.revoke();s.budget.reset();
+ const r=await s.oauth.callback({code:'good-code',state:new URL(st.authorizationUrl).searchParams.get('state'),session:sessOf('a')});
+ assert.equal(r.reason,'session_revoked');assert.deepEqual(revokesOf(s),[]);s.db.sqlite.close();
+ s=await setup({labelFilter:LF,scope:'https://www.googleapis.com/auth/gmail.readonly'});const c=await connect(s);assert.equal(c.res.reason,'scope_missing');assert.deepEqual(revokesOf(s),[]);s.db.sqlite.close();
+});
+test('a failed revoke is reported as not revoked and does not poison the dev lifecycle',async()=>{
+ let s=await setup({labelFilter:LF,devMailbox:'someone-else@gmail.test',revokeStatus:503});let c=await connect(s);
+ assert.equal(c.res.grantRevoked,false);assert.equal(c.res.reason,'mailbox_not_allowed');assert.equal(await s.store.opFor('someone-else@gmail.test'),undefined);s.db.sqlite.close();
+ s=await setup({labelFilter:LF,devMailbox:'someone-else@gmail.test',revokeThrow:true});c=await connect(s);
+ assert.equal(c.res.grantRevoked,false);assert.equal(c.res.reason,'mailbox_not_allowed');assert.equal(await s.store.opFor('someone-else@gmail.test'),undefined);s.db.sqlite.close();
 });

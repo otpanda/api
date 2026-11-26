@@ -37,14 +37,40 @@ export class GmailSourceOauth {
     const r = await this.sync.withOp(this.devMailbox, 'connect', claimed.ownerId, op => this.finish(claimed, code, op));
     return r.blocked ? { ok: false, reason: 'lifecycle_blocked' } : r.value;
   }
+  // Wraps the exchange so a failure AFTER Google issued tokens never leaves a live grant that no stored connection owns.
+  // The new refresh token is revoked at Google only when ALL hold: this call holds the single-flight (which belongs to the
+  // configured DEV mailbox, not to the profile mailbox Google returned), the profile mailbox was read for this very token,
+  // and no stored connection for that profile mailbox holds an envelope. Revoking a refresh token revokes the grant, so any stored token for the same Google account could die with
+  // it; if a row with an envelope exists, or it cannot be read, the grant is left alone. Without the op (no dev mailbox) or
+  // without a known mailbox (profile or scope failure) ownership cannot be established, so nothing is revoked.
   async finish(claimed, code, op) {
+    const ctx = {};
+    let res;
+    try { res = await this.finishExchange(claimed, code, op, ctx); }
+    catch (e) { await this.revokeUnowned(ctx, op); throw e; }
+    if (res?.ok === false) res = { ...res, grantRevoked: await this.revokeUnowned(ctx, op) };
+    return res;
+  }
+  async revokeUnowned(ctx, op) {
+    if (!op || !ctx.refresh || !ctx.mailbox) return false;
+    try {
+      const row = await this.store.byMailbox(ctx.mailbox);
+      if (row && row.refresh_envelope) return false;
+      // Plain fetch, not op.f: a cleanup outage must never mark the DEV mailbox lifecycle indeterminate. Result is reported only.
+      const r = await this.f('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ token: ctx.refresh }) });
+      return r.ok === true;
+    } catch { return false; } // best effort: any failure just reports false and leaves the grant
+  }
+  async finishExchange(claimed, code, op, ctx) {
     const tr = await this.f('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: this.clientId, client_secret: this.clientSecret, code, code_verifier: claimed.verifier, grant_type: 'authorization_code', redirect_uri: this.redirectUri }) });
     if (!tr.ok) return { ok: false, reason: 'exchange_failed' };
     const t = await tr.json();
     if (typeof t.access_token !== 'string' || typeof t.refresh_token !== 'string' || !this.scopes().every(x => String(t.scope ?? '').split(' ').includes(x))) return { ok: false, reason: 'scope_missing' };
+    ctx.refresh = t.refresh_token;
     const pr = await this.sync.get('/profile', t.access_token);
     if (!pr.ok) return { ok: false, reason: 'profile_failed' };
     let mailbox; try { mailbox = canonicalMailbox((await pr.json()).emailAddress); } catch { return { ok: false, reason: 'profile_failed' }; }
+    ctx.mailbox = mailbox;
     if (this.devMailbox && mailbox !== this.devMailbox) return { ok: false, reason: 'mailbox_not_allowed' }; // no Gmail write of any kind
     if (await this.isCurrent({ ownerId: claimed.ownerId, deviceId: claimed.deviceId, generation: claimed.generation }) !== true) return { ok: false, reason: 'session_revoked' };
     const existing = this.sync.labelFilter ? await this.store.byMailbox(mailbox) : undefined;

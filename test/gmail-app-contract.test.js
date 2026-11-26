@@ -18,6 +18,7 @@ import {createGmailSourceServices, createGmailCollectionHost} from '../src/gmail
 import {GMAIL_CODE_FILTER} from '../src/gmail-label-filter.js';
 import {database} from './sqlite-helper.js';
 const API = 'https://otpanda-api.abrahammurciano.workers.dev';
+const SRC_ID = '367143149550-cu61adcdqclntipnl84e096kp35vduvk.apps.googleusercontent.com';
 test('composition without GMAIL_DEV_MAILBOX is not built and routes answer 503 with no DB access', async () => {
   let calls = 0; const fail = () => { calls++; throw Error('no'); };
   const env = {DB: {prepare: fail}};
@@ -30,11 +31,20 @@ test('composition without GMAIL_DEV_MAILBOX is not built and routes answer 503 w
 });
 test('composition is label mode bound to one canonical dev mailbox, never INBOX mode', async () => {
   const k = new Uint8Array(32).fill(7);
-  const env = {DB: database(), ACTIVE_KEY_ID: 'k1', ENCRYPTION_KEYRING: JSON.stringify([{id: 'k1', key: Buffer.from(k).toString('base64url')}]), GMAIL_SOURCE_CLIENT_ID: 'cid', GMAIL_SOURCE_CLIENT_SECRET: 'sec', GMAIL_DEV_MAILBOX: ' Dev.Box@Example.TEST '};
+  const env = {DB: database(), ACTIVE_KEY_ID: 'k1', ENCRYPTION_KEYRING: JSON.stringify([{id: 'k1', key: Buffer.from(k).toString('base64url')}]), GMAIL_SOURCE_CLIENT_ID: SRC_ID, GMAIL_SOURCE_CLIENT_SECRET: 'sec', GMAIL_DEV_MAILBOX: ' Dev.Box@Example.TEST '};
   let svc; try { svc = await createGmailSourceServices(env); } catch (e) { assert.fail('keyring env shape: ' + e.message); }
   assert.equal(svc.sync.labelFilter, GMAIL_CODE_FILTER);
   assert.equal(svc.devMailbox, 'dev.box@example.test');
   assert.equal(svc.oauth.devMailbox, 'dev.box@example.test');
   assert.equal(svc.oauth.scopes().length, 3);
   env.DB.sqlite?.close?.();
+});
+test('source OAuth client must be the app-pinned one and distinct from sign-in and native clients', async () => {
+  const k = new Uint8Array(32).fill(7);
+  const base = {ACTIVE_KEY_ID: 'k1', ENCRYPTION_KEYRING: JSON.stringify([{id: 'k1', key: Buffer.from(k).toString('base64url')}]), GMAIL_SOURCE_CLIENT_SECRET: 'sec', GMAIL_DEV_MAILBOX: 'd@example.test'};
+  const signin = '367143149550-560r90pmkqr71qp1tid3amck2a053rdg.apps.googleusercontent.com';
+  for (const extra of [{GMAIL_SOURCE_CLIENT_ID: signin, GOOGLE_CLIENT_ID: signin}, {GMAIL_SOURCE_CLIENT_ID: 'other.apps.googleusercontent.com'}, {GMAIL_SOURCE_CLIENT_ID: SRC_ID, GOOGLE_CLIENT_ID: SRC_ID}, {GMAIL_SOURCE_CLIENT_ID: SRC_ID, NATIVE_GOOGLE_AUDIENCES: 'x,' + SRC_ID}, {}])
+    await assert.rejects(createGmailSourceServices({DB: database(), ...base, ...extra}), /client mismatch|TypeError/);
+  const ok = await createGmailSourceServices({DB: database(), ...base, GMAIL_SOURCE_CLIENT_ID: SRC_ID, GOOGLE_CLIENT_ID: signin, NATIVE_GOOGLE_AUDIENCES: signin});
+  assert.equal(ok.devMailbox, 'd@example.test');
 });

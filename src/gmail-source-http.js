@@ -38,7 +38,9 @@ export function createGmailSourceHttp({db,sessions,oauth,sync,sourceStore,clock=
    // No cookie inspection, state consumption, Google exchange or watch while gated.
    if(!ready)return json({error:'collection_not_ready'},503);
    if([...u.searchParams.keys()].some(k=>!['state','code','error','scope','authuser','prompt'].includes(k))||['state','code','error'].some(k=>u.searchParams.getAll(k).length>1))return json({error:'invalid_request'},400);
-   try{const session=await sessions.inspectBrowserRefresh(readCookie(request,REFRESH_COOKIE));await oauth.callback({state:u.searchParams.get('state'),code:u.searchParams.get('code'),error:u.searchParams.get('error'),session});return new Response(null,{status:303,headers:{Location:'https://otpanda.github.io/app/#/sources','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});}catch{return json({error:'unavailable'},503);}
+   // Neutral marker only: the app reads it once and shows a generic message. It never carries a reason, mailbox or account.
+   const back=ok=>new Response(null,{status:303,headers:{Location:'https://otpanda.github.io/app/?gmail='+(ok?'connected':'refused')+'#/sources','Cache-Control':'no-store','Referrer-Policy':'no-referrer'}});
+   try{const session=await sessions.inspectBrowserRefresh(readCookie(request,REFRESH_COOKIE));const r=await oauth.callback({state:u.searchParams.get('state'),code:u.searchParams.get('code'),error:u.searchParams.get('error'),session});return back(r?.ok===true);}catch{return back(false);}
   }
   const reply=(x,status=200)=>json(x,status,cors);
   if(u.search)return reply({error:'not_found'},404);

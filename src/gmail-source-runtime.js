@@ -19,11 +19,15 @@ import {canonicalClientAddress} from './client-address.js';
 import {json} from './sessions.js';
 import {importBrowserKeyring} from './browser-keyring.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
+// The Gmail source OAuth client. It must be the one the live app bridge pins, and never the sign-in/native client, because a
+// grant revoke or consent change on one client must not touch the other's grants.
+const SOURCE_CLIENT_ID='367143149550-cu61adcdqclntipnl84e096kp35vduvk.apps.googleusercontent.com';
 export async function createGmailSourceServices(env,{clock=Date.now,fetchImpl=fetch}={}){
  // DEV ONLY: label mode is the only mode this factory builds, and it is bound to exactly one mailbox named by a
  // non-secret var. No default and no fallback: without it the services are not built (fail closed, never INBOX mode).
  if(typeof env.GMAIL_DEV_MAILBOX!=='string'||!env.GMAIL_DEV_MAILBOX.trim())throw new TypeError('GMAIL_DEV_MAILBOX required');
  const devMailbox=canonicalMailbox(env.GMAIL_DEV_MAILBOX.trim());
+ if(env.GMAIL_SOURCE_CLIENT_ID!==SOURCE_CLIENT_ID||[env.GOOGLE_CLIENT_ID,...String(env.NATIVE_GOOGLE_AUDIENCES??'').split(',').map(v=>v.trim())].includes(env.GMAIL_SOURCE_CLIENT_ID))throw new TypeError('Gmail source OAuth client mismatch');
  const budget=createRequestBudget(50),db=budgetedDb(env.DB,budget),f=budgetedFetch(fetchImpl,budget);
  const keys=await importBrowserKeyring(env),sessions=new DeviceSessionService(db,{clock}),store=new GmailSourceStore(db,new GmailTokenCipher(keys));
  const sources=new SourceEntryStore(db,new CodeCipher(keys),{matcher:new ServiceMetadata(db)});
