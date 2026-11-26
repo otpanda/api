@@ -83,6 +83,12 @@ export class DeviceSessionService {
     const row=await this.db.prepare(`SELECT d.owner_id,d.device_id,d.generation,d.client_kind,a.expires_at,CASE WHEN d.credential_id IS NULL THEN 'google' ELSE 'passkey' END AS auth_method FROM device_access_handles a JOIN device_sessions d ON d.device_id=a.device_id ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE a.handle_id=?1 AND a.secret_digest=?2 AND a.created_at<=?3 AND a.expires_at>?3 AND ${ACTIVE}`).bind(t.id,t.digest,now).first();
     return row?{ownerId:row.owner_id,deviceId:row.device_id,generation:row.generation,clientKind:row.client_kind,expiresAt:row.expires_at,authMethod:row.auth_method}:undefined;
   }
+  // OAuth callback identity check only (Gmail source connect). Never consumes, rotates or extends a refresh handle and never mints access material.
+  async inspectBrowserRefresh(token){
+    const t=await tokenDigest(token);if(!t)return undefined;const now=this.now();
+    const row=await this.db.prepare(`SELECT d.owner_id,d.device_id,d.generation FROM device_refresh_handles r JOIN device_sessions d ON d.device_id=r.device_id ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE r.handle_id=?1 AND r.secret_digest=?2 AND r.used_at IS NULL AND r.created_at<=?3 AND d.client_kind='web' AND ${ACTIVE}`).bind(t.id,t.digest,now).first();
+    return row?{ownerId:row.owner_id,deviceId:row.device_id,generation:row.generation}:undefined;
+  }
   async rotate(token,{clientKind}={}){
     const t=await tokenDigest(token);if(!t)return {status:'denied'};let now=this.now();
     const row=await this.db.prepare(`SELECT r.used_at,d.device_id,d.owner_id,d.generation,d.client_kind FROM device_refresh_handles r JOIN device_sessions d ON d.device_id=r.device_id ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE r.handle_id=?1 AND r.secret_digest=?2 AND r.created_at<=?3 AND ${ACTIVE}`).bind(t.id,t.digest,now).first();
