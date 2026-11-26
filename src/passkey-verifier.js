@@ -4,7 +4,7 @@ import { base64urlDecode } from './tokens.js';
 // Defer unrelated WebAuthn library initialization until a passkey ceremony.
 // Batch/session requests never need its certificate/registration machinery.
 let webauthn;
-const library=()=>webauthn??=import('@simplewebauthn/server');
+const library=()=>webauthn??=import('@simplewebauthn/server').catch(error=>{webauthn=undefined;throw error;});
 const generateRegistrationOptions=async(...args)=>(await library()).generateRegistrationOptions(...args);
 const generateAuthenticationOptions=async(...args)=>(await library()).generateAuthenticationOptions(...args);
 const verifyRegistrationResponse=async(...args)=>(await library()).verifyRegistrationResponse(...args);

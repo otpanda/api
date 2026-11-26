@@ -32,6 +32,7 @@ export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.n
  const policy=responsePolicy({...horizonPolicy,digits:[6,7,8],maxCodesPerEntry:maxCodes});
  if(!db||typeof generator?.generateWindowForActor!=='function'||typeof clock!=='function')throw new TypeError('TOTP batch dependencies required');
  const auth=createDeviceSessionAuth({sessions,native});
+ let completedBatch=false;
  return {async fetch(request,{clientAddress}={}){
   const url=new URL(request.url);
   if(url.origin!==API||url.pathname!==PATH)return json({error:'not_found'},404);
@@ -49,13 +50,18 @@ export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.n
    const rate=await takeRateLimit(db,'totp-batch:'+clientAddress,{now,limit:ratePerMinute});
    if(!rate.allowed)return reply({error:'rate_limited'},429,{'Retry-After':String(rate.retryAfter)});
    const viewer=await auth.authenticate(request);if(!viewer)return reply({error:'unauthorized'},401);
-   const result=await generator.generateWindowForActor(viewer.ownerId,query.entries,Math.floor(now/1000),{windowSeconds:query.window,horizonPolicy});
+   // Conservative first-use work bound, not a CPU timer. Concurrent requests
+   // remain minimal until a batch has fully completed. A new isolate resets it.
+   const firstUse=!completedBatch;
+   const generationPolicy=firstUse?{...horizonPolicy,budget:query.entries.length,entryCap:query.entries.length,minUsefulWindow:1}:horizonPolicy;
+   const result=await generator.generateWindowForActor(viewer.ownerId,query.entries,Math.floor(now/1000),{windowSeconds:query.window,horizonPolicy:generationPolicy});
    const current=await auth.authenticate(request);if(!same(viewer,current))return reply({error:'unauthorized'},401);
    const final=finalizeCommonHorizon({requestedIds:query.entries,
     entries:result?.entries,omitted:result?.omitted,coverageUntil:result?.coverageUntil,
-    nowMs:timestamp(clock),minRemainingMs,policy});
+    nowMs:timestamp(clock),minRemainingMs:1,policy});
    if(final.status!=='ok')return reply({error:'unavailable'},503);
    const {status,...body}=final;
+   completedBatch=true;
    return reply(body);
   }catch{return reply({error:'unavailable'},503);}
  }};
