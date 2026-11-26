@@ -8,6 +8,9 @@
   "vars": {
     "DEPLOYMENT_STAGE": "auth-only",
     "AUTH_ONLY_SIGNUP_MODE": "public",
+    "EXTENSION_AUTH_ENABLED": "1",
+    "EXTENSION_REDIRECTS": "{\"chrome\":\"https://dahkpedanfmbhdocgmcchcdhifkbbien.chromiumapp.org/\"}",
+    "EXTENSION_ORIGINS": "[\"chrome-extension://dahkpedanfmbhdocgmcchcdhifkbbien\"]",
     "NATIVE_AUTH_ENABLED": "1",
     "NATIVE_ASSET_FINGERPRINTS": "05:C6:2F:2D:61:FB:DC:15:0F:DD:DA:58:E7:FB:C8:36:65:0A:65:74:3A:B5:3F:13:93:AE:08:D5:5C:A8:59:99",
     "NATIVE_GOOGLE_AUDIENCES": "367143149550-560r90pmkqr71qp1tid3amck2a053rdg.apps.googleusercontent.com",
