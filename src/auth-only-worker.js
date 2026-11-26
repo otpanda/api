@@ -14,6 +14,7 @@ import {realtimeConfiguration} from './browser-worker-adapter.js';
 import {canonicalAccountEmail} from './account-identity.js';
 import {json} from './sessions.js';
 import {appFailure} from './silent-bridge.js';
+import {createGmailCollectionHost,gmailDevEnabled} from './gmail-source-runtime.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev';
 const paths=new Set([...['begin','exchange','challenge','renew','logout'].map(p=>'/auth/extension/'+p),'/v1/manage/entry/domains',
  ...['request','verify','complete-code','complete-begin','complete-finish'].map(p=>'/auth/native/recovery/email/'+p),...['begin','finish'].map(p=>'/v1/manage/google/link/'+p),
@@ -23,6 +24,8 @@ const paths=new Set([...['begin','exchange','challenge','renew','logout'].map(p=
  ...['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p),...['rename','account'].map(p=>'/v1/manage/entry/'+p),
  '/auth/restore','/auth/exchange','/auth/renew','/auth/device/logout','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources','/v1/manage/session','/v1/manage/account','/v1/manage/organization','/v1/manage/organization-copy','/v1/manage/passkey/rename','/v1/manage/session/describe','/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish',
 ]);
+// Dev-mailbox Gmail source. Mounted only while GMAIL_DEV_COLLECTION has its one exact value; otherwise these paths stay 404 as before.
+const gmailPaths=new Set(['/v1/manage/gmail-source','/v1/manage/gmail-source/begin','/v1/manage/gmail-source/status','/sources/gmail/oauth/callback','/sources/gmail/push']);
 const realtimePaths=new Set(['/auth/realtime/ticket','/auth/realtime']),extensionRealtimePaths=new Set(['/auth/extension/realtime/ticket','/auth/extension/realtime']);
 export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...args),clock=Date.now}={}) {
  let owner,mode,configured=false,invalid=false;
@@ -38,6 +41,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
   if(!configured){owner=current;mode=currentMode;configured=true;}
   return true;
  };
+  const gmail=createGmailCollectionHost({fetchImpl,clock,resolveTrustedIngress:resolveCloudflareDirectIngress});
  const browser=createBrowserWorkerAdapter({resolveTrustedIngress:resolveCloudflareDirectIngress,fetchImpl,clock,signupAllowed});
  return {
   async fetch(request,env,ctx) {
@@ -56,6 +60,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
      return json({service:'otpanda-api',stage:'auth-only',database:'available',recoveryDelivery:(recoveryDelivery.deadNotifications+recoveryDelivery.deadCodeJobs)>0?'attention':'ok',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged'},200);
     }catch{return json({error:'unavailable'},503);}
    }
+   if(gmailPaths.has(url.pathname)&&gmailDevEnabled(env))return gmail.fetch(request,env);
    if(!paths.has(url.pathname)&&!((realtimePaths.has(url.pathname)&&realtimeConfiguration(env))||(extensionRealtimePaths.has(url.pathname)&&realtimeConfiguration(env)?.extension)))return json({error:'not_found'},404);
    // Public registration requires an explicit mode with no owner binding.
    // Existing isolates latch policy and refuse runtime scope changes.
@@ -72,7 +77,9 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
   async scheduled(event,env,ctx) {
    if(env?.DEPLOYMENT_STAGE!=='auth-only'||!env.DB?.prepare)return;
    // Realtime delivery runs in its OWN cron invocation (its own 50 query allowance), never next to the identity cleanup.
-   if(event?.cron===REALTIME_CRON){if(!env.REALTIME_HUB)return;const drain=drainSome({db:env.DB,deliver:hubDeliver(env.REALTIME_HUB),clock,budget:new Budget(CRON_QUERY_MAX),sends:new Budget(CRON_DELIVERY_MAX)}).catch(()=>{});if(ctx?.waitUntil)ctx.waitUntil(drain);else await drain;return;}
+   if(event?.cron===REALTIME_CRON){const jobs=[];if(env.REALTIME_HUB)jobs.push(drainSome({db:env.DB,deliver:hubDeliver(env.REALTIME_HUB),clock,budget:new Budget(CRON_QUERY_MAX),sends:new Budget(CRON_DELIVERY_MAX)}).catch(()=>{}));
+    // Gmail dev maintenance shares this invocation (own 25 allowance, 20 + 25 stays under the 45 ceiling). Counts only, never throws.
+    if(gmailDevEnabled(env))jobs.push(gmail.scheduled(event,env).catch(()=>{}));if(!jobs.length)return;const run=Promise.all(jobs);if(ctx?.waitUntil)ctx.waitUntil(run);else await run;return;}
    // Classify lapsed jobs as expired failures BEFORE cleanup can delete them,
    // then log counts only (no ids, addresses or codes) when anything is dead.
    const work=(async()=>{await expireRecoveryCodeJobs({db:env.DB,clock}).catch(()=>{});const h=await recoveryDeliveryHealth({db:env.DB,clock}).catch(()=>undefined);if(h&&(h.deadNotifications||h.deadCodeJobs))console.warn('recovery-delivery-attention',JSON.stringify(h));return Promise.all([cleanupIdentity({db:env.DB,clock,limit:100}),env.BREVO_API_KEY?deliverRecoveryNotifications({db:env.DB,clock,deliver:createRecoveryNotificationDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10}):undefined,env.BREVO_API_KEY?(async()=>{try{await drainRecoveryCodeJobs({db:env.DB,clock,cipher:new CodeCipher(await importBrowserKeyring(env)),deliver:createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10});}catch{}})():undefined]);})();

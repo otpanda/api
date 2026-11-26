@@ -21,7 +21,8 @@ const API = 'https://otpanda-api.abrahammurciano.workers.dev';
 const SRC_ID = '367143149550-cu61adcdqclntipnl84e096kp35vduvk.apps.googleusercontent.com';
 test('composition without GMAIL_DEV_MAILBOX is not built and routes answer 503 with no DB access', async () => {
   let calls = 0; const fail = () => { calls++; throw Error('no'); };
-  const env = {DB: {prepare: fail}};
+  // Enabled (the exact value) but no mailbox: fail closed. Without the enable value the routes are unmounted (gmail-dev-mount.test.js).
+  const env = {DB: {prepare: fail}, GMAIL_DEV_COLLECTION: 'dev-mailbox-only'};
   await assert.rejects(createGmailSourceServices(env));
   const h = createGmailCollectionHost({fetchImpl: fail});
   for (const path of ['/v1/manage/gmail-source/status', '/sources/gmail/oauth/callback?state=a&code=b', '/sources/gmail/push'])

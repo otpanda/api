@@ -1,5 +1,6 @@
-// Local-only source composition, not mounted. A caller cannot enable collection
-// by env flag: ready is false until the verified raw-message path is integrated.
+// Dev-mailbox-only source composition. Nothing runs unless the deployment sets the single exact enable value below AND every
+// pinned identity is present (mailbox, source client and secret, push audience, push service account). Any other value or a
+// missing piece leaves the routes unmounted (enable var) or fails closed with 503 (enabled but misconfigured).
 import {createRequestBudget,budgetedDb,budgetedFetch} from './request-budget.js';
 import {GmailSourceStore,canonicalMailbox} from './gmail-source-store.js';
 import {GmailSourceOauth} from './gmail-source-oauth.js';
@@ -22,13 +23,18 @@ const API='https://otpanda-api.abrahammurciano.workers.dev';
 // The Gmail source OAuth client. It must be the one the live app bridge pins, and never the sign-in/native client, because a
 // grant revoke or consent change on one client must not touch the other's grants.
 const SOURCE_CLIENT_ID='367143149550-cu61adcdqclntipnl84e096kp35vduvk.apps.googleusercontent.com';
-export async function createGmailSourceServices(env,{clock=Date.now,fetchImpl=fetch}={}){
+export const GMAIL_DEV_ENABLE_VALUE='dev-mailbox-only';
+export const gmailDevEnabled=env=>env?.GMAIL_DEV_COLLECTION===GMAIL_DEV_ENABLE_VALUE;
+// Subrequest allowance for the scheduled run: it shares an invocation with the realtime drain (20), 45 combined ceiling.
+export const GMAIL_CRON_BUDGET=25;
+export async function createGmailSourceServices(env,{clock=Date.now,fetchImpl=fetch,budgetLimit=50,ready=false}={}){
  // DEV ONLY: label mode is the only mode this factory builds, and it is bound to exactly one mailbox named by a
  // non-secret var. No default and no fallback: without it the services are not built (fail closed, never INBOX mode).
  if(typeof env.GMAIL_DEV_MAILBOX!=='string'||!env.GMAIL_DEV_MAILBOX.trim())throw new TypeError('GMAIL_DEV_MAILBOX required');
  const devMailbox=canonicalMailbox(env.GMAIL_DEV_MAILBOX.trim());
  if(env.GMAIL_SOURCE_CLIENT_ID!==SOURCE_CLIENT_ID||[env.GOOGLE_CLIENT_ID,...String(env.NATIVE_GOOGLE_AUDIENCES??'').split(',').map(v=>v.trim())].includes(env.GMAIL_SOURCE_CLIENT_ID))throw new TypeError('Gmail source OAuth client mismatch');
- const budget=createRequestBudget(50),db=budgetedDb(env.DB,budget),f=budgetedFetch(fetchImpl,budget);
+ if(typeof env.GMAIL_SOURCE_CLIENT_SECRET!=='string'||!env.GMAIL_SOURCE_CLIENT_SECRET)throw new TypeError('Gmail source client secret required');
+ const budget=createRequestBudget(budgetLimit),db=budgetedDb(env.DB,budget),f=budgetedFetch(fetchImpl,budget);
  const keys=await importBrowserKeyring(env),sessions=new DeviceSessionService(db,{clock}),store=new GmailSourceStore(db,new GmailTokenCipher(keys));
  const sources=new SourceEntryStore(db,new CodeCipher(keys),{matcher:new ServiceMetadata(db)});
  const sync=new GmailSync({store,sources,fetchImpl:f,clientId:env.GMAIL_SOURCE_CLIENT_ID,clientSecret:env.GMAIL_SOURCE_CLIENT_SECRET,topicName:'projects/otpanda/topics/gmail-push',clock,budget,maxMessageUnits:1,labelFilter:GMAIL_CODE_FILTER});
@@ -41,21 +47,24 @@ export async function createGmailSourceServices(env,{clock=Date.now,fetchImpl=fe
   sessionGuard:async c=>gmailSessionGuard(c,clock()),
  });
  const gatedOauth={callback:v=>oauth.callback(v),async start(v){accepted={...v,proof:v.stepUp};try{return await oauth.start(v);}finally{accepted=undefined;}}};
- return {db,f,budget,store,sync,oauth,devMailbox,http:createGmailSourceHttp({db,sessions,oauth:gatedOauth,sync,sourceStore:store,clock,ready:false})};
+ return {db,f,budget,store,sync,oauth,devMailbox,http:createGmailSourceHttp({db,sessions,oauth:gatedOauth,sync,sourceStore:store,clock,ready})};
 }
 
-// Every call constructs fresh budget, sync, auth counter and resolver cache. No env
-// flag can activate collection. The guarded branches are preparation only.
-const COLLECTION_READY=false;
+// Every call constructs fresh budget, sync, auth counter and resolver cache.
 export function createGmailCollectionHost({clock=Date.now,fetchImpl=fetch,resolveTrustedIngress}={}) {
  const keys=createGmailJwksCache({clock});
  return {
   async fetch(request,env) {
    const u=new URL(request.url);
    if(u.origin!==API)return json({error:'not_found'},404);
-   if(u.pathname!=='/sources/gmail/push'){let svc;try{svc=await createGmailSourceServices(env,{clock,fetchImpl});}catch{return json({error:'collection_not_ready'},503);}return svc.http.fetch(request);}
+   if(u.pathname!=='/sources/gmail/push'){if(!gmailDevEnabled(env))return json({error:'not_found'},404);
+    // Same baseline as the other public routes, before any keyring import, database or Google work. The push route below keeps its own.
+    const caller=canonicalClientAddress(await resolveTrustedIngress?.(request));
+    if(!caller)return json({error:'unavailable'},503);
+    if((await env.IDENTITY_ADDRESS_LIMIT?.limit({key:'gmail-source:'+caller}))?.success!==true||(await env.IDENTITY_AUTH_GLOBAL_LIMIT?.limit({key:'otpanda-gmail-source-v1'}))?.success!==true)return json({error:'busy'},429);
+    let svc;try{svc=await createGmailSourceServices(env,{clock,fetchImpl,ready:true});}catch{return json({error:'collection_not_ready'},503);}return svc.http.fetch(request);}
    if(request.method!=='POST')return json({error:'method_not_allowed'},405);
-   if(!COLLECTION_READY)return json({error:'collection_not_ready'},503);
+   if(!gmailDevEnabled(env))return json({error:'not_found'},404);
    const address=canonicalClientAddress(await resolveTrustedIngress?.(request));
    if(!address||env.GMAIL_PUSH_AUDIENCE!==API+'/sources/gmail/push'||env.GMAIL_PUSH_SERVICE_ACCOUNT!=='gmail-push-oidc@otpanda.iam.gserviceaccount.com')return json({error:'unavailable'},503);
    if((await env.IDENTITY_ADDRESS_LIMIT?.limit({key:'gmail-push:'+address}))?.success!==true||(await env.IDENTITY_AUTH_GLOBAL_LIMIT?.limit({key:'otpanda-gmail-push-v1'}))?.success!==true)return json({error:'busy'},429);
@@ -69,8 +78,8 @@ export function createGmailCollectionHost({clock=Date.now,fetchImpl=fetch,resolv
    return keysUnavailable?json({error:'unavailable'},503):response;
   },
   async scheduled(event,env) {
-   if(!COLLECTION_READY)return {ready:false};
-   let svc;try{svc=await createGmailSourceServices(env,{clock,fetchImpl});}catch{return {ready:false};}
+   if(!gmailDevEnabled(env))return {ready:false};
+   let svc;try{svc=await createGmailSourceServices(env,{clock,fetchImpl,budgetLimit:GMAIL_CRON_BUDGET,ready:true});}catch{return {ready:false};}
    // Scoped to the one dev mailbox in SQL; the result carries counts only (the mailbox address is dropped).
    const {mailbox,...r}=await runGmailDevMaintenance({sync:svc.sync,store:svc.store,budget:svc.budget,clock,mailbox:svc.devMailbox});
    return {ready:true,...r};
