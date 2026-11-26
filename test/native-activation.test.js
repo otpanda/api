@@ -68,10 +68,11 @@ test('activation OFF at the runtime itself (no edge help): android token is refu
  }
  f.db.sqlite.close();});
 
-test('held batch endpoint is absent for web and native and uses no ingress or D1',async()=>{
+test('web-only batch denies native and extension origins before ingress; web preflight is pure',async()=>{
  let calls=0;const host=createIdentityEdgeHost({nativeApi:true,initialize(){calls++;throw Error('unexpected');},resolveTrustedIngress(){calls++;}});
- for(const origin of [undefined,APP])for(const method of ['GET','OPTIONS']){
-  const r=await host.fetch(req('/v1/manage/totp-codes',{origin,method}));assert.equal(r.status,404);
+ for(const origin of [undefined,'chrome-extension://abc','https://wrong.test'])for(const method of ['GET','OPTIONS']){
+  const r=await host.fetch(req('/v1/manage/totp-codes',{origin,method}));assert.equal(r.status,403);
  }
+ const pre=await host.fetch(new Request(API+'/v1/manage/totp-codes',{method:'OPTIONS',headers:{Origin:APP,'Access-Control-Request-Method':'GET','Access-Control-Request-Headers':'authorization'}}));assert.equal(pre.status,204);
  assert.equal(calls,0);
 });
