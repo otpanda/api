@@ -1,3 +1,4 @@
+import {APPROVAL_PATHS} from '../src/approvals-http.js';
 import {lazyHttp} from '../src/lazy-http.js';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {database} from './sqlite-helper.js';import {createIdentityRuntime} from '../src/identity-runtime.js';
@@ -27,6 +28,8 @@ test('all lazy HTTP routes construct on first use and fail generically without a
  const broken=createIdentityRuntime({...c,db:new Proxy(c.db,{get(target,key){if(key==='prepare')return()=>{throw Error('private constructor or DB detail');};return target[key];}})});
  const r=await broken.fetch(new Request(API+'/v1/manage/session',{headers:{Origin:APP,Authorization:'Bearer a.b'}}));assert.ok([401,503].includes(r.status));assert.equal((await r.text()).includes('private'),false);
  assert.equal((await broken.fetch(new Request(API+'/unknown'))).status,404);
+ const nativeApp=createIdentityRuntime({...c,native:{enabled:true}});for(const path of ['/v1/manage/device-key/enroll-begin',...APPROVAL_PATHS]){const r=await nativeApp.fetch(new Request(API+path,{headers:{Origin:APP}}));assert.ok([400,401,403,405].includes(r.status),path+' '+r.status);}
+
 }finally{c.db.sqlite.close();}});
 
 test('throwing lazy factory returns generic 503 with no partial/detail leak and other handlers work',async()=>{let attempts=0;const handler=lazyHttp(()=>{attempts++;throw Error('private constructor detail')});const okay=lazyHttp(()=>({fetch:()=>Response.json({ok:true})}));for(let n=0;n<2;n++){const response=await handler.fetch(new Request(API));assert.equal(response.status,503);assert.deepEqual(await response.json(),{error:'unavailable'});assert.equal((await okay.fetch(new Request(API))).status,200);}assert.equal(attempts,2);});
