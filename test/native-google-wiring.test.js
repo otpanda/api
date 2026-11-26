@@ -37,7 +37,7 @@ async function rig(over={},{keys}={}){
 const NONE={sessions:0,accounts:0};
 test('adapter e2e: Google-signed token gives exact 200 (android device, access, enroll grant) and one android session',async()=>{
  const r=await rig();const res=await r.complete(r.good.privateKey);assert.equal(res.status,200);const b=await res.json();
- assert.deepEqual(Object.keys(b).sort(),['access','access_expires_at','device_id','enroll_grant']);assert.match(b.access,/^otpda_/);assert.match(b.enroll_grant,/^otpda_/);assert.equal(b.access_expires_at,NOW+300000);
+ assert.deepEqual(Object.keys(b).sort(),['access','access_expires_at','device_id','enroll_grant']);assert.match(b.access,/^otpda_/);assert.match(b.enroll_grant,/^otpda_/);assert.equal(b.access_expires_at,NOW+900000);
  assert.equal(r.effects().sessions,1);assert.equal(r.e.DB.sqlite.prepare('SELECT client_kind FROM device_sessions').get().client_kind,'android');assert.ok(r.state.calls>=1);
 });
 test('adapter e2e: wrong signer, wrong audience, expired, unknown kid, removed (rotated) kid: 401 invalid_grant and no account/device effects',async()=>{

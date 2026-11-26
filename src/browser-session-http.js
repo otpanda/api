@@ -42,6 +42,12 @@ export function createBrowserSessionHttp({sessions,exchanges,renewals,db,clock=D
    if(url.search||request.headers.get('content-type')!=='application/json'||Number(request.headers.get('content-length')??0)>4096)return json({error:'invalid_request'},400,cors);
    const text=await boundedText(request,4096);if(text===undefined)return json({error:'invalid_request'},400,cors);
    let data;try{data=JSON.parse(text);}catch{return json({error:'invalid_request'},400,cors);}
+   // Optional opt-in to the 15 minute access life. Absent = previous 5 minutes, so older open tabs keep working.
+   let accessMs=300000;
+   if(data&&typeof data==='object'&&!Array.isArray(data)&&Object.hasOwn(data,'access_window')){
+    if(data.access_window!==900)return json({error:'invalid_request'},400,cors);
+    accessMs=900000;data={...data};delete data.access_window;
+   }
    if(renew){
     const shape=data&&!Array.isArray(data)?Object.keys(data).sort().join(','):'';
     const resume=shape==='expires_at,handle_id,lineage_id,signature';
@@ -52,13 +58,13 @@ export function createBrowserSessionHttp({sessions,exchanges,renewals,db,clock=D
     if(resume&&request.headers.get('authorization')!==null)return json({error:'invalid_request'},400,cors);
     // Per-lineage ceiling on top of the per-address one; failures and successes both count.
     if(!(await takeRateLimit(db,'renew:lineage:'+data.lineage_id,{now:clock(),limit:20})).allowed)return json({error:'rate_limited'},429,cors);
-    const r=resume?await renewals.resume({lineageId:data.lineage_id,handleId:data.handle_id,signature:data.signature,expiresAt:data.expires_at}):await renewals.renew({token,lineageId:data.lineage_id,signature:data.signature,expiresAt:data.expires_at});
+    const r=resume?await renewals.resume({lineageId:data.lineage_id,handleId:data.handle_id,signature:data.signature,expiresAt:data.expires_at,accessMs}):await renewals.renew({token,lineageId:data.lineage_id,signature:data.signature,expiresAt:data.expires_at,accessMs});
     if(r.status==='renewed')return json({access:r.access,accessExpiresAt:r.accessExpiresAt,renewal:r.renewal},200,cors);
     return r.status==='renewed-elsewhere'?json({error:'renewed'},409,cors):json({error:'invalid_grant'},401,cors);
    }
    const keys=data&&!Array.isArray(data)?Object.keys(data).sort().join(','):'';
    if(!data||Array.isArray(data)||!['code,redirect_uri,verifier','code,redirect_uri,renewal_key,verifier'].includes(keys))return json({error:'invalid_request'},400,cors);
-   const result=await exchanges.exchange({code:data.code,verifier:data.verifier,redirectUri:data.redirect_uri,...(keys.includes('renewal_key')?{renewalKey:data.renewal_key}:{})});
+   const result=await exchanges.exchange({code:data.code,verifier:data.verifier,redirectUri:data.redirect_uri,...(keys.includes('renewal_key')?{renewalKey:data.renewal_key}:{}),accessMs});
    return result?json(result,200,cors):json({error:'invalid_grant'},401,cors);
   }
   if(request.method==='GET'){

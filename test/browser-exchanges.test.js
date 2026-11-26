@@ -43,6 +43,6 @@ test('access ceiling applies to browser exchange and cannot leak a new token',as
  for(let i=0;i<63;i++){const r=await f.service.rotate(refresh);assert.equal(r.status,'rotated');refresh=r.refresh;}
  const x=await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri});assert.equal(await f.exchange.exchange({code:x.code,verifier,redirectUri}),undefined);
  assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM device_access_handles').get().n,64);assert.equal(await f.exchange.exchange({code:x.code,verifier,redirectUri}),undefined);
- f.setTime(NOW+300001);const y=await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri});assert.ok(await f.exchange.exchange({code:y.code,verifier,redirectUri}));
+ f.setTime(NOW+900001);const y=await f.exchange.mint({deviceId:f.d.deviceId,challenge,redirectUri});const z=await f.exchange.exchange({code:y.code,verifier,redirectUri});assert.ok(z);assert.equal(z.accessExpiresAt,NOW+900001+300000,'browser exchange defaults to the 5 minute web access life');
  }finally{f.db.sqlite.close();}
 });

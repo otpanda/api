@@ -3,7 +3,7 @@
 // data; every read still goes through the authorized GET.
 export const REALTIME_CRON='*/5 * * * *';
 export const PAGE=100,LEASE_MS=60_000,RETAIN_MS=24*60*60*1000;
-// A socket exists only if a ticket was minted within the access lifetime (5 min) plus margin.
+// A socket exists only if a ticket was minted within the socket cap (5 min, SOCKET_MAX_MS in realtime-http.js; access itself lives 15 min) plus margin.
 export const ACTIVITY_MS=6*60*1000;
 export const CHANGED=Object.freeze({v:1,t:'changed'});
 export const CLOSE_ALL=Object.freeze({v:1,t:'closeAll'});

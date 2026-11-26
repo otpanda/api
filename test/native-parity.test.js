@@ -36,7 +36,7 @@ test('adapter: web default unchanged; native opt-in needs NO Origin and an andro
  assert.equal(await nat.authenticate(req('/x',webAccess)),undefined,'web token without Origin');
  assert.equal(await nat.authenticate(req('/x',f.and.access,'https://evil.example')),undefined);
  assert.equal(nat.originAllowed(req('/x','t','https://evil.example')),false);assert.equal(webAuth.originAllowed(req('/x','t')),false);
- f.setNow(NOW+400000);assert.equal(await nat.authenticate(req('/x',f.and.access)),undefined,'expired');f.db.sqlite.close();});
+ f.setNow(NOW+900001);assert.equal(await nat.authenticate(req('/x',f.and.access)),undefined,'expired');f.db.sqlite.close();});
 test('route: account overview serves native only when opted in, same data as web, revocation ends it',async()=>{
  const f=await fixture(),opts={clientAddress:'9.9.9.9'},off=createAccountOverviewHttp({db:f.db,sessions:f.sessions,clock:f.clock}),on=createAccountOverviewHttp({db:f.db,sessions:f.sessions,clock:f.clock,native:true});
  assert.equal((await off.fetch(req('/v1/manage/account',f.and.access),opts)).status,403);

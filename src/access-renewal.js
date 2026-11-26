@@ -9,7 +9,7 @@
 import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-method.js';
 import {generateAccessToken,parseAccessToken,digestSecret,digestToHex,base64urlDecode} from './tokens.js';
 export const RENEW_DOMAIN='otpanda-renew-v1',RESUME_DOMAIN='otpanda-renew-resume-v1',RENEW_ENDPOINT='POST /auth/renew',RENEW_SKEW_MS=60_000;
-const ACCESS=300_000,IDLE=30*24*60*60*1000,MAX_ACCESS=64,MAX_LINEAGES=16;
+const ACCESS=900_000,LEGACY_ACCESS=300_000,IDLE=30*24*60*60*1000,MAX_ACCESS=64,MAX_LINEAGES=16;
 export {MAX_LINEAGES};
 const ID=/^[A-Za-z0-9_-]{8,64}$/,SIG=/^[A-Za-z0-9_-]{86}$/,KEY=/^[A-Za-z0-9_-]{87}$/;
 const ACTIVE=`d.revoked_at IS NULL AND d.created_at<=?3 AND d.expires_at>?3 AND ${MA} AND s.generation=d.generation AND d.client_kind='web'`;
@@ -30,11 +30,15 @@ export async function importRenewalKey(text){
  try{return await crypto.subtle.importKey('raw',raw,{name:'ECDSA',namedCurve:'P-256'},false,['verify']);}catch{return undefined;}
 }
 async function digest(token){const p=parseAccessToken(token);return p?{id:p.tokenId,hash:digestToHex(await digestSecret(p.secret))}:undefined;}
+// Web clients that never send the 15 minute opt-in keep the previous 5 minute access life (already-open tabs validate exactly 5 minutes).
+// Fail closed: only an explicit 15 minute request (from the HTTP opt-in) gets 15 minutes; omitted or unknown means the previous 5 minutes.
+const windowMs=w=>w===ACCESS?ACCESS:LEGACY_ACCESS;
 export class AccessRenewal{
  constructor(db,{clock=Date.now}={}){this.db=db;this.clock=clock;}
  now(){const n=this.clock();if(!Number.isSafeInteger(n)||n<0)throw new TypeError('Valid instant required');return n;}
  // status: renewed | renewed-elsewhere (spent: replay or lost race) | denied
- async renew({token,lineageId,signature,expiresAt}){
+ async renew({token,lineageId,signature,expiresAt,accessMs}){
+  const W_=windowMs(accessMs);
   if(typeof lineageId!=='string'||!ID.test(lineageId)||typeof signature!=='string'||!SIG.test(signature)||!Number.isSafeInteger(expiresAt))return {status:'denied'};
   const t=await digest(token);if(!t)return {status:'denied'};const now=this.now();
   if(expiresAt<now||expiresAt>now+RENEW_SKEW_MS)return {status:'denied'};
@@ -49,7 +53,7 @@ export class AccessRenewal{
   const results=await this.db.batch([
    // Single winner: only an unrenewed handle of this lineage under current guards.
    this.db.prepare(`UPDATE device_access_handles AS a SET renewed_at=?3,renew_receipt=?5 WHERE a.handle_id=?1 AND a.secret_digest=?2 AND a.lineage_id=?4 AND a.renewed_at IS NULL AND a.expires_at>?3 AND EXISTS(SELECT 1 FROM access_lineages l WHERE l.lineage_id=a.lineage_id AND (l.head_handle_id IS NULL OR l.head_handle_id=a.handle_id)) AND ${guard}`).bind(t.id,t.hash,at,lineageId,receipt),
-   this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?6,?7,a.device_id,?3,?8,a.lineage_id FROM device_access_handles a WHERE a.handle_id=?1 AND a.renew_receipt=?5 AND a.lineage_id=?4 AND (SELECT count(*) FROM device_access_handles WHERE device_id=a.device_id AND expires_at>?3)<${MAX_ACCESS} AND ${guard}`).bind(t.id,t.hash,at,lineageId,receipt,next.tokenId,nextHash,at+ACCESS),
+   this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?6,?7,a.device_id,?3,?8,a.lineage_id FROM device_access_handles a WHERE a.handle_id=?1 AND a.renew_receipt=?5 AND a.lineage_id=?4 AND (SELECT count(*) FROM device_access_handles WHERE device_id=a.device_id AND expires_at>?3)<${MAX_ACCESS} AND ${guard}`).bind(t.id,t.hash,at,lineageId,receipt,next.tokenId,nextHash,at+W_),
    // Activity-driven idle extension, only when the successor exists; never shortens.
    this.db.prepare('UPDATE device_sessions SET last_used_at=?1,expires_at=max(expires_at,?2) WHERE device_id=(SELECT device_id FROM device_access_handles WHERE handle_id=?3) AND EXISTS(SELECT 1 FROM device_access_handles WHERE handle_id=?3)').bind(at,at+IDLE,next.tokenId),
    // Capacity refused the successor: give the handle back instead of stranding the tab.
@@ -57,12 +61,13 @@ export class AccessRenewal{
    // Head moves only with an existing successor.
    this.db.prepare('UPDATE access_lineages SET head_handle_id=?1,last_renewed_at=?2 WHERE lineage_id=?3 AND EXISTS(SELECT 1 FROM device_access_handles WHERE handle_id=?1)').bind(next.tokenId,at,lineageId),
   ]);
-  if(results[1]/*exact-count-ok*/.meta.changes===1){const fp=await firstPartyExpiresAt(this.db,row.device_id);return {status:'renewed',access:next.token,accessExpiresAt:at+ACCESS,renewal:{lineageId,handleId:next.tokenId,serverTime:at,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};}
+  if(results[1]/*exact-count-ok*/.meta.changes===1){const fp=await firstPartyExpiresAt(this.db,row.device_id);return {status:'renewed',access:next.token,accessExpiresAt:at+W_,renewal:{lineageId,handleId:next.tokenId,serverTime:at,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};}
   return {status:results[0]/*exact-count-ok*/.meta.changes===1?'denied':'renewed-elsewhere'};
  }
  // Resume: the tab's memory-only key signs the lineage's CURRENT head handle id. No bearer is read, an
  // expired access token confers nothing, and the head moves exactly once (compare-and-set).
- async resume({lineageId,handleId,signature,expiresAt}){
+ async resume({lineageId,handleId,signature,expiresAt,accessMs}){
+  const W_=windowMs(accessMs);
   if(typeof lineageId!=='string'||!ID.test(lineageId)||typeof handleId!=='string'||!ID.test(handleId)||typeof signature!=='string'||!SIG.test(signature)||!Number.isSafeInteger(expiresAt))return {status:'denied'};
   const now=this.now();if(expiresAt<now||expiresAt>now+RENEW_SKEW_MS)return {status:'denied'};
   const row=await this.db.prepare(`SELECT l.device_id,l.public_key FROM access_lineages l JOIN device_sessions d ON d.device_id=l.device_id ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE l.lineage_id=?1 AND l.head_handle_id=?2 AND ${ACTIVE}`).bind(lineageId,handleId,now).first();
@@ -75,11 +80,11 @@ export class AccessRenewal{
   const cap=`(SELECT count(*) FROM device_access_handles WHERE device_id=?4 AND expires_at>?5)<${MAX_ACCESS}`;
   const results=await this.db.batch([
    this.db.prepare(`UPDATE access_lineages SET head_handle_id=?3,last_renewed_at=?5 WHERE lineage_id=?1 AND head_handle_id=?2 AND ${cap} AND ${guard}`).bind(lineageId,handleId,next.tokenId,row.device_id,at),
-   this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?3,?6,?4,?5,?7,?1 WHERE EXISTS(SELECT 1 FROM access_lineages WHERE lineage_id=?1 AND head_handle_id=?3)`).bind(lineageId,handleId,next.tokenId,row.device_id,at,nextHash,at+ACCESS),
+   this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?3,?6,?4,?5,?7,?1 WHERE EXISTS(SELECT 1 FROM access_lineages WHERE lineage_id=?1 AND head_handle_id=?3)`).bind(lineageId,handleId,next.tokenId,row.device_id,at,nextHash,at+W_),
    this.db.prepare('UPDATE device_access_handles SET renewed_at=?2 WHERE handle_id=?1 AND renewed_at IS NULL AND EXISTS(SELECT 1 FROM device_access_handles WHERE handle_id=?3)').bind(handleId,at,next.tokenId),
    this.db.prepare('UPDATE device_sessions SET last_used_at=?1,expires_at=max(expires_at,?2) WHERE device_id=?4 AND EXISTS(SELECT 1 FROM device_access_handles WHERE handle_id=?3)').bind(at,at+IDLE,next.tokenId,row.device_id),
   ]);
-  if(results[1]/*exact-count-ok*/.meta.changes===1){const fp=await firstPartyExpiresAt(this.db,row.device_id);return {status:'renewed',access:next.token,accessExpiresAt:at+ACCESS,renewal:{lineageId,handleId:next.tokenId,serverTime:at,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};}
+  if(results[1]/*exact-count-ok*/.meta.changes===1){const fp=await firstPartyExpiresAt(this.db,row.device_id);return {status:'renewed',access:next.token,accessExpiresAt:at+W_,renewal:{lineageId,handleId:next.tokenId,serverTime:at,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};}
   return {status:results[0]/*exact-count-ok*/.meta.changes===1?'denied':'renewed-elsewhere'};
  }
 

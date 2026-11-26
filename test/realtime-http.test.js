@@ -5,7 +5,7 @@ import { PasskeySignupService } from '../src/passkey-signup.js';
 import { AccountIdentityService } from '../src/account-identity.js';
 import { DeviceSessionService } from '../src/device-sessions.js';
 import { authenticator } from './passkey-fixture.js';
-import { createRealtimeHttp,MAX_TICKETS,TICKET_TTL_MS } from '../src/realtime-http.js';
+import { createRealtimeHttp,MAX_TICKETS,TICKET_TTL_MS,SOCKET_MAX_MS } from '../src/realtime-http.js';
 import { drainOutbox } from '../src/realtime-outbox.js';
 const NOW=1_800_000_000_000,API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
 async function fixture(limiter={limit:async()=>({success:true})}){
@@ -30,8 +30,19 @@ test('mint: strict Origin/method/no body/bearer, CORS preflight, returns a one-u
  assert.equal((await f.run('/auth/realtime/ticket?x=1',{method:'POST',headers:{Authorization:'Bearer '+f.d.access}})).status,404);
  assert.equal((await f.run('/auth/realtime/ticket',{method:'POST',headers:{Authorization:'Bearer '+f.d.access,'content-type':'text/plain'},body:'hi'})).status,400);
  r=await f.mint();assert.equal(r.status,200);const t=await r.json();assert.match(t.ticket,/^rt1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{43}$/);
- assert.equal(t.closeAt,f.d.accessExpiresAt);assert.equal(t.expiresAt,NOW+TICKET_TTL_MS);assert.equal(t.serverTime,NOW);assert.equal(r.headers.get('cache-control'),'no-store');
- const row=f.db.sqlite.prepare('SELECT * FROM realtime_tickets').get();assert.equal(row.close_at,f.d.accessExpiresAt);assert.ok(!JSON.stringify(row).includes(t.ticket.split('.')[2]),'raw secret never stored');assert.equal(row.secret_digest.length,64);
+ assert.equal(t.closeAt,Math.min(f.d.accessExpiresAt,t.serverTime+SOCKET_MAX_MS));assert.equal(t.expiresAt,NOW+TICKET_TTL_MS);assert.equal(t.serverTime,NOW);assert.equal(r.headers.get('cache-control'),'no-store');
+ const row=f.db.sqlite.prepare('SELECT * FROM realtime_tickets').get();assert.equal(row.close_at,t.closeAt);assert.ok(!JSON.stringify(row).includes(t.ticket.split('.')[2]),'raw secret never stored');assert.equal(row.secret_digest.length,64);
+ f.db.sqlite.close();});
+test('socket close time is capped at 5 minutes even though access lives 15, and never outlives access',async()=>{
+ const f=await fixture();
+ assert.equal(f.d.accessExpiresAt-NOW,15*60*1000);
+ let t=await (await f.mint()).json();
+ assert.equal(t.closeAt,NOW+SOCKET_MAX_MS,'early in access life: capped at 5 min');assert.ok(t.closeAt<f.d.accessExpiresAt);
+ assert.equal(f.db.sqlite.prepare('SELECT close_at FROM realtime_tickets WHERE ticket_id=?').get(t.ticket.split('.')[1]).close_at,t.closeAt);
+ f.setNow(NOW+13*60*1000);
+ t=await (await f.mint()).json();
+ assert.equal(t.closeAt,f.d.accessExpiresAt,'late in access life: the access expiry is sooner than the cap');
+ f.setNow(NOW+15*60*1000);assert.equal((await f.mint()).status,401,'expired access mints nothing');
  f.db.sqlite.close();});
 test('mint fails closed without a dedicated limiter, honors it, and bounds outstanding tickets per device',async()=>{
  let f=await fixture(undefined);f.http=null;const g=createRealtimeHttp({db:f.db,sessions:f.sessions,clock:f.clock,connect:async()=>new Response()});
@@ -44,7 +55,7 @@ test('mint fails closed without a dedicated limiter, honors it, and bounds outst
 test('upgrade: exactly one winner under parallel use; replay, wrong secret, query-string and malformed protocol are refused',async()=>{
  const f=await fixture(),{ticket}=await (await f.mint()).json();
  const results=await Promise.all(Array.from({length:6},()=>f.upgrade(ticket)));assert.equal(results.filter(r=>r.status===200).length,1);assert.equal(f.connects.length,1);
- assert.deepEqual(f.connects[0],{ownerId:f.proof.ownerId,deviceId:f.d.deviceId,closeAt:f.d.accessExpiresAt});
+ assert.deepEqual(f.connects[0],{ownerId:f.proof.ownerId,deviceId:f.d.deviceId,closeAt:Math.min(f.d.accessExpiresAt,NOW+SOCKET_MAX_MS)});
  assert.equal((await f.upgrade(ticket)).status,401,'replay');
  const t2=(await (await f.mint()).json()).ticket,parts=t2.split('.');
  assert.equal((await f.upgrade(parts.slice(0,2).join('.')+'.'+'A'.repeat(43))).status,401);assert.equal(f.db.sqlite.prepare('SELECT count(*) n FROM realtime_tickets').get().n,1,'a wrong secret does not burn the real ticket');
