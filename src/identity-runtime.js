@@ -2,6 +2,7 @@ import {GoogleContinuation} from './google-continuation.js';
 import {createNativeGoogleLinkHttp} from './native-google-link-http.js';
 import {SeedCipher} from './seed-cipher.js';
 import {TotpSeedStore,EntryTotpGenerator} from './totp-seeds.js';
+import {createCommonHorizonBatchHttp} from './totp-common-batch-http.js';
 import {createTotpReadHttp} from './totp-read-http.js';
 import {createNativeHttp,androidOriginsFromFingerprints} from './native-http.js';
 import {PasskeyVerifier} from './passkey-verifier.js';
@@ -50,7 +51,7 @@ import {createPasskeyLabelHttp} from './passkey-label-http.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
 import {createRealtimeHttp} from './realtime-http.js';
 import {createForegroundDrain} from './realtime-foreground.js';
-export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,clock=Date.now}={}) {
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
  // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
@@ -83,6 +84,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const nativeOrigins=androidOriginsFromFingerprints(native?.assetFingerprints??[]),nativePasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins,nativeOnly:true})}):undefined;
  const nativeHttp=createNativeHttp({sessions,native:nativeSessionService,db,google:nativeGoogle,passkeys:nativePasskeys,assetFingerprints:native?.assetFingerprints??[],clock});
  const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/google/continue/begin','/auth/native/google/continue/finish','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
+ const totpBatch=batch?createCommonHorizonBatchHttp({db,sessions,generator:{generateWindowForActor:async(...args)=>(await encrypted()).generator.generateWindowForActor(...args)},clock,...batch}):null;
  const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock});
  // Authenticated, device/owner/action-bound passkey ceremonies (step-up, register) must verify an assertion from either client: web origin plus the configured android signer. Without a signer this is exactly the web service.
  const managedPasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins})}):passkeys;
@@ -115,6 +117,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}
    else if(deviceKeyPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=deviceKey;}
    else if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
+   else if(totpBatch&&url.pathname==='/v1/manage/totp-codes')handler=totpBatch;
    else if(['/v1/manage/totp','/v1/manage/totp/begin'].includes(url.pathname))handler=totpManage;
    else if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;
