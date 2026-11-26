@@ -14,6 +14,6 @@ jobs:
         run: |
           set -o pipefail
           node --input-type=module <<'JS'
-          const query=`query{viewer{accounts(filter:{accountTag:"a04834f19f0dfd5dc4eb47515d15478d"}){workersInvocationsAdaptiveGroups(limit:10,filter:{scriptName:"otpanda-totp-current-45749491152",datetime_geq:"2026-11-26T03:30:00Z",datetime_leq:"2026-11-26T03:35:00Z"}){sum{requests errors} quantiles{cpuTimeP50 cpuTimeP99 cpuTimeP999}}}}}`;
+          const query=`query{viewer{accounts(filter:{accountTag:"a04834f19f0dfd5dc4eb47515d15478d"}){workersInvocationsAdaptive(limit:100,filter:{scriptName:"otpanda-totp-current-45749491152",datetime_geq:"2026-11-26T03:20:00Z",datetime_leq:"2026-11-26T03:45:00Z"}){sum{requests errors} quantiles{cpuTimeP50 cpuTimeP99 cpuTimeP999}}}}}`;
           const r=await fetch('https://api.cloudflare.com/client/v4/graphql',{method:'POST',headers:{Authorization:'Bearer '+process.env.CLOUDFLARE_API_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({query})});const b=await r.json();console.log(JSON.stringify(b));if(!r.ok||b.errors)throw Error('metrics read failed');
           JS
