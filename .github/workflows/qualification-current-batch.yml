@@ -1,7 +1,7 @@
 name: Current-main synthetic cap5 mounted-route CPU qualification
 on:
   push:
-    branches: [qualify/totp-current-cap5]
+    branches: [qualify/totp-current-cap5-once-complete]
 permissions:
   contents: read
 concurrency:
