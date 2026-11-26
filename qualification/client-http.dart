@@ -1,6 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
-import '../client-app/lib/totp_batch_contract.dart';
+import 'client-contract.dart';
 Future<void> main(List<String> args) async {
  final fixture=jsonDecode(File('qualification/fixture.json').readAsStringSync()) as Map;
  final ids=(fixture['ids'] as List).cast<String>().take(3).toSet();
