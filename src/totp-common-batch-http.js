@@ -23,7 +23,7 @@ function parse(url,{entryCap,maxWindow}){
 }
 const same=(a,b)=>a&&b&&a.ownerId===b.ownerId&&a.deviceId===b.deviceId&&a.generation===b.generation;
 function timestamp(clock){const now=clock();if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid server clock required');return now;}
-export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.now,horizonPolicy,ratePerMinute,minRemainingMs}={}){
+export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.now,horizonPolicy,ratePerMinute,minRemainingMs,native=false}={}){
  if(!horizonPolicy||!Number.isSafeInteger(ratePerMinute)||ratePerMinute<1||!Number.isSafeInteger(minRemainingMs)||minRemainingMs<1)throw new TypeError('Explicit qualified policies required');
  const maxCodes=maxCodesPerEntry(horizonPolicy);
  if(horizonPolicy.entryCap>49)throw new RangeError('D1 revalidation parameter bound exceeded');
@@ -31,11 +31,11 @@ export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.n
  planCommonHorizon({...horizonPolicy,now:0,periods:[],requestedWindow:horizonPolicy.maxWindow});
  const policy=responsePolicy({...horizonPolicy,digits:[6,7,8],maxCodesPerEntry:maxCodes});
  if(!db||typeof generator?.generateWindowForActor!=='function'||typeof clock!=='function')throw new TypeError('TOTP batch dependencies required');
- const auth=createDeviceSessionAuth({sessions});
+ const auth=createDeviceSessionAuth({sessions,native});
  return {async fetch(request,{clientAddress}={}){
   const url=new URL(request.url);
   if(url.origin!==API||url.pathname!==PATH)return json({error:'not_found'},404);
-  if(request.headers.get('origin')!==APP)return json({error:'forbidden'},403);
+  if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   const reply=(body,status=200,headers={})=>json(body,status,{...cors,...headers});
   if(request.method==='OPTIONS'){
    const headers=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
