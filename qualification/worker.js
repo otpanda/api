@@ -13,11 +13,12 @@ export default {async fetch(request,env){
  if(!u.pathname.startsWith(prefix+'/'))return new Response(null,{status:404});
  const path=u.pathname.slice(prefix.length);
  if(!['/v1/manage/totp-codes','/v1/manage/session'].includes(path))return new Response(null,{status:404});
+ const requestId=crypto.randomUUID();console.log(JSON.stringify({qualificationRequestId:requestId}));
  queryCount=0;
  app??=createIdentityRuntime({db:counted(env.DB),loadCodeKeys:()=>importBrowserKeyring({ACTIVE_KEY_ID:'synthetic',ENCRYPTION_KEYRING:JSON.stringify([{id:'synthetic',key:'CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws'}])}),trustedRequestKey:()=> '192.0.2.1',clock:()=>fixture.now,batch:{horizonPolicy:policy,ratePerMinute:24,minRemainingMs:1000}});
  const headers=new Headers(request.headers);headers.set('Origin','https://otpanda.github.io');
  const started=performance.now();
  const r=await app.fetch(new Request('https://otpanda-api.abrahammurciano.workers.dev'+path+u.search,{headers}));
  const body=await r.json();
- return Response.json({status:r.status,queryCount,wallMs:performance.now()-started,body},{status:r.status});
+ return Response.json({requestId,status:r.status,queryCount,wallMs:performance.now()-started,body},{status:r.status});
 }};

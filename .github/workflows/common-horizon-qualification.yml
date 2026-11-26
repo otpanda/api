@@ -62,7 +62,7 @@ jobs:
           npx wrangler deploy --config "$config"
           npx wrangler tail --config "$config" --format json > qualification/tail.jsonl 2> qualification/tail-errors.txt &
           tailpid=$!
-          sleep 3
+          sleep 12
           prefix=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/wrangler.json")).vars.FIXTURE_PREFIX)')
           worker=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/wrangler.json")).name)')
           base="https://$worker.abrahammurciano.workers.dev/$prefix"
