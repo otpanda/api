@@ -25,7 +25,10 @@ const API='https://otpanda-api.abrahammurciano.workers.dev';
 const SOURCE_CLIENT_ID='367143149550-cu61adcdqclntipnl84e096kp35vduvk.apps.googleusercontent.com';
 export const GMAIL_DEV_ENABLE_VALUE='dev-mailbox-only';
 export const gmailDevEnabled=env=>env?.GMAIL_DEV_COLLECTION===GMAIL_DEV_ENABLE_VALUE;
-// Subrequest allowance for the scheduled run: it shares an invocation with the realtime drain (20), 45 combined ceiling.
+// Gmail maintenance shares the */5 invocation with the realtime drain. Per-category worst case, nothing else spends in this run:
+// D1 <= 20 (realtime) + 25 (Gmail, counted together with Google fetches) = 45 of 50; Google fetch <= 25 of 50; Durable Object <= 25 of 1000.
+// Operations in total can reach 70, so the 45 "combined" ceiling in realtime-outbox.js does NOT cover Gmail; only the per-category reading does.
+// Per-invocation CPU (Free: 10 ms) is not bounded by these counters and is unproven.
 export const GMAIL_CRON_BUDGET=25;
 export async function createGmailSourceServices(env,{clock=Date.now,fetchImpl=fetch,budgetLimit=50,ready=false}={}){
  // DEV ONLY: label mode is the only mode this factory builds, and it is bound to exactly one mailbox named by a

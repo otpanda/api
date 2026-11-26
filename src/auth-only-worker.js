@@ -77,9 +77,14 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
   async scheduled(event,env,ctx) {
    if(env?.DEPLOYMENT_STAGE!=='auth-only'||!env.DB?.prepare)return;
    // Realtime delivery runs in its OWN cron invocation (its own 50 query allowance), never next to the identity cleanup.
-   if(event?.cron===REALTIME_CRON){const jobs=[];if(env.REALTIME_HUB)jobs.push(drainSome({db:env.DB,deliver:hubDeliver(env.REALTIME_HUB),clock,budget:new Budget(CRON_QUERY_MAX),sends:new Budget(CRON_DELIVERY_MAX)}).catch(()=>{}));
-    // Gmail dev maintenance shares this invocation (own 25 allowance, 20 + 25 stays under the 45 ceiling). Counts only, never throws.
-    if(gmailDevEnabled(env))jobs.push(gmail.scheduled(event,env).catch(()=>{}));if(!jobs.length)return;const run=Promise.all(jobs);if(ctx?.waitUntil)ctx.waitUntil(run);else await run;return;}
+   if(event?.cron===REALTIME_CRON){
+    // Per-category worst case: D1 <= 20 (drain) + 25 (Gmail) = 45 of 50; Google fetch <= 25; Durable Object <= 25. Not "45 combined": 70 operations in total. CPU is unproven.
+    const jobs=[];
+    if(env.REALTIME_HUB)jobs.push(drainSome({db:env.DB,deliver:hubDeliver(env.REALTIME_HUB),clock,budget:new Budget(CRON_QUERY_MAX),sends:new Budget(CRON_DELIVERY_MAX)}).catch(()=>{}));
+    if(gmailDevEnabled(env))jobs.push(gmail.scheduled(event,env).catch(()=>{}));
+    if(!jobs.length)return;
+    const all=Promise.all(jobs);if(ctx?.waitUntil)ctx.waitUntil(all);else await all;return;
+   }
    // Classify lapsed jobs as expired failures BEFORE cleanup can delete them,
    // then log counts only (no ids, addresses or codes) when anything is dead.
    const work=(async()=>{await expireRecoveryCodeJobs({db:env.DB,clock}).catch(()=>{});const h=await recoveryDeliveryHealth({db:env.DB,clock}).catch(()=>undefined);if(h&&(h.deadNotifications||h.deadCodeJobs))console.warn('recovery-delivery-attention',JSON.stringify(h));return Promise.all([cleanupIdentity({db:env.DB,clock,limit:100}),env.BREVO_API_KEY?deliverRecoveryNotifications({db:env.DB,clock,deliver:createRecoveryNotificationDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10}):undefined,env.BREVO_API_KEY?(async()=>{try{await drainRecoveryCodeJobs({db:env.DB,clock,cipher:new CodeCipher(await importBrowserKeyring(env)),deliver:createRecoveryMailDelivery({apiKey:env.BREVO_API_KEY,senderEmail:env.BREVO_SENDER_EMAIL,replyToEmail:env.BREVO_REPLY_TO_EMAIL}),limit:10});}catch{}})():undefined]);})();

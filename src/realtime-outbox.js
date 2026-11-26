@@ -21,13 +21,14 @@ export const MAX_ATTEMPTS=8,BACKOFF_BASE_MS=30_000,BACKOFF_MAX_MS=15*60_000;
 // and never issues a query it cannot pay for, always keeping one for the release/delete that ends a claim.
 // A row needs claim, read, owner check, one page query, one isolation write, one cursor advance and one release (and PAGE_MIN is the same minus the first three).
 export const ROW_MIN_BUDGET=8,PAGE_MIN_BUDGET=5,CHUNK_MIN_BUDGET=3;
-// ONE combined ceiling per invocation: metered D1 queries plus hub calls never exceed COMBINED_CEILING (45), leaving 5 of the 50 subrequests for
-// setup, handler work after the snapshot, and network overhead. D1 and Durable Object calls are treated as sharing the same 50 (the docs do not separate them).
-// Post-write drain: at most 10 hub calls and D1 min(20, 35 - what the request used). Cron: 20 D1 + 25 hub = 45.
+// Conservative realtime-only accounting: D1 queries plus hub calls never exceed COMBINED_CEILING (45).
+// This is an application budget, not one shared platform bucket. Official Workers history (2021-07-16) raised DO calls to 1000;
+// current Workers limits retain 1000 internal-service calls, while D1 Free limits queries to 50 per invocation.
+// Post-write drain: at most 10 hub calls and D1 min(20, 35 - what the request used). Realtime cron: 20 D1 + 25 hub = 45.
 export const INVOCATION_QUERY_LIMIT=50,COMBINED_CEILING=45,FOREGROUND_DRAIN_MAX=20,CRON_QUERY_MAX=20;
 export const foregroundBudget=spent=>Math.max(0,Math.min(FOREGROUND_DRAIN_MAX,COMBINED_CEILING-FOREGROUND_DELIVERY_MAX-spent));
-// Free plan: 50 subrequests per request or cron invocation. Every hub (Durable Object) call is spent from its own budget, whether it succeeds or fails.
-// The docs do not say which bucket a DO stub falls in, so D1 and hub calls share one combined ceiling (see COMBINED_CEILING). Foreground gets at most 10, cron 25.
+// Every hub (Durable Object) call is spent from its own application budget, whether it succeeds or fails.
+// The conservative realtime-only combined ceiling remains unchanged. Foreground gets at most 10 hub calls, cron 25.
 // Budget stops are not failures: the recipient cursor is persisted and the remainder is delivered by the next drain. CPU: Free is 10 ms per invocation, so
 // work is staged in chunks of `concurrency` deliveries and nothing else is done per recipient.
 export const FOREGROUND_DELIVERY_MAX=10,CRON_DELIVERY_MAX=25;

@@ -59,7 +59,6 @@ test('enabled routes answer the preflight only for the app origin and require si
 });
 
 test('scheduled: the realtime cron runs Gmail maintenance only when enabled, with its own small budget',async()=>{
- assert.ok(GMAIL_CRON_BUDGET<=25);
  const g=guarded(),worker=createAuthOnlyWorker();
  let work;
  await worker.scheduled({cron:'*/5 * * * *'},env(g.db,{...full,GMAIL_DEV_COLLECTION:undefined}),{waitUntil(p){work=p;}});
@@ -69,6 +68,32 @@ test('scheduled: the realtime cron runs Gmail maintenance only when enabled, wit
  await worker.scheduled({cron:'*/5 * * * *'},env(g.db,{...full,GMAIL_DEV_MAILBOX:undefined}),{waitUntil(p){work=p;}});
  assert.ok(work);await work;
  assert.equal(g.calls(),0);
+});
+
+test('invocation accounting is per category (45 of 50 D1, 25 external), 70 operations in total',async()=>{
+ const rt=await import('../src/realtime-outbox.js');
+ // Per category, worst case in the shared */5 invocation: D1 = realtime D1 + Gmail (Gmail counts D1 and Google together).
+ assert.ok(rt.CRON_QUERY_MAX+GMAIL_CRON_BUDGET<=rt.INVOCATION_QUERY_LIMIT,'D1 per-category sum');
+ assert.ok(GMAIL_CRON_BUDGET<=50,'external fetch per-category');
+ assert.ok(rt.CRON_DELIVERY_MAX<=1000,'Durable Object per-category');
+ assert.equal(rt.CRON_QUERY_MAX+GMAIL_CRON_BUDGET,45);
+ // The old single "45 combined" figure does not hold: all operations together reach 70.
+ assert.equal(rt.CRON_QUERY_MAX+rt.CRON_DELIVERY_MAX+GMAIL_CRON_BUDGET,70);
+ assert.ok(70>rt.COMBINED_CEILING);
+ const {createRequestBudget,budgetedDb,budgetedFetch}=await import('../src/request-budget.js');
+ const b=createRequestBudget(GMAIL_CRON_BUDGET),calls={d1:0,net:0},sdb=database();
+ try{
+  const inner={prepare:sql=>{const st=sdb.prepare(sql);const wrap=x=>({inner:x,bind:(...a)=>wrap(x.bind(...a)),run:()=>{calls.d1++;return x.run();},first:(...a)=>{calls.d1++;return x.first(...a);},all:()=>{calls.d1++;return x.all();}});return wrap(st);},batch:s=>{calls.d1++;return sdb.batch(s.map(x=>x.inner??x));}};
+  const db=budgetedDb(inner,b),f=budgetedFetch(async()=>{calls.net++;return new Response('{}');},b);
+  // Every counted call spends exactly one unit, db.batch counts once, and the 26th call is refused before it runs.
+  for(let i=0;i<GMAIL_CRON_BUDGET-2;i++)await db.prepare('SELECT 1').first();
+  await db.batch([db.prepare('SELECT 1'),db.prepare('SELECT 2')]);
+  await f('https://example.test/');
+  assert.equal(b.used,GMAIL_CRON_BUDGET);
+  assert.throws(()=>db.prepare('SELECT 1').first(),{message:'request budget exhausted'});
+  assert.throws(()=>f('https://example.test/'),{message:'request budget exhausted'});
+  assert.equal(calls.d1+calls.net,GMAIL_CRON_BUDGET);
+ }finally{sdb.close?.();}
 });
 
 test('scheduled maintenance with real storage touches no Google and counts only',async()=>{
@@ -101,4 +126,41 @@ test('non-push Gmail routes are rate limited before any keyring, database or Goo
  // Allowed callers still reach the normal gates.
  const ok=await worker.fetch(req('/v1/manage/gmail-source/status',{method:'OPTIONS',headers:{origin:APP,'access-control-request-method':'GET','access-control-request-headers':'authorization'}}),env(g.db,full),{waitUntil(){}});
  assert.equal(ok.status,204);
+});
+
+async function deployment(){const fs=await import('node:fs/promises');return JSON.parse(await fs.readFile('wrangler.jsonc','utf8'));}
+
+test('wrangler declares exactly the four non-secret Gmail pins and leaves activation and secrets out',async()=>{
+ const d=await deployment(),v=d.vars;
+ assert.equal(v.GMAIL_DEV_MAILBOX,'otpanda.app@gmail.com');
+ assert.equal(v.GMAIL_SOURCE_CLIENT_ID,SOURCE);
+ assert.equal(v.GMAIL_PUSH_AUDIENCE,API+'/sources/gmail/push');
+ assert.equal(v.GMAIL_PUSH_SERVICE_ACCOUNT,'gmail-push-oidc@otpanda.iam.gserviceaccount.com');
+ // Activation is a separate reviewed change. A secret never belongs in the file.
+ assert.equal(v.GMAIL_DEV_COLLECTION,undefined);
+ assert.deepEqual(Object.keys(v).filter(k=>k.startsWith('GMAIL_')).sort(),['GMAIL_DEV_MAILBOX','GMAIL_PUSH_AUDIENCE','GMAIL_PUSH_SERVICE_ACCOUNT','GMAIL_SOURCE_CLIENT_ID']);
+ for(const k of Object.keys(v))assert.ok(!/SECRET|KEYRING|ACTIVE_KEY|API_KEY/.test(k),k);
+ // The pins must stay distinct from the sign-in and native clients.
+ assert.notEqual(v.GMAIL_SOURCE_CLIENT_ID,v.GOOGLE_CLIENT_ID);
+ assert.ok(!String(v.NATIVE_GOOGLE_AUDIENCES).split(',').map(x=>x.trim()).includes(v.GMAIL_SOURCE_CLIENT_ID));
+ // Other existing configuration is unchanged.
+ assert.equal(v.DEPLOYMENT_STAGE,'auth-only');assert.equal(v.AUTH_ONLY_SIGNUP_MODE,'public');assert.deepEqual(d.triggers.crons,['*/15 * * * *','*/5 * * * *']);
+});
+
+test('declared pins plus the enable value and secrets build the services; without the enable value nothing mounts',async()=>{
+ const v=(await deployment()).vars,db=database();
+ try{
+  const base={...v,DB:db,GMAIL_SOURCE_CLIENT_SECRET:'synthetic',ENCRYPTION_KEYRING:full.ENCRYPTION_KEYRING,ACTIVE_KEY_ID:'k1',IDENTITY_ADDRESS_LIMIT:yes,IDENTITY_AUTH_GLOBAL_LIMIT:yes};
+  const svc=await createGmailSourceServices(base);
+  assert.equal(svc.devMailbox,'otpanda.app@gmail.com');
+  // Exactly what a deployment of this file does: pins present, enable absent.
+  const g=guarded(),worker=createAuthOnlyWorker();
+  const off={...base,DB:g.db};
+  for(const path of paths){const r=await worker.fetch(req(path,{method:path.endsWith('push')?'POST':'GET',headers:{origin:APP}}),off,{waitUntil(){}});assert.equal(r.status,404,path);}
+  let work;await worker.scheduled({cron:'*/5 * * * *'},off,{waitUntil(p){work=p;}});assert.equal(work,undefined);
+  assert.equal(g.calls(),0);
+  // Adding only the enable value turns it on (this is the separate reviewed change).
+  const on=await worker.fetch(req('/v1/manage/gmail-source/status',{method:'OPTIONS',headers:{origin:APP,'access-control-request-method':'GET','access-control-request-headers':'authorization'}}),{...off,GMAIL_DEV_COLLECTION:'dev-mailbox-only',GMAIL_SOURCE_CLIENT_SECRET:'synthetic'},{waitUntil(){}});
+  assert.equal(on.status,204);
+ }finally{db.close?.();}
 });
