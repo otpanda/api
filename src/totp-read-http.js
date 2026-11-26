@@ -41,7 +41,7 @@ export function createTotpReadHttp({db,sessions,generator,clock=Date.now,native=
    // A generation spanning the boundary must not return the old interval.
    if(record.entryId!==entry||!Number.isSafeInteger(record.validFrom)||!Number.isSafeInteger(record.validUntil)||record.validFrom>end||record.validUntil<=end)return reply({error:'unavailable'},503);
    // Explicit allowlist: seed/envelope/source metadata can never enter output.
-   if(typeof record.code!=='string'||!/^\d{6}(?:\d{2})?$/.test(record.code)||!Number.isSafeInteger(record.period)||record.period<1||record.period>86400||record.validUntil-record.validFrom!==record.period||record.validFrom%record.period!==0)return reply({error:'unavailable'},503);
+   if(typeof record.code!=='string'||!/^\d{6,8}$/.test(record.code)||!Number.isSafeInteger(record.period)||record.period<1||record.period>86400||record.validUntil-record.validFrom!==record.period||record.validFrom%record.period!==0)return reply({error:'unavailable'},503);
    return reply({entryId:entry,code:record.code,period:record.period,validFrom:record.validFrom,validUntil:record.validUntil,serverNow});
   }catch{return reply({error:'unavailable'},503);}
  }};

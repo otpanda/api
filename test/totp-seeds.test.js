@@ -181,7 +181,7 @@ test('invalid seed parameters and read inputs are rejected', async () => {
   await assert.rejects(seeds.putSeed('a', shared, seed({ secret: new Uint8Array(9) }), NOW), TypeError);
   await assert.rejects(seeds.putSeed('a', shared, seed({ secret: new Uint8Array(129) }), NOW), TypeError);
   await assert.rejects(seeds.putSeed('a', shared, seed({ algorithm: 'MD5' }), NOW), RangeError);
-  await assert.rejects(seeds.putSeed('a', shared, seed({ digits: 7 }), NOW), RangeError);
+  await assert.rejects(seeds.putSeed('a', shared, seed({ digits: 9 }), NOW), RangeError);
   await assert.rejects(seeds.putSeed('a', shared, seed({ period: 0 }), NOW), RangeError);
   await assert.rejects(seeds.putSeed('a', shared, seed({ period: 86401 }), NOW), RangeError);
   await assert.rejects(seeds.putSeed('a', shared, seed(), -1), TypeError);

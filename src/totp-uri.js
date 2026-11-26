@@ -21,7 +21,7 @@ export function parseTotpUri(input){
   const secret=params.get('secret');if(!secret||secret.length>208||!/^[A-Z2-7]+$/i.test(secret))return fail();const bytes=decodeBase32(secret);if(bytes.length<10||bytes.length>128)return fail();
   const issuer=params.has('issuer')?label(params.get('issuer')):prefix;if(prefix&&issuer!==prefix)return fail();
   const alg=params.get('algorithm')??'SHA1',algorithm={SHA1:'SHA-1',SHA256:'SHA-256',SHA512:'SHA-512'}[alg];if(!algorithm)return fail();
-  const d=params.get('digits')??'6';if(!['6','8'].includes(d))return fail();
+  const d=params.get('digits')??'6';if(!['6','7','8'].includes(d))return fail();
   const p=params.get('period')??'30';if(!/^[1-9][0-9]{0,4}$/.test(p)||Number(p)>86400)return fail();
   return new ProvisionedTotp({issuer,accountName,algorithm,digits:Number(d),period:Number(p),bytes});
  }catch{return fail();}
