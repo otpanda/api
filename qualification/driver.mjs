@@ -1,4 +1,5 @@
-import fixture from './fixture.json' with{type:'json'};
+import{readFileSync}from'node:fs';
+const fixture=JSON.parse(readFileSync(new URL('./fixture.json',import.meta.url),'utf8'));
 import {writeFileSync}from'node:fs';
 import assert from'node:assert/strict';
 const results=[],base=process.argv[2];
