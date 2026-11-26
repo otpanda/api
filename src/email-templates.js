@@ -7,7 +7,7 @@
 // it works only in clients that allow inline script (most strip it), and the
 // code stays selectable text for manual copying everywhere.
 const GREEN='#10b981',INK='#082c25',PAPER='#f6f8ef',MUTED='#53665e',LINE='#d7e0d7',MINT='#3ddba7';
-const LOGO='https://otpanda.github.io/home/assets/otty-green.png';
+const LOGO='https://otpanda.github.io/home/assets/brand/otty-tile-v7-192.png';
 const FONT="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const MONO="ui-monospace,SFMono-Regular,Menlo,Consolas,'Courier New',monospace";
 const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
