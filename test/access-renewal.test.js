@@ -119,6 +119,20 @@ test('malformed lineage_id is refused with 400 before any rate-limit bucket is a
  assert.ok(n()<=before+1,'only the per-address bucket may be touched');
  const b2=n();await http.fetch(new Request(API+'/auth/renew',{method:'POST',headers:{Origin:APP,'Content-Type':'application/json',Authorization:'Bearer '+e.access},body:JSON.stringify({lineage_id:'q'.repeat(30),expires_at:f.clock()+1000,signature:'A'.repeat(86)})}),{clientAddress:'t'});assert.equal(n(),b2+1,'well-formed id allocates one lineage bucket');
  f.db.sqlite.close();});
+test('web services fail closed to 5 minutes: only an explicit 900000 request gets 15 minutes; stored handle expiry matches the response',async()=>{
+ const f=await fixture(),k=await newKey();
+ const mint=async over=>{const x=await f.exchange.mint({deviceId:f.d.deviceId,challenge:await pkceChallenge(verifier),redirectUri});return f.exchange.exchange({code:x.code,verifier,redirectUri,renewalKey:k.pub,...over});};
+ const life=r=>r.accessExpiresAt-r.renewal.serverTime;
+ const exp=h=>f.db.sqlite.prepare('SELECT expires_at-created_at AS d FROM device_access_handles WHERE handle_id=?').get(h).d;
+ for(const over of [{},{accessMs:undefined},{accessMs:300000},{accessMs:123},{accessMs:'900000'},{accessMs:null},{accessMs:900001},{accessMs:Infinity}]){
+  const r=await mint(over);assert.equal(life(r),300000,JSON.stringify(over));assert.equal(exp(r.renewal.handleId),300000);
+ }
+ const modern=await mint({accessMs:900000});assert.equal(life(modern),900000);assert.equal(exp(modern.renewal.handleId),900000);
+ let e=await mint({});
+ for(const over of [{},{accessMs:123},{accessMs:'900000'}]){e=await renew(f,k,e,over);assert.equal(e.status,'renewed');assert.equal(life(e),300000,JSON.stringify(over));assert.equal(exp(e.renewal.handleId),300000);}
+ const up=await renew(f,k,e,{accessMs:900000});assert.equal(life(up),900000);assert.equal(exp(up.renewal.handleId),900000);
+ const again=await renew(f,k,up,{});assert.equal(life(again),300000,'a renewal without the opt-in goes back to 5 minutes');
+ f.db.sqlite.close();});
 test('serverTime is the server clock reading the access expiry is derived from, on exchange and renew, whatever the client clock says',async()=>{
  const f=await fixture(),k=await newKey(),e=await f.bind(k);assert.equal(e.renewal.serverTime,NOW);assert.equal(e.accessExpiresAt-e.renewal.serverTime,300000);
  f.setTime(NOW+200000);const r=await renew(f,k,e);assert.equal(r.renewal.serverTime,NOW+200000);assert.equal(r.accessExpiresAt-r.renewal.serverTime,300000);assert.ok(Number.isSafeInteger(r.renewal.serverTime));

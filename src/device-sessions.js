@@ -5,7 +5,7 @@ import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA,proofMethod,method
 import { generateAccessToken, parseAccessToken, digestSecret, digestToHex } from './tokens.js';
 // Storage safety ceilings are checked inside the write, not a racy preflight.
 const MAX_DEVICES=50,MAX_ACCESS=64,MAX_REFRESH=10000;
-const IDLE=30*24*60*60*1000,ACCESS=5*60*1000,PROOF=120_000,GRACE=10_000;
+const IDLE=30*24*60*60*1000,ACCESS=15*60*1000,PROOF=120_000,GRACE=10_000;
 async function tokenDigest(token) { const p=parseAccessToken(token);return p?{id:p.tokenId,digest:digestToHex(await digestSecret(p.secret))}:undefined; }
 async function freshHandle() { const h=generateAccessToken();return {...h,digest:digestToHex(await digestSecret(h.secret))}; }
 const ACTIVE=`d.revoked_at IS NULL AND d.created_at <= ?3 AND d.expires_at > ?3 AND ${MA} AND s.generation=d.generation`;

@@ -7,7 +7,7 @@ import {base64urlEncode,digestToHex} from './tokens.js';
 import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-method.js';
 import {hashText} from './sessions.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
-export const TICKET_TTL_MS=30_000,MAX_TICKETS=4,SUBPROTOCOL='otpanda.v1';
+export const TICKET_TTL_MS=30_000,SOCKET_MAX_MS=300_000,MAX_TICKETS=4,SUBPROTOCOL='otpanda.v1';
 const TICKET=/^rt1\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{43})$/;
 const cors={'Access-Control-Allow-Origin':APP,Vary:'Origin'};
 const rand=n=>crypto.getRandomValues(new Uint8Array(n));
@@ -46,10 +46,11 @@ export function createRealtimeHttp({db,sessions,limiter,connect,clock=Date.now,n
    if(typeof limiter?.limit!=='function')return json({error:'unavailable'},503,CORS);
    if(!await allowed(P+'ticket:'+await hashText(user.deviceId)))return json({error:'rate_limited'},429,{...CORS,'Retry-After':'30'});
    const id=base64urlEncode(rand(12)),secret=base64urlEncode(rand(32)),expires=now+TICKET_TTL_MS;
+   const closeAt=Math.min(user.expiresAt,now+SOCKET_MAX_MS);
    // Guarded insert: device still active in the same statement, bounded outstanding tickets per device.
-   const result=await db.prepare(`INSERT INTO realtime_tickets (ticket_id,secret_digest,owner_id,device_id,generation,created_at,expires_at,close_at) SELECT ?1,?2,d.owner_id,d.device_id,d.generation,?3,?4,?5 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?6 AND d.owner_id=?7 AND d.generation=?8 AND ${KIND} AND (SELECT count(*) FROM realtime_tickets WHERE device_id=d.device_id AND expires_at>?3)<${MAX_TICKETS}`).bind(id,await sha(secret),now,expires,user.expiresAt,user.deviceId,user.ownerId,user.generation).run();
+   const result=await db.prepare(`INSERT INTO realtime_tickets (ticket_id,secret_digest,owner_id,device_id,generation,created_at,expires_at,close_at) SELECT ?1,?2,d.owner_id,d.device_id,d.generation,?3,?4,?5 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?6 AND d.owner_id=?7 AND d.generation=?8 AND ${KIND} AND (SELECT count(*) FROM realtime_tickets WHERE device_id=d.device_id AND expires_at>?3)<${MAX_TICKETS}`).bind(id,await sha(secret),now,expires,closeAt,user.deviceId,user.ownerId,user.generation).run();
    if(result.meta.changes<1)return json({error:'busy'},429,{...CORS,'Retry-After':'5'});
-   return json({ticket:`rt1.${id}.${secret}`,expiresAt:expires,closeAt:user.expiresAt,serverTime:now},200,{...CORS,'Cache-Control':'no-store'});
+   return json({ticket:`rt1.${id}.${secret}`,expiresAt:expires,closeAt,serverTime:now},200,{...CORS,'Cache-Control':'no-store'});
   }
   // Upgrade: GET only. The ticket rides in Sec-WebSocket-Protocol so it is never in a URL.
   if(request.method!=='GET'||request.headers.get('upgrade')?.toLowerCase()!=='websocket')return json({error:'method_not_allowed'},405,CORS);

@@ -7,7 +7,7 @@ import {importRenewalKey} from './access-renewal.js';
 import {pkceChallenge} from './browser-exchanges.js';
 export const NATIVE_REDIRECT='https://otpanda-api.abrahammurciano.workers.dev/app-return';
 export const NATIVE_DOMAIN='otpanda-native-v1',NATIVE_ENDPOINTS=Object.freeze({renew:'POST /auth/native/renew',logout:'POST /auth/native/logout'});
-const TTL=60_000,ACCESS=300_000,IDLE=30*24*60*60*1000,CHALLENGE_TTL=60_000,MAX_OUTSTANDING=8,MAX_EXCHANGES=8,MAX_ACCESS=64,MAX_DEVICES=50;
+const TTL=60_000,ACCESS=900_000,IDLE=30*24*60*60*1000,CHALLENGE_TTL=60_000,MAX_OUTSTANDING=8,MAX_EXCHANGES=8,MAX_ACCESS=64,MAX_DEVICES=50;
 const CH=/^[A-Za-z0-9_-]{43}$/,SIG=/^[A-Za-z0-9_-]{86}$/,ID=/^[A-Za-z0-9_-]{12}$/;
 // Message the device signs (nonce is the full opaque token string returned by challenge): UTF-8, LF separators, no trailing newline, expiry as the decimal integer the server returned.
 export const EXTENSION_DOMAIN='otpanda-extension-v1',EXTENSION_ENDPOINTS=Object.freeze({renew:'POST /auth/extension/renew',logout:'POST /auth/extension/logout'});

@@ -60,7 +60,7 @@ test('killed-app renewal: signed one-use nonce, new access, idle extended, nothi
  const f=await fixture(),k=await newKey(),e=await f.bind(k);
  f.setNow(NOW+3*3600000);// access long expired, app was dead
  assert.equal(await f.sessions.authenticate(e.access),undefined);
- const r=await f.renew(k,e);assert.equal(r.status,'renewed');assert.equal(r.accessExpiresAt,NOW+3*3600000+300000);
+ const r=await f.renew(k,e);assert.equal(r.status,'renewed');assert.equal(r.accessExpiresAt,NOW+3*3600000+900000);
  assert.equal((await f.sessions.authenticate(r.access)).deviceId,e.deviceId);
  assert.equal(f.q('SELECT expires_at e FROM device_sessions WHERE device_id=?',e.deviceId).e,NOW+3*3600000+30*86400000);
  assert.equal(f.q('SELECT count(*) n FROM device_refresh_handles').n,1,'only the web refresh handle exists');f.db.sqlite.close();});

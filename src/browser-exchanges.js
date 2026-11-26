@@ -5,7 +5,7 @@ import { generateAccessToken, parseAccessToken, digestSecret, digestToHex, base6
 import {importRenewalKey,firstPartyExpiresAt,MAX_LINEAGES} from './access-renewal.js';
 import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-method.js';
 const MAX_EXCHANGES=32,MAX_ACCESS=64;
-const TTL=60_000,ACCESS=300_000;
+const TTL=60_000,ACCESS=900_000,LEGACY_ACCESS=300_000;
 const ACTIVE=`d.revoked_at IS NULL AND d.created_at<=?3 AND d.expires_at>?3 AND ${MA} AND s.generation=d.generation AND d.client_kind='web'`;
 const CHALLENGE=/^[A-Za-z0-9_-]{43}$/;
 const VERIFIER=/^[A-Za-z0-9._~-]{43,128}$/;
@@ -27,7 +27,8 @@ export class BrowserExchangeService {
   }
   // renewalKey is optional (capability fallback). It is validated BEFORE the code is claimed so a
   // malformed key cannot burn a legitimate code, and it can be bound nowhere else.
-  async exchange({code,verifier,redirectUri,renewalKey}){
+  async exchange({code,verifier,redirectUri,renewalKey,accessMs}){
+    const W_=accessMs===ACCESS?ACCESS:LEGACY_ACCESS;
     if(redirectUri!==this.redirectUri)return undefined;
     if(renewalKey!==undefined&&!await importRenewalKey(renewalKey))return undefined;
     const c=await digest(code),challenge=await pkceChallenge(verifier);if(!c||!challenge)return undefined;
@@ -41,19 +42,19 @@ export class BrowserExchangeService {
     const guard=`(SELECT count(*) FROM device_access_handles WHERE device_id=d.device_id AND expires_at>?3)<${MAX_ACCESS} AND ${ACTIVE}`;
     if(renewalKey===undefined){
     const result=await this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at) SELECT ?1,?2,d.device_id,?3,?4 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND ${guard}`)
-      .bind(access.tokenId,hash,completed,completed+ACCESS,claimed.device_id).run();
-    return result.meta.changes===1?{access:access.token,accessExpiresAt:completed+ACCESS}:undefined;
+      .bind(access.tokenId,hash,completed,completed+W_,claimed.device_id).run();
+    return result.meta.changes===1?{access:access.token,accessExpiresAt:completed+W_}:undefined;
     }
     // The lineage and its first handle commit together or not at all (same guards).
     const lineage=generateAccessToken().tokenId;
     const results=await this.db.batch([
       this.db.prepare(`DELETE FROM access_lineages WHERE lineage_id IN (SELECT lineage_id FROM access_lineages WHERE device_id=?1 ORDER BY created_at DESC,rowid DESC LIMIT -1 OFFSET ${MAX_LINEAGES-1}) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?1 AND ${ACTIVE.replaceAll('?3','?2')})`).bind(claimed.device_id,completed),
-      this.db.prepare(`INSERT INTO access_lineages (lineage_id,device_id,public_key,created_at,head_handle_id,last_renewed_at) SELECT ?1,d.device_id,?2,?3,?6,?3 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND ${guard}`).bind(lineage,renewalKey,completed,completed+ACCESS,claimed.device_id,access.tokenId),
-      this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?1,?2,d.device_id,?3,?4,?6 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND EXISTS(SELECT 1 FROM access_lineages WHERE lineage_id=?6 AND device_id=d.device_id) AND ${guard}`).bind(access.tokenId,hash,completed,completed+ACCESS,claimed.device_id,lineage),
+      this.db.prepare(`INSERT INTO access_lineages (lineage_id,device_id,public_key,created_at,head_handle_id,last_renewed_at) SELECT ?1,d.device_id,?2,?3,?6,?3 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND ${guard}`).bind(lineage,renewalKey,completed,completed+W_,claimed.device_id,access.tokenId),
+      this.db.prepare(`INSERT INTO device_access_handles (handle_id,secret_digest,device_id,created_at,expires_at,lineage_id) SELECT ?1,?2,d.device_id,?3,?4,?6 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?5 AND EXISTS(SELECT 1 FROM access_lineages WHERE lineage_id=?6 AND device_id=d.device_id) AND ${guard}`).bind(access.tokenId,hash,completed,completed+W_,claimed.device_id,lineage),
     ]);
     if(results[2].meta.changes!==1){await this.db.prepare('DELETE FROM access_lineages WHERE lineage_id=?1').bind(lineage).run();return undefined;}
     const fp=await firstPartyExpiresAt(this.db,claimed.device_id);
-    return {access:access.token,accessExpiresAt:completed+ACCESS,renewal:{lineageId:lineage,handleId:access.tokenId,serverTime:completed,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};
+    return {access:access.token,accessExpiresAt:completed+W_,renewal:{lineageId:lineage,handleId:access.tokenId,serverTime:completed,...(fp===undefined?{}:{firstPartyExpiresAt:fp})}};
   }
   async cleanup({limit=100}={}){if(!Number.isSafeInteger(limit)||limit<1||limit>500)throw new TypeError('Bounded cleanup required');const r=await this.db.prepare('DELETE FROM browser_exchanges WHERE exchange_id IN (SELECT exchange_id FROM browser_exchanges WHERE expires_at<=?1 ORDER BY expires_at LIMIT ?2)').bind(this.now(),limit).run();return r.meta.changes;}
 }

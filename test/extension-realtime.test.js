@@ -5,7 +5,7 @@ import { PasskeySignupService } from '../src/passkey-signup.js';
 import { AccountIdentityService } from '../src/account-identity.js';
 import { DeviceSessionService } from '../src/device-sessions.js';
 import { authenticator } from './passkey-fixture.js';
-import { createRealtimeHttp,MAX_TICKETS } from '../src/realtime-http.js';
+import { createRealtimeHttp,MAX_TICKETS,SOCKET_MAX_MS } from '../src/realtime-http.js';
 const NOW=1_800_000_000_000,API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
 const EXT='chrome-extension://abcdefghijklmnopabcdefghijklmnop',OTHER='chrome-extension://ponmlkjihgfedcbaponmlkjihgfedcba';
 async function fx(limit=async()=>({success:true})){
@@ -27,7 +27,7 @@ async function fx(limit=async()=>({success:true})){
 }
 test('extension mint: extension-kind handle only; no CORS headers or preflight; Origin absent or exactly the pinned one; web/android handles and other origins mint nothing',async()=>{
  const f=await fx();
- for(const o of [undefined,EXT]){const r=await f.mint(f.ext.access,o);assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual([...r.headers.keys()].filter(k=>k.startsWith('access-control')||k==='vary'),[]);const t=await r.json();assert.match(t.ticket,/^rt1\./);assert.equal(t.closeAt,f.ext.accessExpiresAt);}
+ for(const o of [undefined,EXT]){const r=await f.mint(f.ext.access,o);assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');assert.deepEqual([...r.headers.keys()].filter(k=>k.startsWith('access-control')||k==='vary'),[]);const t=await r.json();assert.match(t.ticket,/^rt1\./);assert.equal(t.closeAt,Math.min(f.ext.accessExpiresAt,t.serverTime+SOCKET_MAX_MS));}
  const before=f.n();assert.equal(before,2);
  for(const o of [APP,'https://evil.test',OTHER,'moz-extension://abcdefgh-1234','null'])assert.equal((await f.mint(f.ext.access,o)).status,403,String(o));
  for(const t of [f.web.access,f.android.access])for(const o of [undefined,EXT])assert.equal((await f.mint(t,o)).status,401);
@@ -50,7 +50,7 @@ test('extension upgrade: Origin absent or exactly pinned; APP, http(s), other ex
  for(const o of [APP,'https://evil.test',OTHER,'moz-extension://abcdefgh-1234'])assert.equal((await f.up(t,o)).status,403,o);
  assert.equal(f.n(),1,'refused origin does not burn the ticket');
  const rs=await Promise.all([f.up(t,EXT),f.up(t),f.up(t,EXT)]);assert.equal(rs.filter(r=>r.status===200).length,1);
- assert.deepEqual(f.connects,[{ownerId:f.proof.ownerId,deviceId:f.ext.deviceId,closeAt:f.ext.accessExpiresAt}],'the hub gets only owner, device and closeAt, never the ticket');
+ assert.deepEqual(f.connects,[{ownerId:f.proof.ownerId,deviceId:f.ext.deviceId,closeAt:Math.min(f.ext.accessExpiresAt,NOW+SOCKET_MAX_MS)}],'the hub gets only owner, device and closeAt, never the ticket');
  for(const r of rs)assert.deepEqual([...r.headers.keys()].filter(k=>k.startsWith('access-control')||k==='sec-websocket-protocol'),[],'no CORS and the handler never echoes a subprotocol (the hub selects otpanda.v1 alone)');
  for(const proto of ['rt1.'+'a'.repeat(16)+'.'+'b'.repeat(43),'otpanda.v1','otpanda.v1, x, y','other, rt1.'+'a'.repeat(16)+'.'+'b'.repeat(43)])assert.equal((await f.call(f.extH,'/auth/extension/realtime',{method:'GET',headers:{Upgrade:'websocket','Sec-WebSocket-Protocol':proto}})).status,400,proto);
  assert.equal((await f.call(f.extH,'/auth/extension/realtime?ticket='+t,{method:'GET',headers:{Upgrade:'websocket'}})).status,404);

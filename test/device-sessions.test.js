@@ -28,7 +28,7 @@ test('session insertion sees credential or generation changes after proof, befor
  const {db,service,proof}=await setup();db.sqlite.prepare('UPDATE account_security SET generation=generation+1').run();assert.equal(await service.issue({proof,clientKind:'web'}),undefined);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,0);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_refresh_handles').get().n,0);db.sqlite.close();
 });
 test('forged old refresh never revokes a valid device and cleanup is bounded',async()=>{
- const {db,service,proof,setNow}=await setup(),s=await service.issue({proof,clientKind:'web'});const changed=s.refresh.slice(0,-2)+(s.refresh.at(-2)==='A'?'B':'A')+s.refresh.at(-1);assert.equal((await service.rotate(changed)).status,'denied');assert.ok(await service.authenticate(s.access));setNow(NOW+5*60000);assert.equal((await service.cleanup({limit:1}))[0],1);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,1);setNow(NOW+30*DAY);await service.cleanup({limit:1});assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,0);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_refresh_handles').get().n,0);await assert.rejects(service.cleanup({limit:0}));db.sqlite.close();
+ const {db,service,proof,setNow}=await setup(),s=await service.issue({proof,clientKind:'web'});const changed=s.refresh.slice(0,-2)+(s.refresh.at(-2)==='A'?'B':'A')+s.refresh.at(-1);assert.equal((await service.rotate(changed)).status,'denied');assert.ok(await service.authenticate(s.access));setNow(NOW+15*60000);assert.equal((await service.cleanup({limit:1}))[0],1);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,1);setNow(NOW+30*DAY);await service.cleanup({limit:1});assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_sessions').get().n,0);assert.equal(db.sqlite.prepare('SELECT count(*) n FROM device_refresh_handles').get().n,0);await assert.rejects(service.cleanup({limit:0}));db.sqlite.close();
 });
 test('revoking all owner devices prevents every outstanding access and refresh',async()=>{
  const {db,service,proof}=await setup(),a=await service.issue({proof,clientKind:'web'}),b=await service.issue({proof,clientKind:'android'});assert.equal(await service.revokeAll('other'),0);assert.equal(await service.revokeAll(proof.ownerId),2);for(const s of [a,b]){assert.equal(await service.authenticate(s.access),undefined);assert.equal((await service.rotate(s.refresh)).status,'denied');}db.sqlite.close();
@@ -55,7 +55,7 @@ test('active access ceiling denies rotation without spending refresh and expiry 
  const s=await service.issue({proof,clientKind:'web'});let refresh=s.refresh;
  for(let i=0;i<63;i++){const r=await service.rotate(refresh);assert.equal(r.status,'rotated');refresh=r.refresh;}
  assert.equal((await service.rotate(refresh)).status,'retry');assert.equal(db.sqlite.prepare('SELECT used_at FROM device_refresh_handles ORDER BY created_at DESC,rowid DESC LIMIT 1').get().used_at,null);
- setNow(NOW+300001);assert.equal((await service.rotate(refresh)).status,'rotated');
+ setNow(NOW+900001);assert.equal((await service.rotate(refresh)).status,'rotated');
  }finally{db.sqlite.close();}
 });
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { database } from './sqlite-helper.js';
 import { COMBINED_CEILING,drainOutbox,drainSome,cleanupRealtime,CHANGED,CLOSE_ALL,PAGE,LEASE_MS,RETAIN_MS,ACTIVITY_MS,Budget,MAX_ATTEMPTS,backoffMs,ROW_MIN_BUDGET,FOREGROUND_DELIVERY_MAX,CRON_DELIVERY_MAX } from '../src/realtime-outbox.js';
 import { ACCESS_TTL_MS } from '../src/device-sessions.js';
-import { TICKET_TTL_MS } from '../src/realtime-http.js';
+import { TICKET_TTL_MS,SOCKET_MAX_MS } from '../src/realtime-http.js';
 import { createQueryMeter } from '../src/query-meter.js';
 const NOW=1_800_000_000_000;
 const CODE="INSERT INTO incoming_codes(owner_id,event_id,source_id,entry_id,envelope,received_at,expires_at,assignment) VALUES ('owner',?,'s1',?,'{}',?,?,?)";
@@ -133,9 +133,10 @@ test('a later ticket refreshes the account activity (never moves it backwards)',
  const t=(id,at)=>w.q("INSERT INTO realtime_tickets(ticket_id,secret_digest,owner_id,device_id,generation,created_at,expires_at,close_at) VALUES (?,?,?,?,0,?,?,?)",id,'a'.repeat(64),'r1','dev_abcdefgh',at,at+30000,at+300000);
  t('t1',500);assert.equal(w.all('SELECT last_ticket_at x FROM realtime_activity')[0].x,500);t('t2',300);assert.equal(w.all('SELECT last_ticket_at x FROM realtime_activity')[0].x,500);w.db.sqlite.close();});
 
-test('the activity window covers the longest possible socket: access life plus ticket TTL plus a margin',()=>{
- assert.equal(ACCESS_TTL_MS,5*60*1000);assert.equal(TICKET_TTL_MS,30_000);
- assert.ok(ACTIVITY_MS>=ACCESS_TTL_MS+TICKET_TTL_MS+30_000,'6 min >= 5 min + 30 s + margin');});
+test('the activity window covers the longest possible socket: socket cap plus ticket TTL plus a margin',()=>{
+ assert.equal(ACCESS_TTL_MS,15*60*1000);assert.equal(SOCKET_MAX_MS,5*60*1000);assert.equal(TICKET_TTL_MS,30_000);
+ assert.ok(SOCKET_MAX_MS<=ACCESS_TTL_MS,'the cap only ever shortens a socket');
+ assert.ok(ACTIVITY_MS>=SOCKET_MAX_MS+TICKET_TTL_MS+30_000,'6 min >= 5 min + 30 s + margin');});
 test('poison rows back off exponentially, cannot starve later healthy rows, and are dropped at the cap',async()=>{
  const w=world();w.live('owner');w.clear();
  for(let i=0;i<30;i++)w.q("INSERT INTO realtime_outbox(kind,account_id,device_id,created_at) VALUES ('device','owner',?,?)",'dev_p'+String(i).padStart(6,'0'),NOW+i);
