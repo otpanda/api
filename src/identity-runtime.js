@@ -84,7 +84,9 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const nativeOrigins=androidOriginsFromFingerprints(native?.assetFingerprints??[]),nativePasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins,nativeOnly:true})}):undefined;
  const nativeHttp=createNativeHttp({sessions,native:nativeSessionService,db,google:nativeGoogle,passkeys:nativePasskeys,assetFingerprints:native?.assetFingerprints??[],clock});
  const nativePaths=new Set(['/auth/native/exchange','/auth/native/challenge','/auth/native/renew','/auth/native/logout','/auth/native/google/begin','/auth/native/google/complete','/auth/native/passkey/begin','/auth/native/passkey/complete','/auth/native/google/continue/begin','/auth/native/google/continue/finish','/auth/native/approve','/app-return','/.well-known/assetlinks.json']);
- const totpBatch=batch?createCommonHorizonBatchHttp({db,sessions,generator:{generateWindowForActor:async(...args)=>(await encrypted()).generator.generateWindowForActor(...args)},clock,...batch}):null;
+ let totpBatch=null;
+ if(batch){try{totpBatch=createCommonHorizonBatchHttp({horizonPolicy:batch.horizonPolicy,ratePerMinute:batch.ratePerMinute,minRemainingMs:batch.minRemainingMs,db,sessions,generator:{generateWindowForActor:async(...args)=>(await encrypted()).generator.generateWindowForActor(...args)},clock});}
+ catch{totpBatch={fetch:async()=>json({error:'unavailable'},503)};}}
  const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock});
  // Authenticated, device/owner/action-bound passkey ceremonies (step-up, register) must verify an assertion from either client: web origin plus the configured android signer. Without a signer this is exactly the web service.
  const managedPasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins})}):passkeys;
