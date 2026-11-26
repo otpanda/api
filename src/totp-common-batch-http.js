@@ -26,6 +26,7 @@ function timestamp(clock){const now=clock();if(!Number.isSafeInteger(now)||now<0
 export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.now,horizonPolicy,ratePerMinute,minRemainingMs}={}){
  if(!horizonPolicy||!Number.isSafeInteger(ratePerMinute)||ratePerMinute<1||!Number.isSafeInteger(minRemainingMs)||minRemainingMs<1)throw new TypeError('Explicit qualified policies required');
  const maxCodes=maxCodesPerEntry(horizonPolicy);
+ if(horizonPolicy.entryCap>49)throw new RangeError('D1 revalidation parameter bound exceeded');
  if(horizonPolicy.maxWindow>600||maxCodes>64)throw new RangeError('Generator bounds exceeded');
  planCommonHorizon({...horizonPolicy,now:0,periods:[],requestedWindow:horizonPolicy.maxWindow});
  const policy=responsePolicy({...horizonPolicy,digits:[6,7,8],maxCodesPerEntry:maxCodes});

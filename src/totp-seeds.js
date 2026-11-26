@@ -111,6 +111,7 @@ export class EntryTotpGenerator {
   // "unavailable". Returns codes only, never seed material.
   async generateWindowForActor(actorId, entryIds, unixSeconds, { windowSeconds = 600, minPeriod = 20, maxCodes = 31, horizonPolicy } = {}) {
     id(actorId);
+    if (horizonPolicy?.entryCap > 49) throw new RangeError('D1 revalidation parameter bound exceeded');
     if (!Array.isArray(entryIds) || entryIds.length < 1 || entryIds.length > (horizonPolicy?.entryCap ?? 20) || new Set(entryIds).size !== entryIds.length) throw new TypeError(`1..${horizonPolicy?.entryCap ?? 20} distinct entries required`);
     entryIds.forEach(id);
     if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0) throw new RangeError('Explicit nonnegative integer Unix time required');
