@@ -1,7 +1,7 @@
 name: Common-horizon actual Worker CPU qualification
 on:
   push:
-    branches: [feat/common-horizon-generator-prep]
+    branches: [feat/batch-future-offset]
 permissions:
   contents: read
 concurrency:
