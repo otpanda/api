@@ -3,7 +3,7 @@ const fixture=JSON.parse(readFileSync(new URL('./fixture.json',import.meta.url),
 import {writeFileSync}from'node:fs';
 import assert from'node:assert/strict';
 const results=[],base=process.argv[2];
-// Cold ordinary session baseline, then first key-dependent batch on same isolate.
+// Cold batch first, then first ordinary session and warm batch on same isolate.
 for(const kind of ['batch','session','batch']){
  const q=new URLSearchParams({window:'600'});q.append('entry',fixture.ids[0]);
  const response=await fetch(base+(kind==='session'?'/v1/manage/session':'/v1/manage/totp-codes?'+q),{headers:{Authorization:'Bearer '+fixture.access}});
@@ -11,4 +11,4 @@ for(const kind of ['batch','session','batch']){
  assert.equal(response.status,200);
  const r={kind,requestId:data.requestId,status:data.status,d1Queries:data.queryCount,wallMs:data.wallMs,totalCodes:data.body.totalCodes};results.push(r);console.log(JSON.stringify(r));await new Promise(resolve=>setTimeout(resolve,1000));
 }
-writeFileSync('qualification/batch-result.json',JSON.stringify({scope:'Cold session-only baseline then first encrypted TOTP batch and warm repeat. Wall stage durations are not CPU. Tail request IDs correlate actual CPU.',results},null,2));
+writeFileSync('qualification/batch-result.json',JSON.stringify({scope:'Cold encrypted TOTP batch first, first ordinary session second, warm batch repeat third. Wall stage durations are not CPU. Tail request IDs correlate actual CPU.',results},null,2));
