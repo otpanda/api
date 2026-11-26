@@ -59,3 +59,35 @@ test('rate limit preserves the actual one-use ceremony for a later permitted fin
   assert.equal((await req('finish',value)).status,200);
  }finally{db.sqlite.close();}
 });
+
+test('local unlock grants no account authority or session and real bearer stays generation bound',async()=>{
+ const {PasskeySignupService}=await import('../src/passkey-signup.js');const {AccountIdentityService}=await import('../src/account-identity.js');const {PasskeyService}=await import('../src/passkey-service.js');const {DeviceSessionService}=await import('../src/device-sessions.js');const {NativeSessionService}=await import('../src/native-sessions.js');const {createExtraVerificationHttp}=await import('../src/extra-verification-http.js');const {authenticator}=await import('./passkey-fixture.js');
+ const db=database();try{
+  const clock=()=>NOW,identity=new AccountIdentityService(db,{clock}),signup=new PasskeySignupService(db,{clock}),email='no-authority@example.invalid';const {token}=await identity.issueEmailChallenge({purpose:'signup-email',email});const begun=await signup.begin({email,emailToken:token,binding:'signup'}),a=authenticator(),owner=await signup.finish({token:begun.token,binding:'signup',response:a.registration({expected:begun.options.challenge})});
+  const passkeys=new PasskeyService(db,{clock}),sessions=new DeviceSessionService(db,{clock});
+  const device=await sessions.issue({proof:{purpose:'authenticate',ownerId:owner.ownerId,credentialId:a.credential.id,generation:owner.generation,verifiedAt:NOW},clientKind:'android'});assert.ok(device);
+  const user=await sessions.authenticate(device.access);assert.equal(user.ownerId,owner.ownerId);assert.equal(user.deviceId,device.deviceId);assert.equal(user.generation,owner.generation);
+  const app=createLocalLockRecoveryHttp({db,sessions,passkeys,clock});
+  const request=(path,value)=>new Request(API+path,{method:'POST',headers:{Authorization:'Bearer '+device.access,'Content-Type':'application/json'},body:JSON.stringify(value)});
+  const req=(step,value)=>app.fetch(request('/v1/manage/local-lock/'+step,value),{clientAddress:'192.0.2.5'});
+  const intent='local-unlock-once',c=await(await req('begin',{intent,lockGeneration:G})).json();
+  const excluded=new Set(['passkey_ceremonies','passkey_credentials','rate_buckets']);
+  const tables=db.sqlite.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all().map(r=>r.name).filter(n=>!excluded.has(n));
+  const snapshot=()=>Object.fromEntries(tables.map(n=>[n,db.sqlite.prepare('SELECT * FROM "'+n+'"').all()]));
+  const credentialsBefore=db.sqlite.prepare('SELECT * FROM passkey_credentials').all();
+  const before=snapshot(),response=a.assertion({expected:c.options.challenge}),value={intent,lockGeneration:G,token:c.token,response};
+  const done=await req('finish',value);assert.equal(done.status,200);const result=await done.json();assert.deepEqual(snapshot(),before);
+  const stableCredential=row=>Object.fromEntries(Object.entries(row).filter(([k])=>!['counter','last_used_at','revision'].includes(k)));
+  assert.deepEqual(db.sqlite.prepare('SELECT * FROM passkey_credentials').all().map(stableCredential),credentialsBefore.map(stableCredential));
+  assert.equal(await sessions.issue({proof:result,clientKind:'android'}),undefined);
+  const native=new NativeSessionService(db,{clock});assert.equal(await native.issuePasskey({proof:result,renewalKey:{}}),undefined);
+  const security=createExtraVerificationHttp({db,sessions,passkeys,clock,native:true});
+  const denied=await security.fetch(request('/v1/manage/security/finish',{enabled:true,warningAccepted:true,token:c.token,response}),{clientAddress:'192.0.2.6'});assert.equal(denied.status,403);
+  assert.equal(db.sqlite.prepare('SELECT count(*) n FROM new_device_verification').get().n,0);
+  const fresh=await(await req('begin',{intent,lockGeneration:G})).json(),freshResponse=a.assertion({expected:fresh.options.challenge,counter:2});
+  const wrong=await security.fetch(request('/v1/manage/security/finish',{enabled:true,warningAccepted:true,token:fresh.token,response:freshResponse}),{clientAddress:'192.0.2.7'});assert.equal(wrong.status,403);
+  assert.equal((await req('finish',{intent,lockGeneration:G,token:fresh.token,response:freshResponse})).status,200);
+  await db.prepare('UPDATE account_security SET generation=generation+1 WHERE owner_id=?').bind(owner.ownerId).run();
+  assert.equal(await sessions.authenticate(device.access),undefined);
+ }finally{db.sqlite.close();}
+});
