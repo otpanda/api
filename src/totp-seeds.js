@@ -5,7 +5,8 @@
 // Sharing an entry exposes only generated codes, exactly like delivered-code
 // reads: owner always, shared recipient code-only, automation only with the
 // owner's per-share allow_automation, all re-checked after decryption.
-import { totp } from './totp.js';
+import { totp, totpWindow } from './totp.js';
+import {planCommonHorizon} from './common-horizon-planner.js';
 import { base64urlEncode, base64urlDecode } from './tokens.js';
 
 const ALGORITHMS = new Set(['SHA-1', 'SHA-256', 'SHA-512']);
@@ -100,5 +101,73 @@ export class EntryTotpGenerator {
     if (!current) return undefined;
     if (!await this.access.canRead(actorId, entryId, { automation })) return undefined;
     return { entryId, code, period: parameters.period, validFrom: epochStart, validUntil: epochStart + parameters.period };
+  }
+
+  // Batched window read for a web viewer: current period plus future periods
+  // up to windowSeconds. Entry-scoped authorization is one query, the same
+  // predicate as canRead(automation=false); every result is re-validated
+  // against the exact envelope after decryption. Entries that are unknown,
+  // unauthorized, unseeded, changed mid-read or invalid are reported alike as
+  // "unavailable". Returns codes only, never seed material.
+  async generateWindowForActor(actorId, entryIds, unixSeconds, { windowSeconds = 600, minPeriod = 20, maxCodes = 31, horizonPolicy } = {}) {
+    id(actorId);
+    if (horizonPolicy?.entryCap > 49) throw new RangeError('D1 revalidation parameter bound exceeded');
+    if (!Array.isArray(entryIds) || entryIds.length < 1 || entryIds.length > (horizonPolicy?.entryCap ?? 20) || new Set(entryIds).size !== entryIds.length) throw new TypeError(`1..${horizonPolicy?.entryCap ?? 20} distinct entries required`);
+    entryIds.forEach(id);
+    if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0) throw new RangeError('Explicit nonnegative integer Unix time required');
+    if (!Number.isInteger(windowSeconds) || windowSeconds < 1 || windowSeconds > 600) throw new RangeError('Invalid window');
+    const marks = entryIds.map((_, i) => '?' + (i + 2)).join(',');
+    const permitted = '(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
+    const query = `SELECT s.entry_id, s.owner_id, s.envelope FROM totp_seeds s JOIN entries e ON e.owner_id=s.owner_id AND e.entry_id=s.entry_id WHERE s.entry_id IN (${marks}) AND ${permitted}`;
+    const rows = (await this.db.prepare(query).bind(actorId, ...entryIds).all()).results;
+    const generated = new Map(), omitted = new Map(), eligible = [];
+    let plan;
+    try {
+    for (const row of rows) {
+      let parameters;
+      try {
+        const payload = JSON.parse(await this.seeds.cipher.decrypt(JSON.parse(row.envelope), { ownerId: row.owner_id, entryId: row.entry_id }));
+        if (!payload || typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).sort().join(',') !== 'algorithm,digits,period,secret' || typeof payload.secret !== 'string' || payload.secret.length > 171) throw new Error('bad');
+        const secret = base64urlDecode(payload.secret, Math.floor(payload.secret.length * 6 / 8));
+        if (!secret) throw new Error('bad');
+        try {
+          parameters = validateParameters({ secret, algorithm: payload.algorithm, digits: payload.digits, period: payload.period });
+        } finally { secret.fill(0); }
+      } catch { omitted.set(row.entry_id, 'unavailable'); continue; }
+      if (parameters.period < (horizonPolicy?.minPeriod ?? minPeriod)) {
+        parameters.secret.fill(0);
+        omitted.set(row.entry_id, 'period_too_short');
+        continue;
+      }
+      eligible.push({row, parameters});
+    }
+    if (horizonPolicy) plan = planCommonHorizon({...horizonPolicy,
+      now:unixSeconds, periods:eligible.map(e=>e.parameters.period), requestedWindow:windowSeconds});
+    for (const [index, {row, parameters}] of eligible.entries()) {
+      const {period} = parameters, validFrom=Math.floor(unixSeconds/period)*period;
+      const count=plan?plan.counts[index]:Math.min(maxCodes,
+        Math.floor((unixSeconds+windowSeconds-1)/period)-Math.floor(unixSeconds/period)+1);
+      const codes=await totpWindow(parameters.secret,{unixSeconds,period,digits:parameters.digits,algorithm:parameters.algorithm,count});
+      generated.set(row.entry_id,{entryId:row.entry_id,period,digits:parameters.digits,validFrom,codes,envelope:row.envelope});
+    }
+    // Re-validate every generated entry in one query: permission, seed and
+    // exact envelope must still match.
+    const ids = [...generated.keys()];
+    if (ids.length) {
+      const pairs = ids.map((_, i) => `(s.entry_id=?${2 * i + 2} AND s.envelope=?${2 * i + 3})`).join(' OR ');
+      const binds = ids.flatMap(k => [k, generated.get(k).envelope]);
+      const live = new Set((await this.db.prepare(`SELECT s.entry_id FROM totp_seeds s JOIN entries e ON e.owner_id=s.owner_id AND e.entry_id=s.entry_id WHERE (${pairs}) AND ${permitted}`).bind(actorId, ...binds).all()).results.map(r => r.entry_id));
+      for (const k of ids) if (!live.has(k)) generated.delete(k);
+    }
+    const entries = [], skipped = [];
+    for (const entryId of entryIds) {
+      const g = generated.get(entryId);
+      if (g) entries.push({ entryId, period: g.period, digits: g.digits, validFrom: g.validFrom, codes: g.codes });
+      else skipped.push({ entryId, reason: omitted.get(entryId) === 'period_too_short' && !(generated.has(entryId)) ? 'period_too_short' : 'unavailable' });
+    }
+    const result={entries,omitted:skipped,windowEnd:plan?plan.coverageUntil/1000:unixSeconds+windowSeconds};
+    if(plan)result.coverageUntil=entries.length?plan.coverageUntil:null;
+    return result;
+    }finally{for(const {parameters} of eligible)parameters.secret.fill(0);}
   }
 }

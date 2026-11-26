@@ -20,7 +20,8 @@
     "GMAIL_PUSH_AUDIENCE": "https://otpanda-api.abrahammurciano.workers.dev/sources/gmail/push",
     "GMAIL_PUSH_SERVICE_ACCOUNT": "gmail-push-oidc@otpanda.iam.gserviceaccount.com",
     "BREVO_SENDER_EMAIL": "otpanda.app@gmail.com",
-    "BREVO_REPLY_TO_EMAIL": "otpanda.app@gmail.com"
+    "BREVO_REPLY_TO_EMAIL": "otpanda.app@gmail.com",
+    "TOTP_BATCH_CONFIGURATION": "{\"horizonPolicy\":{\"entryCap\":3,\"budget\":100,\"minPeriod\":20,\"maxPeriod\":86400,\"maxWindow\":600,\"minUsefulWindow\":60},\"ratePerMinute\":24,\"minRemainingMs\":1000}"
   },
   "d1_databases": [
     {
