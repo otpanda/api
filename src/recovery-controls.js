@@ -124,7 +124,7 @@ export class RecoveryControls {
     // A different passkey must authorize, so one always remains.
     if(target===c)return;
     const r=await this.db.prepare(`UPDATE passkey_credentials SET revoked_at=?4,revision=revision+1 WHERE credential_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}${keep}`).bind(c,o,g,now,target).run();
-    return r/*exact-count-ok*/.meta.changes===1?{revoked:'passkey'}:undefined;
+    return r/*exact-count-ok*/.meta.changes>=1?{revoked:'passkey'}:undefined;
    }
    if(kind==='google-unlink'){
     // One atomic batch. The proving passkey must be active (so a passkey always remains) and the link still active.

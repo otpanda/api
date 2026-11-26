@@ -45,7 +45,7 @@ export class DurableDeviceKeys {
   let result;
   if(row.purpose==='enroll')result=await this.db.prepare('INSERT INTO durable_device_keys(key_id,owner_id,public_jwk,generation,created_at,public_key_digest) SELECT ?1,?2,?3,?4,?5,?7 WHERE EXISTS(SELECT 1 FROM account_security WHERE owner_id=?2 AND generation=?4) AND (SELECT count(*) FROM durable_device_keys WHERE owner_id=?2 AND revoked_at IS NULL AND generation=?4 AND key_id!=?1)<20 AND EXISTS(SELECT 1 FROM passkey_credentials WHERE credential_id=?6 AND owner_id=?2 AND revoked_at IS NULL) ON CONFLICT(owner_id,public_key_digest) DO UPDATE SET generation=excluded.generation WHERE durable_device_keys.key_id=excluded.key_id AND durable_device_keys.revoked_at IS NULL').bind(row.key_id,row.owner_id,jwk,row.generation,completed,row.credential_id,await hashText(jwk)).run();
   else result=await this.db.prepare('UPDATE durable_device_keys SET last_used_at=?1 WHERE key_id=?2 AND owner_id=?3 AND generation=?4 AND revoked_at IS NULL AND EXISTS(SELECT 1 FROM account_security WHERE owner_id=?3 AND generation=?4)').bind(completed,row.key_id,row.owner_id,row.generation).run();
-  return result.meta.changes===1?{ownerId:row.owner_id,keyId:row.key_id,generation:row.generation,purpose:row.purpose,actionDigest:row.action_digest,verifiedAt:completed}:undefined;
+  return result.meta.changes>=1?{ownerId:row.owner_id,keyId:row.key_id,generation:row.generation,purpose:row.purpose,actionDigest:row.action_digest,verifiedAt:completed}:undefined;
  }
  async sweepExpired(now=this.now()) {
   // Bounded physical cleanup, including consumed historical schema backlog.
@@ -56,5 +56,5 @@ export class DurableDeviceKeys {
   const row=await this.db.prepare('SELECT count(*) AS key_count FROM durable_device_keys k JOIN account_security s ON s.owner_id=k.owner_id WHERE k.owner_id=?1 AND k.revoked_at IS NULL AND k.generation=s.generation').bind(ownerId).first();
   return {enrolledKeyCount:row?.key_count??0,platformVerified:false,fullLossWarning:true};
  }
- async revoke({ownerId,keyId}){const r=await this.db.prepare('UPDATE durable_device_keys SET revoked_at=?1 WHERE key_id=?2 AND owner_id=?3 AND revoked_at IS NULL').bind(this.now(),keyId,ownerId).run();return r.meta.changes===1;}
+ async revoke({ownerId,keyId}){const r=await this.db.prepare('UPDATE durable_device_keys SET revoked_at=?1 WHERE key_id=?2 AND owner_id=?3 AND revoked_at IS NULL').bind(this.now(),keyId,ownerId).run();return r.meta.changes>=1;}
 }

@@ -72,7 +72,7 @@ export class PasskeyService {
     // Uniqueness never overwrites another credential, including a revoked one.
     const result = await this.db.prepare('INSERT INTO passkey_credentials (credential_id, owner_id, public_key, counter, transports, device_type, backed_up, created_at) SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS (SELECT 1 FROM account_security WHERE owner_id = ?2 AND generation = ?9) ON CONFLICT(credential_id) DO NOTHING')
       .bind(c.id, ownerId, Array.from(c.publicKey), c.counter, JSON.stringify(transports), deviceType, backedUp, now, ceremony.generation).run();
-    if (result.meta.changes !== 1) return false;
+    if (result.meta.changes < 1) return false;
     await storeAaguid(this.db,{credentialId:c.id,ownerId,aaguid:record.aaguid});
     return true;
   }
@@ -100,7 +100,7 @@ export class PasskeyService {
     if (now < ceremony.created_at || now >= ceremony.expires_at) return undefined;
     const updated = await this.db.prepare('UPDATE passkey_credentials SET counter = ?1, revision = revision + 1, last_used_at = ?2, backed_up = ?3 WHERE credential_id = ?4 AND revision = ?5 AND revoked_at IS NULL AND EXISTS (SELECT 1 FROM account_security WHERE owner_id = ?6 AND generation = ?7)')
       .bind(info.newCounter, now, info.credentialBackedUp ? 1 : 0, row.credential_id, row.revision, row.owner_id, row.generation).run();
-    if (updated.meta.changes !== 1) return undefined;
+    if (updated.meta.changes < 1) return undefined;
     // This is an internal verification result, not a bearer credential or session.
     return { ownerId:row.owner_id, credentialId:row.credential_id, generation:row.generation, verifiedAt:now, purpose, actionDigest:ceremony.action_digest };
   }
@@ -117,6 +117,6 @@ export class PasskeyService {
     // confirmation before calling this mutation. Never accept ownerId from body.
     // The 0025 last-verifier trigger still aborts a protection-on last-key revoke.
     let result;try{result = await this.db.prepare('UPDATE passkey_credentials SET revoked_at = ?1, revision = revision + 1 WHERE credential_id = ?2 AND owner_id = ?3 AND revoked_at IS NULL AND (EXISTS(SELECT 1 FROM passkey_credentials o WHERE o.owner_id = ?3 AND o.credential_id <> ?2 AND o.revoked_at IS NULL) OR EXISTS(SELECT 1 FROM provider_identities g WHERE g.owner_id = ?3 AND g.revoked_at IS NULL))').bind(this.now(), id, ownerId).run();}catch{return false;}
-    return result.meta.changes === 1;
+    return result.meta.changes >= 1;
   }
 }

@@ -70,7 +70,7 @@ export class DeviceSessionService {
       this.db.prepare('INSERT INTO recognized_browsers (recognition_id,secret_digest,owner_id,provider_identity_id,generation,created_at) SELECT ?1,?2,d.owner_id,d.provider_identity_id,d.generation,?4 FROM device_sessions d WHERE length(?1)>0 AND d.device_id=?3 AND d.provider_identity_id IS NOT NULL').bind(fresher?.id??'',fresher?.digest??'',deviceId,now),
     ]);
     const needsConsume=!!pend,needsRec=!!fresher&&method.credentialId===null;
-    if(results.slice(0,4).some(r=>r/*exact-count-ok*/.meta.changes!==1)||(needsConsume&&results[5].meta.changes!==1)||(needsRec&&results[6].meta.changes!==1)) {
+    if(results.slice(0,4).some(r=>r/*exact-count-ok*/.meta.changes!==1)||(needsConsume&&results[5].meta.changes<1)||(needsRec&&results[6].meta.changes!==1)) {
       // Guarded insert denial is a no-op. An unexpected child no-op must not
       // leave a usable provisional device; retirement also requires children.
       if(results[0]/*exact-count-ok*/.meta.changes===1)await this.revoke({ownerId:proof.ownerId,deviceId});

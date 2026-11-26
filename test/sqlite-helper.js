@@ -28,7 +28,8 @@ export function database(path = ':memory:') {
         async first() { return statement.get(...params) ?? null; },
         async all() { return { results: statement.all(...params), success: true }; },
         // Real D1 (workerd) reports meta.changes as the connection's total_changes delta, so trigger writes are included.
-        async run() { const before = Number(sqlite.prepare('SELECT total_changes() n').get().n); statement.run(...params); const after = Number(sqlite.prepare('SELECT total_changes() n').get().n); return { success: true, meta: { changes: after - before } }; },
+        // FRESH_OUTBOX=1 clears unclaimed hints before every statement, so a trigger can never hide behind coalescing: any exact meta.changes check that a hint trigger can disturb then fails deterministically.
+        async run() { if(process.env.FRESH_OUTBOX==='1')sqlite.exec('DELETE FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL'); const before = Number(sqlite.prepare('SELECT total_changes() n').get().n); statement.run(...params); const after = Number(sqlite.prepare('SELECT total_changes() n').get().n); return { success: true, meta: { changes: after - before } }; },
       };
       return query;
     },
