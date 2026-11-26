@@ -1,3 +1,4 @@
+import {lazyHttp} from './lazy-http.js';
 import {GoogleContinuation} from './google-continuation.js';
 import {createNativeGoogleLinkHttp} from './native-google-link-http.js';
 import {SeedCipher} from './seed-cipher.js';
@@ -53,7 +54,7 @@ import {createRealtimeHttp} from './realtime-http.js';
 import {createForegroundDrain} from './realtime-foreground.js';
 // Each unrelated HTTP service is built on its first route use. Configuration
 // gates that must fail during startup (extension/batch) remain eager below.
-function lazyHttp(factory){let value;return{fetch(...args){value??=factory();return value.fetch(...args);}};}
+
 export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
