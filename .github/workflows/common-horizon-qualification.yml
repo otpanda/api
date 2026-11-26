@@ -49,7 +49,7 @@ jobs:
           node - "$dbid" "$name" <<'JS'
           const fs=require('fs'),crypto=require('crypto');
           const p='qualification/wrangler.json',x=JSON.parse(fs.readFileSync(p));
-          x.name='otpanda-batch-qualification';
+          x.name='otpanda-batch-qual-'+process.env.GITHUB_RUN_ID;
           x.vars.FIXTURE_PREFIX='qualification-'+crypto.randomBytes(12).toString('hex');
           x.d1_databases[0].database_id=process.argv[2];
           x.d1_databases[0].database_name=process.argv[3];
@@ -64,7 +64,8 @@ jobs:
           tailpid=$!
           sleep 3
           prefix=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/wrangler.json")).vars.FIXTURE_PREFIX)')
-          base="https://otpanda-batch-qualification.abrahammurciano.workers.dev/$prefix"
+          worker=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/wrangler.json")).name)')
+          base="https://$worker.abrahammurciano.workers.dev/$prefix"
           node qualification/driver.mjs "$base"
           echo 'Fixture measurement finished. Logs captured, cleaning up.'
           sleep 8
