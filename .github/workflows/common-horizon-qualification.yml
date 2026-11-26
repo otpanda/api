@@ -32,6 +32,8 @@ jobs:
           deployed=0
           cleanup() {
             set +e
+            sleep 10
+            if [ -n "${tailpid:-}" ]; then kill "$tailpid"; wait "$tailpid"; fi
             if [ "$deployed" = 1 ]; then
               node qualification/delete-worker.mjs
             fi
