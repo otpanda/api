@@ -68,10 +68,12 @@ test('activation OFF at the runtime itself (no edge help): android token is refu
  }
  f.db.sqlite.close();});
 
-test('held batch endpoint is absent for web and native and uses no ingress or D1',async()=>{
- let calls=0;const host=createIdentityEdgeHost({nativeApi:true,initialize(){calls++;throw Error('unexpected');},resolveTrustedIngress(){calls++;}});
- for(const origin of [undefined,APP])for(const method of ['GET','OPTIONS']){
-  const r=await host.fetch(req('/v1/manage/totp-codes',{origin,method}));assert.equal(r.status,404);
+test('batch route is edge-recognized but stays absent from runtime without explicit config',async()=>{
+ const f=await fixture();try{for(const origin of [undefined,APP]){
+  const runtime=createIdentityRuntime({db:f.db,keys:new Map(),activeKeyId:'x',trustedRequestKey:()=>{throw Error('disabled batch must not touch ingress');},native:{enabled:true}});
+  const r=await runtime.fetch(req('/v1/manage/totp-codes',{origin}));assert.equal(r.status,404);
  }
- assert.equal(calls,0);
+ let initialized=0;const host=createIdentityEdgeHost({nativeApi:true,edgeAddress:yes,edgeAuthGlobal:yes,edgeReadGlobal:yes,resolveTrustedIngress:()=>'192.0.2.1',initialize(){initialized++;return{fetch:async()=>new Response(null,{status:401})};}});
+ assert.equal((await host.fetch(req('/v1/manage/totp-codes?entry=x',{origin:APP}))).status,401);assert.equal(initialized,1);
+ }finally{f.db.sqlite.close();}
 });
