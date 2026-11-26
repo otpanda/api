@@ -10,16 +10,21 @@ const API='https://otpanda-api.abrahammurciano.workers.dev';
 const APP='https://otpanda.github.io';
 const PATH='/v1/manage/totp-codes';
 // No production cap defaults. Activation requires measured explicit configuration.
+// Requester-chosen start: `from` seconds after server now (0..60), so a client that
+// already holds the current code can ask for the codes that follow it.
+const MAX_FROM_SECONDS=60;
 const cors={'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'};
 function parse(url,{entryCap,maxWindow}){
  if(url.search.length>2048)return undefined;
- const keys=[...url.searchParams.keys()];if(keys.some(k=>k!=='entry'&&k!=='window'))return undefined;
- const entries=url.searchParams.getAll('entry'),windows=url.searchParams.getAll('window');
- if(entries.length<1||entries.length>entryCap||windows.length>1||new Set(entries).size!==entries.length)return undefined;
+ const keys=[...url.searchParams.keys()];if(keys.some(k=>k!=='entry'&&k!=='window'&&k!=='from'))return undefined;
+ const entries=url.searchParams.getAll('entry'),windows=url.searchParams.getAll('window'),froms=url.searchParams.getAll('from');
+ if(entries.length<1||entries.length>entryCap||windows.length>1||froms.length>1||new Set(entries).size!==entries.length)return undefined;
  if(entries.some(e=>!e||e.length>64||/[\u0000-\u0020\u007f]/u.test(e)))return undefined;
  let window=maxWindow;
  if(windows.length){if(!/^[0-9]{1,6}$/.test(windows[0]))return undefined;window=Math.min(maxWindow,Number(windows[0]));if(window<1)return undefined;}
- return {entries,window};
+ let from=0;
+ if(froms.length){if(!/^[0-9]{1,2}$/.test(froms[0]))return undefined;from=Number(froms[0]);if(from>MAX_FROM_SECONDS)return undefined;}
+ return {entries,window,from};
 }
 const same=(a,b)=>a&&b&&a.ownerId===b.ownerId&&a.deviceId===b.deviceId&&a.generation===b.generation;
 function timestamp(clock){const now=clock();if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid server clock required');return now;}
@@ -55,11 +60,11 @@ export function createCommonHorizonBatchHttp({db,sessions,generator,clock=Date.n
    // remain minimal until a batch has fully completed. A new isolate resets it.
    const firstUse=!completedBatch;
    const generationPolicy=firstUse?{...horizonPolicy,budget:query.entries.length,entryCap:query.entries.length,minUsefulWindow:1}:horizonPolicy;
-   const result=await generator.generateWindowForActor(viewer.ownerId,query.entries,Math.floor(now/1000),{windowSeconds:query.window,horizonPolicy:generationPolicy});
+   const result=await generator.generateWindowForActor(viewer.ownerId,query.entries,Math.floor(now/1000),{windowSeconds:query.window,horizonPolicy:generationPolicy,...(query.from?{startOffsetSeconds:query.from}:{})});
    const current=await auth.authenticate(request);if(!same(viewer,current))return reply({error:'unauthorized'},401);
    const final=finalizeCommonHorizon({requestedIds:query.entries,
     entries:result?.entries,omitted:result?.omitted,coverageUntil:result?.coverageUntil,
-    nowMs:timestamp(clock),minRemainingMs:firstUse?1:minRemainingMs,policy});
+    nowMs:timestamp(clock),offsetMs:query.from*1000,minRemainingMs:firstUse?1:minRemainingMs,policy});
    if(final.status!=='ok')return reply({error:'unavailable'},503);
    const {status,...body}=final;
    completedBatch=true;
