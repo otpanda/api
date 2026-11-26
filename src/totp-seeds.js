@@ -17,7 +17,7 @@ function id(value) {
 function validateParameters({ secret, algorithm, digits, period }) {
   if (!(secret instanceof Uint8Array) || secret.byteLength < 10 || secret.byteLength > 128) throw new TypeError('TOTP secret must be 10..128 bytes');
   if (!ALGORITHMS.has(algorithm)) throw new RangeError('Unsupported HMAC algorithm');
-  if (!Number.isInteger(digits) || (digits !== 6 && digits !== 8)) throw new RangeError('Digits must be 6 or 8');
+  if (!Number.isInteger(digits) || (digits < 6 || digits > 8)) throw new RangeError('Digits must be 6 through 8');
   if (!Number.isSafeInteger(period) || period < 1 || period > 86400) throw new RangeError('Invalid period');
   return { secret: secret.slice(), algorithm, digits, period };
 }
