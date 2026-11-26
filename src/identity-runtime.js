@@ -1,3 +1,4 @@
+import {createLocalLockRecoveryHttp} from './local-lock-recovery-http.js';
 import {lazyHttp} from './lazy-http.js';
 import {GoogleContinuation} from './google-continuation.js';
 import {createNativeGoogleLinkHttp} from './native-google-link-http.js';
@@ -94,6 +95,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const totpRead=lazyHttp(()=>createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock}));
  // Authenticated, device/owner/action-bound passkey ceremonies (step-up, register) must verify an assertion from either client: web origin plus the configured android signer. Without a signer this is exactly the web service.
  const managedPasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins})}):passkeys;
+ const localLockRecovery=nativeOn?lazyHttp(()=>createLocalLockRecoveryHttp({db,sessions,clock,passkeys:managedPasskeys})):undefined;
  const totpManage=lazyHttp(()=>createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys}));
  const security=lazyHttp(()=>createExtraVerificationHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn}));
  const firstPasskey=lazyHttp(()=>createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})})),addPasskey=lazyHttp(()=>createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys})),recovery=lazyHttp(()=>createRecoveryControlsHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn})),emailRecovery=lazyHttp(()=>createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys})),nativeEmailRecovery=nativeOn&&nativePasskeys?lazyHttp(()=>createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys:nativePasskeys,native:true})):undefined,nativeLink=nativeOn&&nativeOrigins.length?createNativeGoogleLinkHttp({db,sessions,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined;
@@ -125,6 +127,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
    else if(totpBatch&&url.pathname==='/v1/manage/totp-codes')handler=totpBatch;
    else if(['/v1/manage/totp','/v1/manage/totp/begin'].includes(url.pathname))handler=totpManage;
+   else if(url.pathname.startsWith('/v1/manage/local-lock/')){handler=localLockRecovery;if(!handler)return json({error:'not_found'},404);}
    else if(url.pathname.startsWith('/v1/manage/security/'))handler=security;
    else if(['/v1/manage/first-passkey/begin','/v1/manage/first-passkey/finish'].includes(url.pathname))handler=firstPasskey;
    else if(url.pathname.startsWith('/v1/manage/passkey/add/'))handler=addPasskey;
