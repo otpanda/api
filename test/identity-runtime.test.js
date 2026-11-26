@@ -10,8 +10,11 @@ test('optional batch ignores injected dependencies and isolates invalid policy f
  const request=p=>new Request(API+p,{headers:{Origin:APP,Authorization:'Bearer untrusted'}});
  assert.equal((await createIdentityRuntime(c).fetch(request('/v1/manage/totp-codes?entry=a'))).status,404);
  const invalid=createIdentityRuntime({...c,batch:{horizonPolicy:{entryCap:999}}});
+ assert.deepEqual(invalid.health,{batch:'invalid_configuration'});assert.equal(Object.isFrozen(invalid.health),true);
  assert.equal((await invalid.fetch(request('/v1/manage/totp-codes?entry=a'))).status,503);
  for(const p of ['/v1/manage/totp-code?entry=a','/v1/manage/session'])assert.equal((await invalid.fetch(request(p))).status,401);
+ assert.deepEqual(createIdentityRuntime(c).health,{batch:'disabled'});
  let hostile=0;const app=createIdentityRuntime({...c,batch:{horizonPolicy:{entryCap:2,budget:10,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:40},ratePerMinute:24,minRemainingMs:1000,sessions:{authenticate(){hostile++;return{ownerId:'a'}}},generator:{generateWindowForActor(){hostile++;return{}}},db:{},clock:()=>NaN}});
+ assert.deepEqual(app.health,{batch:'ready'});
  assert.equal((await app.fetch(request('/v1/manage/totp-codes?entry=a'))).status,401);assert.equal(hostile,0);
  }finally{c.db.sqlite.close();}});
