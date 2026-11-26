@@ -207,3 +207,59 @@ test('seed writes never mutate caller-owned raw secret bytes',async()=>{const {d
 test('decrypted malformed seed payloads have bounded generic failures',async()=>{const {db,access,seeds,shared}=await setup();await seeds.putSeed('a',shared,seed(),NOW);for(const payload of [null,[],{}, {secret:'x'.repeat(172),algorithm:'SHA-1',digits:6,period:30},{secret:base64urlEncode(SHA1_SECRET),algorithm:'SHA-1',digits:6,period:30,unexpected:'value'}]){const cipher={decrypt:async()=>JSON.stringify(payload)};const generator=new EntryTotpGenerator(db,new TotpSeedStore(db,cipher),access);await assert.rejects(generator.generateForActor('a',shared,59),{message:'Invalid seed record'});}db.sqlite.close();});
 test('a generated validity window cannot exceed safe integer time',async()=>{const {db,seeds,generator,shared}=await setup();await seeds.putSeed('a',shared,seed(),NOW);await assert.rejects(generator.generateForActor('a',shared,Number.MAX_SAFE_INTEGER),RangeError);db.sqlite.close();});
 test('seed removal and automation downgrade during decryption deny generated codes',async()=>{for(const action of ['remove','downgrade']){const {db,access,seeds,shared}=await setup();await seeds.putSeed('a',shared,seed(),NOW);await access.share('a',shared,'b',{allowAutomation:true},NOW);const inner=seeds.cipher,cipher={decrypt:async(e,c)=>{const plaintext=await inner.decrypt(e,c);if(action==='remove')await seeds.removeSeed('a',shared);else await access.share('a',shared,'b',{allowAutomation:false},NOW);return plaintext;}};const generator=new EntryTotpGenerator(db,new TotpSeedStore(db,cipher),access);assert.equal(await generator.generateForActor('b',shared,59,{automation:true}),undefined);db.sqlite.close();}});
+
+test('injected common horizon plans all real decrypted entries before HMAC and stays code-only',async()=>{
+ const {db,seeds,generator,shared,personal}=await setup();
+ try{
+  await seeds.putSeed('a',shared,seed({period:20}),NOW);
+  await seeds.putSeed('a',personal,seed({period:60}),NOW);
+  const horizonPolicy={entryCap:2,budget:8,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:40};
+  const r=await generator.generateWindowForActor('a',[shared,personal],59,{windowSeconds:600,horizonPolicy});
+  assert.equal(r.entries.length,2);assert.equal(r.omitted.length,0);
+  assert.ok(r.entries.reduce((n,e)=>n+e.codes.length,0)<=8);
+  assert.ok(r.coverageUntil>59000&&r.coverageUntil<659000);
+  for(const e of r.entries){assert.ok((e.validFrom+e.codes.length*e.period)*1000>=r.coverageUntil);for(const[i,c]of e.codes.entries())assert.equal(c,await totp(SHA1_SECRET,{unixSeconds:e.validFrom+i*e.period,period:e.period,digits:8}));}
+  assert.doesNotMatch(JSON.stringify(r),/secret|envelope|algorithm/);
+  await assert.rejects(generator.generateWindowForActor('a',[shared,personal],59,{horizonPolicy:{...horizonPolicy,budget:2}}),/floor/);
+ }finally{db.sqlite.close();}
+});
+
+test('planned batch invalid parameters and rotation omit only affected entry; policy errors are atomic',async()=>{
+ const f=await setup(),{db,seeds,generator,shared,personal}=f;
+ try{
+  await seeds.putSeed('a',shared,seed({period:20}),NOW);
+  await seeds.putSeed('a',personal,seed({period:30,digits:7}),NOW);
+  const policy={entryCap:3,budget:12,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:40};
+  const decrypt=seeds.cipher.decrypt.bind(seeds.cipher);
+  seeds.cipher.decrypt=async(envelope,context)=>{
+   const text=await decrypt(envelope,context);
+   return context.entryId===shared?JSON.stringify({...JSON.parse(text),digits:5}):text;
+  };
+  let r=await generator.generateWindowForActor('a',[shared,personal,'unknown'],59,{horizonPolicy:policy});
+  assert.deepEqual(r.entries.map(e=>e.entryId),[personal]);assert.equal(r.entries[0].digits,7);
+  assert.deepEqual(r.omitted.map(e=>e.entryId),[shared,'unknown']);
+  seeds.cipher.decrypt=async(envelope,context)=>{
+   const text=await decrypt(envelope,context);
+   if(context.entryId===shared)await seeds.putSeed('a',shared,seed({secret:OTHER_SECRET}),NOW);
+   return text;
+  };
+  r=await generator.generateWindowForActor('a',[shared,personal],59,{horizonPolicy:policy});
+  assert.deepEqual(r.entries.map(e=>e.entryId),[personal]);assert.deepEqual(r.omitted,[{entryId:shared,reason:'unavailable'}]);
+  await assert.rejects(generator.generateWindowForActor('a',[shared,personal],59,{horizonPolicy:{...policy,entryCap:1}}),/1..1/);
+  await assert.rejects(generator.generateWindowForActor('a',[shared,personal],59,{horizonPolicy:{...policy,budget:3,minUsefulWindow:600}}));
+ }finally{db.sqlite.close();}
+});
+
+test('planned real shared batch revocation and unauthorized existing ID omit only denied entries',async()=>{
+ const f=await setup(),{db,seeds,generator,shared,personal,access}=f;
+ try{
+  await seeds.putSeed('a',shared,seed(),NOW);await seeds.putSeed('a',personal,seed(),NOW);
+  await access.share('a',shared,'b',{},NOW);
+  const horizonPolicy={entryCap:2,budget:50,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:40};
+  let r=await generator.generateWindowForActor('b',[shared,personal],59,{horizonPolicy});
+  assert.deepEqual(r.entries.map(e=>e.entryId),[shared]);assert.deepEqual(r.omitted,[{entryId:personal,reason:'unavailable'}]);
+  const decrypt=seeds.cipher.decrypt.bind(seeds.cipher);seeds.cipher.decrypt=async(...a)=>{const value=await decrypt(...a);await access.revoke('a',shared,'b',NOW+1);return value;};
+  r=await generator.generateWindowForActor('b',[shared,personal],59,{horizonPolicy});
+  assert.equal(r.entries.length,0);assert.equal(r.coverageUntil,null);assert.deepEqual(r.omitted.map(e=>e.reason),['unavailable','unavailable']);
+ }finally{db.sqlite.close();}
+});
