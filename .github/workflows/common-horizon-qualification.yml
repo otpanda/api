@@ -23,6 +23,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --ignore-scripts
+      - name: Read-only Workers account plan check
+        run: node qualification/account-plan.mjs
       - name: Create isolated resources, measure and delete
         shell: bash
         run: |
