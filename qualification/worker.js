@@ -2,7 +2,7 @@
 import {createIdentityRuntime} from '../src/identity-runtime.js';
 import {importBrowserKeyring} from '../src/browser-keyring.js';
 import fixture from './fixture.json';
-const policy={entryCap:1,budget:32,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:60};
+const policy={entryCap:5,budget:100,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:60};
 let app,queryCount=0;
 function counted(db){
  const statement=s=>new Proxy(s,{get(target,key){if(key==='bind')return(...args)=>statement(target.bind(...args));if(['all','first','run','raw'].includes(key))return(...args)=>{queryCount++;return target[key](...args)};const v=target[key];return typeof v==='function'?v.bind(target):v;}});
