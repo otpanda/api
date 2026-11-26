@@ -51,6 +51,9 @@ import {createPasskeyLabelHttp} from './passkey-label-http.js';
 import {createPersonalOrganizationHttp} from './personal-organization-http.js';
 import {createRealtimeHttp} from './realtime-http.js';
 import {createForegroundDrain} from './realtime-foreground.js';
+// Each unrelated HTTP service is built on its first route use. Configuration
+// gates that must fail during startup (extension/batch) remain eager below.
+function lazyHttp(factory){let value;return{fetch(...args){value??=factory();return value.fetch(...args);}};}
 export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
@@ -75,7 +78,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const nativeOn=native?.enabled===true;// explicit default-off activation: native token acceptance and native routes both depend on it
  let extensionHttp;
  if(extension?.enabled===true){try{extensionHttp=createExtensionHttp({db,sessions,clock,redirects:extension.redirects,extensionOrigins:extension.origins??[],extension:new NativeSessionService(db,{clock,profile:extensionProfile(Object.values(extension.redirects??{}))})});}catch{/* Invalid extension config fails closed, never affects web/native. */}}
- const loginHttp=createWebLoginHttp({db,login,clock}),sessionHttp=createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock}),logoutHttp=createBrowserLogoutHttp({db,sessions,clock}),reads=createDeviceReadHttp({db,sessions,sources,access,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock});
+ const loginHttp=lazyHttp(()=>createWebLoginHttp({db,login,clock})),sessionHttp=lazyHttp(()=>createBrowserSessionHttp({db,sessions,exchanges,renewals:new AccessRenewal(db,{clock}),clock})),logoutHttp=lazyHttp(()=>createBrowserLogoutHttp({db,sessions,clock})),reads=lazyHttp(()=>createDeviceReadHttp({db,sessions,sources,access,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock}));
 // Native Android boundary. Without native.assetFingerprints assetlinks is 404; without native.google the Google routes are 503.
  const nativeSessionService=new NativeSessionService(db,{clock});
  // Google routes need an injected NativeGoogle OR audiences plus a key lookup; with neither they stay 503 (fail closed).
@@ -87,22 +90,22 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  let totpBatch=null,batchStatus=batch?'ready':'disabled';
  if(batch){try{totpBatch=createCommonHorizonBatchHttp({horizonPolicy:batch.horizonPolicy,ratePerMinute:batch.ratePerMinute,minRemainingMs:batch.minRemainingMs,db,sessions,generator:{generateWindowForActor:async(...args)=>(await encrypted()).generator.generateWindowForActor(...args)},clock});}
  catch{batchStatus='invalid_configuration';totpBatch={fetch:async()=>json({error:'unavailable'},503)};}}
- const totpRead=createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock});
+ const totpRead=lazyHttp(()=>createTotpReadHttp({db,sessions,generator:{generateForActor:async(...args)=>(await encrypted()).generator.generateForActor(...args)},native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null,clock}));
  // Authenticated, device/owner/action-bound passkey ceremonies (step-up, register) must verify an assertion from either client: web origin plus the configured android signer. Without a signer this is exactly the web service.
  const managedPasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins})}):passkeys;
- const totpManage=createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys});
- const security=createExtraVerificationHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn});
- const firstPasskey=createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})}),addPasskey=createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys}),recovery=createRecoveryControlsHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn}),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys}),nativeEmailRecovery=nativeOn&&nativePasskeys?createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys:nativePasskeys,native:true}):undefined,nativeLink=nativeOn&&nativeOrigins.length?createNativeGoogleLinkHttp({db,sessions,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined;
- const deviceInfo=createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock}),passkeyLabel=createPasskeyLabelHttp({db,sessions,clock,native:nativeOn}),overview=createAccountOverviewHttp({db,sessions,native:nativeOn,clock}),googleLink=createGoogleLinkTicketHttp({db,sessions,clock,native:nativeOn});
- const organization=createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock});
- const assignment=createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn});
+ const totpManage=lazyHttp(()=>createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys}));
+ const security=lazyHttp(()=>createExtraVerificationHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn}));
+ const firstPasskey=lazyHttp(()=>createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})})),addPasskey=lazyHttp(()=>createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys})),recovery=lazyHttp(()=>createRecoveryControlsHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn})),emailRecovery=createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys}),nativeEmailRecovery=nativeOn&&nativePasskeys?createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys:nativePasskeys,native:true}):undefined,nativeLink=nativeOn&&nativeOrigins.length?createNativeGoogleLinkHttp({db,sessions,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined;
+ const deviceInfo=lazyHttp(()=>createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock})),passkeyLabel=lazyHttp(()=>createPasskeyLabelHttp({db,sessions,clock,native:nativeOn})),overview=lazyHttp(()=>createAccountOverviewHttp({db,sessions,native:nativeOn,clock})),googleLink=lazyHttp(()=>createGoogleLinkTicketHttp({db,sessions,clock,native:nativeOn}));
+ const organization=lazyHttp(()=>createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock}));
+ const assignment=lazyHttp(()=>createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn}));
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
- const entryDomains=createEntryDomainsHttp({db,sessions,clock,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null});
- const entryManage=createEntryManageHttp({db,sessions,clock,native:nativeOn});
+ const entryDomains=lazyHttp(()=>createEntryDomainsHttp({db,sessions,clock,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null}));
+ const entryManage=lazyHttp(()=>createEntryManageHttp({db,sessions,clock,native:nativeOn}));
  const realtimeExtensionHttp=realtime?.extensionLimiter&&extensionHttp?createRealtimeHttp({db,sessions,limiter:realtime.extensionLimiter,connect:realtime.connect,extension:true,extensionOrigins:extension.origins??[],clock}):undefined;
  const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,native:nativeOn,clock}):undefined;
- const deviceKey=createDeviceKeyHttp({db,sessions,enrollment:new GoogleDeviceEnrollment(db,{clock}),keys:new DurableDeviceKeys(db,{clock}),clock});
- const approvals=createApprovalsHttp({db,sessions,approvals:new EnrolledApprovals(db,{clock,keys:new DurableDeviceKeys(db,{clock})}),clock});
+ const deviceKey=lazyHttp(()=>createDeviceKeyHttp({db,sessions,enrollment:new GoogleDeviceEnrollment(db,{clock}),keys:new DurableDeviceKeys(db,{clock}),clock}));
+ const approvals=lazyHttp(()=>createApprovalsHttp({db,sessions,approvals:new EnrolledApprovals(db,{clock,keys:new DurableDeviceKeys(db,{clock})}),clock}));
  const approvalPaths=new Set(APPROVAL_PATHS);
  const deviceKeyPaths=new Set(['enroll-begin','enroll-finish','enroll-status','adopt-begin','adopt-finish'].map(p=>'/v1/manage/device-key/'+p));
  const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));

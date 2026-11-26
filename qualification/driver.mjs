@@ -4,7 +4,7 @@ import {writeFileSync}from'node:fs';
 import assert from'node:assert/strict';
 const results=[],base=process.argv[2];
 // Cold ordinary session baseline, then first key-dependent batch on same isolate.
-for(const kind of ['session','batch','batch']){
+for(const kind of ['batch','session','batch']){
  const q=new URLSearchParams({window:'600'});q.append('entry',fixture.ids[0]);
  const response=await fetch(base+(kind==='session'?'/v1/manage/session':'/v1/manage/totp-codes?'+q),{headers:{Authorization:'Bearer '+fixture.access}});
  const text=await response.text();let data;try{data=JSON.parse(text);}catch{throw Error('Non-JSON HTTP '+response.status);}
