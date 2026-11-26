@@ -1,1 +1,1 @@
-export function lazyHttp(factory){let value;return{fetch(...args){value??=factory();return value.fetch(...args);}};}
+export function lazyHttp(factory){let value;return{fetch(...args){try{value??=factory();}catch{return Response.json({error:'unavailable'},{status:503,headers:{'Cache-Control':'no-store'}});}return value.fetch(...args);}};}
