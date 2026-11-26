@@ -109,13 +109,16 @@ export class EntryTotpGenerator {
   // against the exact envelope after decryption. Entries that are unknown,
   // unauthorized, unseeded, changed mid-read or invalid are reported alike as
   // "unavailable". Returns codes only, never seed material.
-  async generateWindowForActor(actorId, entryIds, unixSeconds, { windowSeconds = 600, minPeriod = 20, maxCodes = 31, horizonPolicy } = {}) {
+  async generateWindowForActor(actorId, entryIds, unixSeconds, { windowSeconds = 600, minPeriod = 20, maxCodes = 31, horizonPolicy, startOffsetSeconds = 0 } = {}) {
     id(actorId);
     if (horizonPolicy?.entryCap > 49) throw new RangeError('D1 revalidation parameter bound exceeded');
     if (!Array.isArray(entryIds) || entryIds.length < 1 || entryIds.length > (horizonPolicy?.entryCap ?? 20) || new Set(entryIds).size !== entryIds.length) throw new TypeError(`1..${horizonPolicy?.entryCap ?? 20} distinct entries required`);
     entryIds.forEach(id);
     if (!Number.isSafeInteger(unixSeconds) || unixSeconds < 0) throw new RangeError('Explicit nonnegative integer Unix time required');
     if (!Number.isInteger(windowSeconds) || windowSeconds < 1 || windowSeconds > 600) throw new RangeError('Invalid window');
+    if (!Number.isInteger(startOffsetSeconds) || startOffsetSeconds < 0 || startOffsetSeconds > 60) throw new RangeError('Invalid start offset');
+    // Codes start at the period containing now + offset. Offset 0 is the current period.
+    const startSeconds = unixSeconds + startOffsetSeconds;
     const marks = entryIds.map((_, i) => '?' + (i + 2)).join(',');
     const permitted = '(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
     const query = `SELECT s.entry_id, s.owner_id, s.envelope FROM totp_seeds s JOIN entries e ON e.owner_id=s.owner_id AND e.entry_id=s.entry_id WHERE s.entry_id IN (${marks}) AND ${permitted}`;
@@ -142,12 +145,12 @@ export class EntryTotpGenerator {
       eligible.push({row, parameters});
     }
     if (horizonPolicy) plan = planCommonHorizon({...horizonPolicy,
-      now:unixSeconds, periods:eligible.map(e=>e.parameters.period), requestedWindow:windowSeconds});
+      now:startSeconds, periods:eligible.map(e=>e.parameters.period), requestedWindow:windowSeconds});
     for (const [index, {row, parameters}] of eligible.entries()) {
-      const {period} = parameters, validFrom=Math.floor(unixSeconds/period)*period;
+      const {period} = parameters, validFrom=Math.floor(startSeconds/period)*period;
       const count=plan?plan.counts[index]:Math.min(maxCodes,
-        Math.floor((unixSeconds+windowSeconds-1)/period)-Math.floor(unixSeconds/period)+1);
-      const codes=await totpWindow(parameters.secret,{unixSeconds,period,digits:parameters.digits,algorithm:parameters.algorithm,count});
+        Math.floor((startSeconds+windowSeconds-1)/period)-Math.floor(startSeconds/period)+1);
+      const codes=await totpWindow(parameters.secret,{unixSeconds:startSeconds,period,digits:parameters.digits,algorithm:parameters.algorithm,count});
       generated.set(row.entry_id,{entryId:row.entry_id,period,digits:parameters.digits,validFrom,codes,envelope:row.envelope});
     }
     // Re-validate every generated entry in one query: permission, seed and
@@ -165,7 +168,7 @@ export class EntryTotpGenerator {
       if (g) entries.push({ entryId, period: g.period, digits: g.digits, validFrom: g.validFrom, codes: g.codes });
       else skipped.push({ entryId, reason: omitted.get(entryId) === 'period_too_short' && !(generated.has(entryId)) ? 'period_too_short' : 'unavailable' });
     }
-    const result={entries,omitted:skipped,windowEnd:plan?plan.coverageUntil/1000:unixSeconds+windowSeconds};
+    const result={entries,omitted:skipped,windowEnd:plan?plan.coverageUntil/1000:startSeconds+windowSeconds};
     if(plan)result.coverageUntil=entries.length?plan.coverageUntil:null;
     return result;
     }finally{for(const {parameters} of eligible)parameters.secret.fill(0);}
