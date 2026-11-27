@@ -13,12 +13,15 @@ export function database(path = ':memory:') {
     try { sqlite.exec(readFileSync(new URL('../migrations/' + file, import.meta.url), 'utf8')); sqlite.prepare('INSERT INTO _test_migrations VALUES (?)').run(file); sqlite.exec('COMMIT'); }
     catch(error){sqlite.exec('ROLLBACK');throw error;}
   }
+  let inBatch=false;
   return {
     sqlite,
     async batch(statements) {
-      sqlite.exec('BEGIN');
+      if(process.env.FRESH_OUTBOX==='1'&&!inBatch)sqlite.exec('DELETE FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL');
+      sqlite.exec('BEGIN');inBatch=true;
       try { const results = []; for (const s of statements) results.push(await s.run()); sqlite.exec('COMMIT'); return results; }
       catch (error) { sqlite.exec('ROLLBACK'); throw error; }
+      finally { inBatch=false; }
     },
     prepare(sql) {
       const statement = sqlite.prepare(sql);
@@ -28,8 +31,8 @@ export function database(path = ':memory:') {
         async first() { return statement.get(...params) ?? null; },
         async all() { return { results: statement.all(...params), success: true }; },
         // Real D1 (workerd) reports meta.changes as the connection's total_changes delta, so trigger writes are included.
-        // FRESH_OUTBOX=1 clears unclaimed hints before every statement, so a trigger can never hide behind coalescing: any exact meta.changes check that a hint trigger can disturb then fails deterministically.
-        async run() { if(process.env.FRESH_OUTBOX==='1')sqlite.exec('DELETE FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL'); const before = Number(sqlite.prepare('SELECT total_changes() n').get().n); statement.run(...params); const after = Number(sqlite.prepare('SELECT total_changes() n').get().n); return { success: true, meta: { changes: after - before } }; },
+        // FRESH_OUTBOX=1 clears hints before each independent write or atomic batch. Never inject a DELETE between batch statements: that overwrites SQLite changes() and fabricates failures in guarded SQL. A real outbox consumer cannot interleave inside an atomic D1 batch.
+        async run() { if(process.env.FRESH_OUTBOX==='1'&&!inBatch)sqlite.exec('DELETE FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL'); const before = Number(sqlite.prepare('SELECT total_changes() n').get().n); statement.run(...params); const after = Number(sqlite.prepare('SELECT total_changes() n').get().n); return { success: true, meta: { changes: after - before } }; },
       };
       return query;
     },
