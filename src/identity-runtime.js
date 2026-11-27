@@ -11,6 +11,10 @@ import {createExtensionHttp} from './extension-http.js';
 import {NativeSessionService,extensionProfile} from './native-sessions.js';
 import {NativeGoogle} from './native-google.js';
 import {createTotpManagementHttp} from './totp-management-http.js';
+import {createTotpBatchImportHttp} from './totp-batch-import-http.js';
+import {createTotpExportHttp} from './totp-export-http.js';
+import {createSeedSyncHttp} from './seed-sync-http.js';
+import {SeedSync} from './seed-sync.js';
 import {createExtraVerificationHttp} from './extra-verification-http.js';
 import {createFirstPasskeyHttp} from './first-passkey-http.js';
 import {FirstPasskeyEnrollment} from './first-passkey-enrollment.js';
@@ -55,7 +59,7 @@ import {createForegroundDrain} from './realtime-foreground.js';
 // Each unrelated HTTP service is built on its first route use. Configuration
 // gates that must fail during startup (extension/batch) remain eager below.
 
-export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,clock=Date.now}={}) {
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,transfer,seedSync,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
  // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
@@ -95,6 +99,13 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  // Authenticated, device/owner/action-bound passkey ceremonies (step-up, register) must verify an assertion from either client: web origin plus the configured android signer. Without a signer this is exactly the web service.
  const managedPasskeys=nativeOn&&nativeOrigins.length?new PasskeyService(db,{clock,verifier:new PasskeyVerifier({androidOrigins:nativeOrigins})}):passkeys;
  const totpManage=lazyHttp(()=>createTotpManagementHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys}));
+ // Transfer (batch import, export) and seed-sync: each default OFF and independent; a disabled route is not_found before any handler is built.
+ const transferOn={batchImport:transfer?.batchImport===true,export:transfer?.export===true};
+ const seedSyncOn=seedSync?.enabled===true&&nativeOn;
+ const seedCipherProxy={encrypt:async(...a)=>(await encrypted()).seedCipher.encrypt(...a),decrypt:async(...a)=>(await encrypted()).seedCipher.decrypt(...a)};
+ const totpBatchImport=transferOn.batchImport?lazyHttp(()=>createTotpBatchImportHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys})):undefined;
+ const totpExport=transferOn.export?lazyHttp(()=>createTotpExportHttp({db,sessions,getSeedCipher:async()=>(await encrypted()).seedCipher,native:nativeOn,clock,passkeys:managedPasskeys})):undefined;
+ const seedSyncHttp=seedSyncOn?lazyHttp(()=>createSeedSyncHttp({db,sessions,service:new SeedSync({db,cipher:seedCipherProxy,clock}),passkeys:managedPasskeys,enabled:true,clock})):undefined;
  const security=lazyHttp(()=>createExtraVerificationHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn}));
  const firstPasskey=lazyHttp(()=>createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})})),addPasskey=lazyHttp(()=>createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys})),recovery=lazyHttp(()=>createRecoveryControlsHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn})),emailRecovery=lazyHttp(()=>createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys})),nativeEmailRecovery=nativeOn&&nativePasskeys?lazyHttp(()=>createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys:nativePasskeys,native:true})):undefined,nativeLink=nativeOn&&nativeOrigins.length?createNativeGoogleLinkHttp({db,sessions,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined;
  const deviceInfo=lazyHttp(()=>createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock})),passkeyLabel=lazyHttp(()=>createPasskeyLabelHttp({db,sessions,clock,native:nativeOn})),overview=lazyHttp(()=>createAccountOverviewHttp({db,sessions,native:nativeOn,clock})),googleLink=lazyHttp(()=>createGoogleLinkTicketHttp({db,sessions,clock,native:nativeOn}));
@@ -122,6 +133,9 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(nativePaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=nativeHttp;}
    else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}
    else if(deviceKeyPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=deviceKey;}
+   else if(url.pathname.startsWith('/v1/manage/seed-sync/')){handler=seedSyncHttp;if(!handler)return json({error:'not_found'},404);}
+   else if(/^\/v1\/manage\/totp\/batch-(begin|finish|outcome)$/.test(url.pathname)){handler=totpBatchImport;if(!handler)return json({error:'not_found'},404);}
+   else if(/^\/v1\/manage\/totp\/export-(begin|finish)$/.test(url.pathname)){handler=totpExport;if(!handler)return json({error:'not_found'},404);}
    else if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
    else if(totpBatch&&url.pathname==='/v1/manage/totp-codes')handler=totpBatch;
    else if(['/v1/manage/totp','/v1/manage/totp/begin'].includes(url.pathname))handler=totpManage;
