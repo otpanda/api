@@ -6,8 +6,8 @@ const SEP='[ \\-._\\u00a0\\u2010-\\u2015\\u2212]{0,2}';
 const DIGITS=new RegExp('(?<!\\p{Nd})\\p{Nd}(?:'+SEP+'\\p{Nd}){3,}','gu'); // 4+ digits of any script with up to two separator characters between digits: 123456, 123-456, 12 34 56, 123  456, 1234.5678
 const MIXED=/(?<![A-Za-z0-9])(?=[A-Za-z0-9-]*\d)(?=[A-Za-z0-9-]*[A-Za-z])[A-Za-z0-9][A-Za-z0-9-]{3,31}(?![A-Za-z0-9])/g; // any letter+digit token of 4 to 32 characters could be an alphanumeric code
 const URLS=/(?:[a-z][a-z0-9+.-]{1,15}:\/\/|www\.)[^\s<>"']*|(?<![@\w.-])(?:[a-z0-9-]+\.)+[a-z]{2,}\/[^\s<>"']*/gi; // links can carry reusable tokens: the whole link is masked
-const LONG=/[A-Za-z0-9_+\/=]{12,}/g;
-const opaque=r=>/[\d_+\/=]/.test(r)||/[a-z][A-Z]/.test(r)||r.length>=20; // opaque: digits, symbols, internal capitals, or 20+ letters. Ordinary long words (verification, authentication) stay.
+const LONG=/[A-Za-z0-9_+/=]{12,}/g;
+const opaque=r=>/[\d_+/=]/.test(r)||/[a-z][A-Z]/.test(r)||r.length>=20; // opaque: digits, symbols, internal capitals, or 20+ letters. Ordinary long words (verification, authentication) stay.
 const CONTROL=/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
 const enc=new TextEncoder();
 function escapeRe(c){return c.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}

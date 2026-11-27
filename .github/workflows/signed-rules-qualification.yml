@@ -17,6 +17,10 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --ignore-scripts
+      - name: Lint integrated sources
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts eslint@9.39.5 @eslint/js@9.39.5 globals@17.14.0
+          npx eslint .
       - run: npm test
       - name: Fresh outbox guards
         run: FRESH_OUTBOX=1 node --test test/entry-rules.test.js test/gmail-guarded-disconnect.test.js

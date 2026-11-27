@@ -177,7 +177,7 @@ test('two accounts with the same sender and template stay unassigned (fail close
  f.db.sqlite.prepare("INSERT INTO service_routes(route_id,owner_id,service_id,source_id,origin_kind,origin_value,entry_id,account_hint,phrase,template_fp,created_at)SELECT 'two',owner_id,service_id,source_id,origin_kind,origin_value,?,account_hint,phrase,template_fp,created_at FROM service_routes").run(f.entry2);
  await f.store.receive(f.o,f.sms('u2',{code:'777777',text:'Code 777777 for Acme'}));assert.equal(f.db.sqlite.prepare("SELECT entry_id FROM incoming_codes WHERE event_id='u2'").get().entry_id,null);
  // SMS whose text lacks the code: no template, no rule
- await f.store.receive(f.o,f.sms('u3',{code:'A8B8C8',text:'Acme says hello'}));const bg=await f.begin(f.sms('u3'),f.entry);assert.deepEqual(bg.summary.rule,undefined===1?0:bg.summary.rule);assert.equal(bg.summary.rule.status,'unavailable');assert.equal(bg.summary.rule.reason,'template_unavailable');
+ await f.store.receive(f.o,f.sms('u3',{code:'A8B8C8',text:'Acme says hello'}));const bg=await f.begin(f.sms('u3'),f.entry);assert.equal(bg.summary.rule.status,'unavailable');assert.equal(bg.summary.rule.reason,'template_unavailable');
  const done=await f.finish(bg);assert.deepEqual(done,{status:'assigned',rule:{status:'unavailable',reason:'template_unavailable'}});assert.equal(f.rows().length,2);
 }finally{f.db.sqlite.close();}});
 test('shared target: summary states future recipients and automations (counts are in the signed action too)',async()=>{const f=await fx();try{
