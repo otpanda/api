@@ -44,3 +44,23 @@ test('actual main identity runtime: v3 Assign, list, revoke/reconnect paused, si
   assert.equal((await post('rule-intent/finish',{intentId:edit.intentId,action:edit.action})).rule.status,'updated');assert.equal((await list())[0].phrase,'bank');
  }finally{f.db.sqlite.close();}
 });
+
+import {createAuthOnlyWorker} from '../src/auth-only-worker.js';
+test('public auth-only Worker mounts rules and permits proof-free private Android Resume finish',async()=>{
+ const f=await fx();try{
+  const raw=new Uint8Array(await crypto.subtle.exportKey('raw',await crypto.subtle.generateKey({name:'AES-GCM',length:256},true,['encrypt','decrypt'])));
+  // Private Assign is exercised by the runtime above;
+  // this route-level check seeds a phrase rule, which does not need encrypted message material.
+  f.db.sqlite.prepare("INSERT INTO service_routes(route_id,owner_id,service_id,source_id,origin_kind,origin_value,entry_id,phrase,paused_at,created_at) VALUES('paused-native',?,'test',?,'email_address','noreply@bank.example',?,'bank',?,?)").run(f.o,f.gmail,f.entry,NOW-1000,NOW-2000);
+  const yes={limit:async()=>({success:true})},env={DB:f.db,DEPLOYMENT_STAGE:'auth-only',AUTH_ONLY_SIGNUP_EMAIL:'own@example.test',NATIVE_AUTH_ENABLED:'1',NATIVE_ASSET_FINGERPRINTS:Array(32).fill('AA').join(':'),ACTIVE_KEY_ID:'f',ENCRYPTION_KEYRING:JSON.stringify([{id:'f',key:Buffer.from(raw).toString('base64url')}]),CONTEXT_DIGEST_SECRET:SECRET,IDENTITY_ADDRESS_LIMIT:yes,IDENTITY_AUTH_GLOBAL_LIMIT:yes,IDENTITY_READ_GLOBAL_LIMIT:yes};
+  const worker=createAuthOnlyWorker({clock:()=>NOW}),call=async(path,body)=>{
+   const r=new Request(API+'/v1/manage/'+path,{method:body?'POST':'GET',headers:{'CF-Connecting-IP':'192.0.2.51',Authorization:'Bearer '+f.android.access,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});Object.defineProperty(r,'cf',{value:{colo:'LHR',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'}});
+   const out=await worker.fetch(r,env,{waitUntil(){}});assert.equal(out.status,200,path+': '+out.status+' '+await out.clone().text());return out.json();
+  };
+  assert.equal((await call('entry/rules')).rules[0].status,'paused');
+  const bg=await call('rule-intent/begin',{operation:'resume',entryId:f.entry,ruleId:'paused-native'});assert.equal(bg.proofRequired,false);
+  assert.deepEqual(await call('rule-intent/finish',{intentId:bg.intentId,action:bg.action}),{status:'applied',rule:{status:'resumed'}});
+  assert.equal((await call('rule-intent/status',{intentId:bg.intentId})).status,'applied');
+  assert.equal((await call('unassigned-context')).contexts instanceof Array,true);
+ }finally{f.db.sqlite.close();}
+});

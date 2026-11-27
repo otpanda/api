@@ -29,7 +29,7 @@ export function createRuleIntentHttp({db,sessions,intents,clock=Date.now,native=
    let body;try{body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return json({error:'invalid_request'},400,cors);}
    if(!body||Array.isArray(body)||typeof body!=='object')return json({error:'invalid_request'},400,cors);
    const operation=url.pathname.split('/').at(-1),keys=Object.keys(body).sort().join(',');
-   const allowed=operation==='begin'?(body.operation==='review'?['contextId,entryId,operation','contextId,entryId,operation,phrase']:body.operation==='edit'?['entryId,operation,phrase,ruleId']:body.operation==='resume'?['entryId,operation,ruleId']:[]).flatMap(k=>android?[k,k.split(',').concat('keyId').sort().join(',')]:[k]):operation==='finish'?(android?['action,intentId,signature,token']:['action,intentId,response,token','action,intentId']):['intentId'];
+   const allowed=operation==='begin'?(body.operation==='review'?['contextId,entryId,operation','contextId,entryId,operation,phrase']:body.operation==='edit'?['entryId,operation,phrase,ruleId']:body.operation==='resume'?['entryId,operation,ruleId']:[]).flatMap(k=>android?[k,k.split(',').concat('keyId').sort().join(',')]:[k]):operation==='finish'?(android?['action,intentId,signature,token','action,intentId']:['action,intentId,response,token','action,intentId']):['intentId'];
    if(!allowed.includes(keys))return json({error:'invalid_request'},400,cors);
    const result=operation==='begin'?await intents.begin(user,body):operation==='finish'?await intents.finish(user,body):await intents.status(user,body.intentId);
    // Finish linearizes at the guarded D1 commit. A later revoke must not
