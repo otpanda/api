@@ -30,8 +30,9 @@ export async function startLoopback({port=0,host='127.0.0.1',fingerprint=DEFAULT
  const sessions=new DeviceSessionService(db,{clock});
  const rt=createIdentityRuntime({db,loadCodeKeys:async()=>config,trustedRequestKey:()=>'127.0.0.1',clock,native:{enabled:true,assetFingerprints:[fingerprint]},seedSync:{enabled:true}});
  let counter=0,n=0;const sent=new Set();
+ const log=(req,status)=>{if(process.env.LOOPBACK_LOG==='1')console.log('REQ '+req.method+' '+new URL(req.url,'http://l').pathname+' '+status);};
  const json=(res,s,b)=>{res.writeHead(s,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(b));};
- const server=http.createServer(async(req,res)=>{try{
+ const server=http.createServer(async(req,res)=>{res.once('finish',()=>log(req,res.statusCode));try{
   const chunks=[];for await(const c of req)chunks.push(c);const body=Buffer.concat(chunks);const url=new URL(req.url,'http://loopback');
   if(url.pathname.startsWith('/__loopback/')){
    if(url.pathname==='/__loopback/session'&&req.method==='POST'){const s=await sessions.issue({proof:{ownerId:OWNER,credentialId:cred.id,generation:0,purpose:'authenticate',verifiedAt:clock()},clientKind:'android'});return json(res,200,{access:s.access,deviceId:s.deviceId,ownerId:OWNER});}

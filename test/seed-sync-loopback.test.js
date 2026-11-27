@@ -65,3 +65,10 @@ test('TCP loopback refusals: no bearer, an Origin header, wrong assertion rpId, 
   const b=await w.enroll(kid(),await w.fresh()),bc=b.eb.body;assert.equal(b.eb.status,200,JSON.stringify(b.eb));await w.post('enroll-finish',{signature:await b.key.sign('seed-sync-enroll',bc.challenge),token:bc.token});
   const st=await w.state();assert.equal(st.keys.filter(k=>!k.revoked).length,1);assert.equal(st.keys.length,2);assert.equal(st.keys.find(k=>k.revoked).reason,'superseded');
  }finally{await w.lb.close();}});
+test('transport contract the installed client must match: the bare application/json content type is required; a charset suffix is refused with 400 before any state change',async()=>{
+ const w=await world();try{
+  const send=ct=>fetch(w.lb.url+'/v1/manage/seed-sync/context',{method:'POST',headers:{'Content-Type':ct,Authorization:'Bearer '+w.sess.access},body:'{}'});
+  assert.equal((await send('application/json')).status,200);
+  assert.equal((await send('application/json; charset=utf-8')).status,400,'Dart ContentType.json adds a charset and would be refused');
+  assert.equal((await w.state()).keys.length,0);
+ }finally{await w.lb.close();}});
