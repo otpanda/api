@@ -3,8 +3,6 @@ name: TOTP batch import remote D1 qualification
 # SQL against remote D1, then deletes both even on failure. Touches no production database or Worker.
 on:
   workflow_dispatch:
-  push:
-    branches: [feat/transfer-batch-integration]
 permissions:
   contents: read
 concurrency:
@@ -26,6 +24,8 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --ignore-scripts
+      - name: Live Free-plan gate (fail closed, before any resource exists)
+        run: node qualification/plan-gate.mjs
       - name: Create isolated resources, run checks and delete
         shell: bash
         run: |

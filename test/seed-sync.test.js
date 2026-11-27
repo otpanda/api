@@ -369,7 +369,7 @@ test('new-device notice: written atomically with the key, delivered to the store
   const mail=notificationEmail('seed-sync-enrolled');const text=JSON.stringify(mail);
   assert.ok(!text.includes(keyId)&&!text.includes(INSTALL)&&/passkey/i.test(text));
   // transport accepts the kind
- }catch(e){throw e;}finally{f.close();}});
+ }finally{f.close();}});
 test('notice delivery: backoff, terminal failed_at after 5 attempts, missing mailbox never silent, lease prevents double claim',async()=>{
  const f=await fixture();try{
   await f.enroll();let now=NOW;const fail=async()=>{throw new Error('down');};
