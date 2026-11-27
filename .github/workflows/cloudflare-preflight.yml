@@ -1,0 +1,55 @@
+name: cloudflare-preflight
+# Read-only. Manual only. Runs only from the repository default branch AND only for the exact commit in expected_sha.
+# Makes no create, deploy or delete call: GET/list requests plus two read-only POST queries (GraphQL analytics, observability telemetry). Produces no artifact.
+# The Cloudflare token is exposed only to the steps that call Cloudflare (step env, never job env).
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type read-only-preflight to confirm'
+        required: true
+      expected_sha:
+        description: 'Full 40-char commit SHA (must equal the dispatched commit)'
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-cloudflare-preflight
+  cancel-in-progress: false
+jobs:
+  preflight:
+    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Validate inputs (no Cloudflare access yet)
+        env:
+          IN_CONFIRM: ${{ inputs.confirm }}
+          IN_SHA: ${{ inputs.expected_sha }}
+        run: node tool/ci/inputs.mjs
+      - name: Local checks of the preflight tooling (stub API, no Cloudflare)
+        run: node tool/ci/checks.mjs
+      - name: Permission probe
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node tool/ci/preflight.mjs probe
+      - name: Free plan checkpoint
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node tool/ci/preflight.mjs plan
+      - name: Qualification-named resources (report only)
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node tool/ci/preflight.mjs orphans
+      - name: D1 meter readout
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node tool/ci/preflight.mjs readout
