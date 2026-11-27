@@ -17,3 +17,8 @@ test('disconnect begin refuses a source the owner does not hold before issuing a
 
 test('callback redirects with a neutral refused marker for every failure and never a reason',async()=>{const x=await setup();try{for(const outcome of [()=>({ok:false,reason:'mailbox_not_allowed'}),()=>{throw Error('mailbox someone@x.test');}]){const host=createGmailSourceHttp({...x,ready:true,oauth:{async callback(){return outcome();}},sync:{}}),r=await host.fetch(new Request(API+'/sources/gmail/oauth/callback?state=one&code=two',{headers:{cookie:'__Host-otpanda_device='+x.device.refresh}}));assert.equal(r.status,303);assert.equal(r.headers.get('location'),APP+'/app/?gmail=refused#/sources');assert.equal(await r.text(),'');}
  }finally{x.db.sqlite.close();}});
+
+test('disconnect rules choice is validated: only delete|keep, only on disconnect; absent stays legacy-valid',async()=>{const x=await setup();try{const host=createGmailSourceHttp({...x,ready:true,oauth:{},sync:{}});
+ for(const [v,status] of [[{action:'disconnect',sourceId:'missing',rules:'delete'},404],[{action:'disconnect',sourceId:'missing',rules:'keep'},404],[{action:'disconnect',sourceId:'missing'},404],[{action:'disconnect',sourceId:'missing',rules:'drop'},400],[{action:'disconnect',sourceId:'missing',rules:null},400],[{action:'connect',sourceId:'',rules:'delete'},400]]){
+  const r=await host.fetch(req(x.device,v,PATH+'/begin'));assert.equal(r.status,status,JSON.stringify(v));}
+}finally{x.db.sqlite.close();}});

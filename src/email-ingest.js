@@ -11,6 +11,6 @@ export async function ingestEmail(store,ownerId,sourceId,message){
   const text=`${message.subject??''}\n${message.text??''}`;
   const code=extractEmailCode(text);
   if(!code)return {ingested:false,reason:'no-code'};
-  const r=await store.receive(ownerId,{sourceId,eventId:message.id,code,receivedAt:message.receivedAt,expiresAt:extractExpiry(text,message.receivedAt),sender:addr(message.from),receiver:addr(message.to),accountHint:addr(message.to)});
+  const r=await store.receive(ownerId,{sourceId,eventId:message.id,code,receivedAt:message.receivedAt,expiresAt:extractExpiry(text,message.receivedAt),text,subject:typeof message.subject==='string'?message.subject:undefined,sender:addr(message.from),receiver:addr(message.to),accountHint:addr(message.to),context:{kind:'email',text:message.subject}});
   return {ingested:r.inserted,reason:r.inserted?'stored':'duplicate',entryId:r.entryId};
 }

@@ -1,0 +1,47 @@
+name: Signed rules isolated qualification
+on:
+  push:
+    branches: [feat/signed-rules-context-integration]
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-signed-rules-qualification
+  cancel-in-progress: false
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - name: Fresh outbox guards
+        run: FRESH_OUTBOX=1 node --test test/entry-rules.test.js test/gmail-guarded-disconnect.test.js
+      - name: Worker dry run
+        run: npx wrangler deploy --dry-run --outdir dist
+  remote-d1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - name: Synthetic database migration and lifecycle trigger proof
+        run: node qualification/rules-remote.mjs
+      - name: Preserve synthetic proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: signed-rules-remote-proof
+          path: qualification/rules-remote-result.json
