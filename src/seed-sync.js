@@ -78,7 +78,7 @@ export class SeedSync {
    if(!await verifySeedSyncProof({jwk:JSON.parse(row.public_jwk),purpose:'seed-sync-enroll',challenge:ch,signature,now:this.now()}))return;
    const at=this.now();if(at>=row.expires_at)return;
    const digest=await hashText(row.public_jwk);
-   const guard=`${SESSION('?9','?2','?4','?5')} AND EXISTS(SELECT 1 FROM passkey_credentials WHERE credential_id=?6 AND owner_id=?2 AND revoked_at IS NULL) AND (SELECT count(*) FROM seed_sync_keys WHERE owner_id=?2 AND revoked_at IS NULL AND install_id!=?8)<${MAX_ACTIVE_KEYS}`;
+   const guard=`${SESSION('?9','?2','?4','?5')} AND EXISTS(SELECT 1 FROM passkey_credentials WHERE credential_id=?6 AND owner_id=?2 AND revoked_at IS NULL) AND (SELECT count(*) FROM seed_sync_keys WHERE owner_id=?2 AND generation=?4 AND revoked_at IS NULL AND install_id!=?8)<${MAX_ACTIVE_KEYS}`;
    // Install-state fence. The challenge stored (n, a) at begin: n = rows (active or revoked, insert-only) for this (owner, install), a = the active key or NULL.
    // Commit only if n is unchanged (no enrollment since begin), the new id and public key are free, and the install has no active key left after the
    // supersede below. A predecessor must have been revoked by THIS batch's own UPDATE (changes()=1 on the directly preceding statement), never by

@@ -574,3 +574,16 @@ test('status has no definite absence: a never-committed key id answers like any 
   assert.ok(c&&c.token&&c.challenge.keyId===keyId,'a fake challenge of the normal shape');
   assert.equal(await f.svc.statusFinish({token:c.token,signature:'A'.repeat(86)}),undefined);
  }finally{f.close();}});
+
+// Old-generation keys are unusable already, but retained for the monotonic install fence.
+test('enrollment cap counts only current-generation keys, without deleting or reviving stale keys',async()=>{
+ const f=await fixture();try{
+  for(let i=0;i<20;i++)f.sq.prepare("INSERT INTO seed_sync_keys(key_id,owner_id,install_id,public_jwk,public_key_digest,generation,created_at) VALUES(?,?,?,?,?,0,1)").run('a'.repeat(30)+i.toString(16).padStart(2,'0'),'owner','X'.repeat(20)+i.toString(16).padStart(2,'0'),'{}','old'+i);
+  f.sq.exec("UPDATE account_security SET generation=1; UPDATE device_sessions SET generation=1");f.user.generation=1;
+  const keyId=kid(),action=await seedSyncEnrollAction({ownerId:'owner',installId:INSTALL,keyId,publicJwk:f.jwk,generation:1});
+  const c=await f.svc.enrollBegin({user:f.user,installId:INSTALL,keyId,publicJwk:f.jwk,strongProof:{purpose:'step-up',ownerId:'owner',generation:1,credentialId:'cred',actionDigest:action,verifiedAt:NOW}});assert.ok(c);
+  assert.deepEqual(await f.svc.enrollFinish({user:f.user,token:c.token,signature:await f.sign('seed-sync-enroll',c.challenge)}),{keyId});
+  assert.equal(f.sq.prepare('SELECT count(*) n FROM seed_sync_keys WHERE generation=0 AND revoked_at IS NULL').get().n,20);
+  assert.equal(f.sq.prepare('SELECT count(*) n FROM seed_sync_keys WHERE generation=1 AND revoked_at IS NULL').get().n,1);
+ }finally{f.close();}
+});
