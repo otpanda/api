@@ -1,10 +1,10 @@
-name: 'Remote D1 qualification, suite selector transfer or seed-sync'
+name: 'Remote D1 qualification, transfer, seed-sync or legacy upgrade'
 # Manual only. Creates a temporary synthetic D1 database and a throwaway Worker, runs the actual batch-import
 # SQL against remote D1, then deletes both even on failure. Touches no production database or Worker.
 on:
   workflow_dispatch:
     inputs:
-      suite: {description: 'Which qualification suite to run', type: choice, options: [transfer, seed-sync], default: transfer, required: true}
+      suite: {description: 'Which qualification suite to run', type: choice, options: [transfer, seed-sync, seed-sync-upgrade], default: transfer, required: true}
       observed_at: {description: 'Dashboard observation time, ISO UTC ending in Z, at most 30 minutes old', required: true}
       observed_plan: {description: 'Exactly workers-free, as read from the authenticated dashboard', required: true}
       account_id: {description: 'Cloudflare account id the observation was read from', required: true}
@@ -49,7 +49,7 @@ jobs:
           SUITE: ${{ inputs.suite }}
         run: |
           set -euo pipefail
-          case "$SUITE" in transfer|seed-sync) ;; *) echo 'unknown suite'; exit 1;; esac
+          case "$SUITE" in transfer|seed-sync|seed-sync-upgrade) ;; *) echo 'unknown suite'; exit 1;; esac
           dir="qualification/$SUITE"
           config="$dir/wrangler.json"
           name="otpanda-${SUITE}-qual-${GITHUB_RUN_ID}"
@@ -77,17 +77,30 @@ jobs:
           const p=process.argv[4]+'/wrangler.json',x=JSON.parse(fs.readFileSync(p));
           x.name=process.argv[3];
           x.vars.FIXTURE_PREFIX='qualification-'+crypto.randomBytes(12).toString('hex');
+          if(process.argv[4].endsWith('seed-sync-upgrade'))x.vars.FIXTURE_KEY_B64=crypto.randomBytes(32).toString('base64');
           x.d1_databases[0].database_id=process.argv[2];
           x.d1_databases[0].database_name=process.argv[3];
           fs.writeFileSync(p,JSON.stringify(x,null,2));
           JS
+          if [ "$SUITE" = seed-sync-upgrade ]; then
+            rm -rf "$dir/pre-migrations"; mkdir "$dir/pre-migrations"
+            for f in migrations/*.sql; do if [[ "$(basename "$f")" < 0052 ]]; then cp "$f" "$dir/pre-migrations/"; fi; done
+          fi
           npx wrangler d1 migrations apply "$name" --remote --config "$config"
           # Set before deploy so an interrupted upload is still cleaned up.
           deployed=1
           npx wrangler deploy --config "$config"
           sleep 10
           prefix=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1]+"/wrangler.json")).vars.FIXTURE_PREFIX)' "$dir")
-          node $dir/driver.mjs "https://$name.abrahammurciano.workers.dev/$prefix"
+          base="https://$name.abrahammurciano.workers.dev/$prefix"
+          if [ "$SUITE" = seed-sync-upgrade ]; then
+            node $dir/driver.mjs "$base" seed-legacy
+            cp migrations/*.sql "$dir/pre-migrations/"
+            npx wrangler d1 migrations apply "$name" --remote --config "$config"
+            node $dir/driver.mjs "$base" verify
+          else
+            node $dir/driver.mjs "$base"
+          fi
       - name: Preserve synthetic results
         if: always()
         uses: actions/upload-artifact@v4
