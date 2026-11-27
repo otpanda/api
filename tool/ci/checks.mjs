@@ -36,10 +36,10 @@ srv.close();
 const sha='a'.repeat(40),ok={IN_CONFIRM:'read-only-preflight',IN_SHA:sha,GITHUB_SHA:sha};
 r=await sh('tool/ci/inputs.mjs',[],ok);t('inputs ok',r.status===0);
 for(const [n,e] of [['bad confirm',{IN_CONFIRM:'yes'}],['sha mismatch',{IN_SHA:'b'.repeat(40)}],['short sha',{IN_SHA:'abc',GITHUB_SHA:'abc'}]]){r=await sh('tool/ci/inputs.mjs',[],{...ok,...e});t('inputs reject: '+n,r.status===1);}
-{const y=readFileSync('.github/workflows/cloudflare-preflight.yml','utf8'),head=y.split('\njobs:')[0],steps=y.split(/\n      - /).slice(1);
- t('dispatch only, default-branch gate',/\non:\n  workflow_dispatch:/.test(y)&&!/\n  (push|pull_request|pull_request_target|schedule|workflow_run):/.test(y)&&/if: github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/.test(y));
+{const y=readFileSync('.github/workflows/cloudflare-preflight.yml','utf8'),head=y.split('\njobs:')[0],steps=y.split(/\n {6}- /).slice(1);
+ t('dispatch only, default-branch gate',/\non:\n {2}workflow_dispatch:/.test(y)&&!/\n {2}(push|pull_request|pull_request_target|schedule|workflow_run):/.test(y)&&/if: github\.ref == format\('refs\/heads\/\{0\}', github\.event\.repository\.default_branch\)/.test(y));
  const jobEnv=y.split('\n    env:\n')[1].split('\n    steps:')[0];t('no secret in workflow/job env',!/secrets\./.test(head)&&!/secrets\./.test(jobEnv));
- t('token only in each Cloudflare step\'s own env',steps.filter(x=>/secrets\./.test(x)).every(x=>/\n        env:\n          CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/.test(x))&&steps.filter(x=>/secrets\./.test(x)).length===4);
+ t('token only in each Cloudflare step\'s own env',steps.filter(x=>/secrets\./.test(x)).every(x=>/\n {8}env:\n {10}CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/.test(x))&&steps.filter(x=>/secrets\./.test(x)).length===4);
  t('uses pinned to 40-hex',[...y.matchAll(/uses: (\S+)/g)].every(m=>/@[0-9a-f]{40}$/.test(m[1])));
  t('no create/deploy/delete/npm/wrangler/upload anywhere',!/wrangler|npm |upload-artifact|run\.mjs|DELETE|--method|curl /.test(y));
  t('no input interpolation inside run blocks',![...y.matchAll(/run: [^\n]*/g)].some(m=>/\$\{\{/.test(m[0]))); }
