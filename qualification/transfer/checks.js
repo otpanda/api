@@ -1,5 +1,8 @@
 // Synthetic-only qualification against the supplied D1 binding. Never mounted by production.
 import {createTotpBatchImportHttp} from '../../src/totp-batch-import-http.js';
+import {createTotpExportHttp} from '../../src/totp-export-http.js';
+import {openExport,sha256Hex,sealExport} from '../../src/totp-export-seal.js';
+import {base64urlEncode} from '../../src/tokens.js';
 import {SeedCipher} from '../../src/seed-cipher.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev', APP='https://otpanda.github.io';
 const NOW=1800000000000, SECRET='GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
@@ -55,6 +58,22 @@ export async function runChecks(db){
   await db.prepare('UPDATE totp_batch_imports SET created_at=0').run();
   await db.prepare('DELETE FROM entries WHERE entry_id=?').bind(first.body.entryIds[0]).run();
   eq((await send('batch-finish',finish(1,50))).status,200);eq(await count('entries'),52);eq(await count('totp_batch_imports'),2);
+ });
+ await check('sealed export exact frozen set opens and method revocation during sealing refuses',async()=>{
+  await db.prepare("INSERT INTO account_emails(owner_id,email,verified_at,updated_at) VALUES ('batch-owner','synthetic@example.test',0,0)").run();
+  const pair=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveBits']);
+  const raw=new Uint8Array(await crypto.subtle.exportKey('raw',pair.publicKey)),pub=base64urlEncode(raw);
+  let action;
+  const passkeys={begin:async a=>{action=a.action;return{token:'synthetic',options:{}};},finishAuthentication:async()=>({generation:0})};
+  const http=createTotpExportHttp({db,sessions:{authenticate:async()=>actor},getSeedCipher:async()=>cipher,clock:()=>NOW,passkeys});
+  let n=0;const send=async(step,body)=>{const r=await http.fetch(new Request(API+'/v1/manage/totp/'+step,{method:'POST',headers:{Origin:APP,Authorization:'Bearer synthetic','Content-Type':'application/json'},body:JSON.stringify(body)}),{clientAddress:'export-'+n++});return{status:r.status,body:await r.json()};};
+  const b=await send('export-begin',{ephemeralKey:pub});eq(b.status,200);eq(b.body.entries.length,52);
+  const r=await send('export-finish',{ephemeralKey:pub,entries:b.body.entries.map(e=>({entryId:e.entryId,version:e.version})),token:'synthetic',response:{}});eq(r.status,200);eq(r.body.entries.length,52);
+  const e=r.body.entries[0];const opened=await openExport({clientPrivateKey:pair.privateKey,serverPublicKey:r.body.serverPublicKey,actionDigest:action.slice('totp-export:'.length),ephemeralDigest:await sha256Hex(raw),aad:{ownerId:'batch-owner',deviceId:'batch-device',generation:0,entryId:e.entryId,seedVersion:e.version,algorithm:e.algorithm,digits:e.digits,period:e.period,label:e.label,account:e.account,issuer:e.issuer,catalogId:e.catalogId},nonce:e.nonce,ciphertext:e.ciphertext});eq(opened.length,20);
+  const racing=createTotpExportHttp({db,sessions:{authenticate:async()=>actor},getSeedCipher:async()=>cipher,clock:()=>NOW,passkeys,
+    seal:async args=>{const out=await sealExport(args);await db.prepare("UPDATE passkey_credentials SET revoked_at=? WHERE credential_id='batch-cred'").bind(NOW).run();return out;}});
+  const refused=await racing.fetch(new Request(API+'/v1/manage/totp/export-finish',{method:'POST',headers:{Origin:APP,Authorization:'Bearer synthetic','Content-Type':'application/json'},body:JSON.stringify({ephemeralKey:pub,entries:b.body.entries.map(e=>({entryId:e.entryId,version:e.version})),token:'synthetic',response:{}})}),{clientAddress:'export-race'});
+  eq(refused.status,409);eq(JSON.stringify(await refused.json()).includes('ciphertext'),false);
  });
  return{synthetic:true,pass:checks.every(c=>c.pass),checks,proof:'Real D1 transaction/error semantics and AES-GCM. Synthetic ceremony seam, not installed client proof.'};
 }
