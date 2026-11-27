@@ -280,7 +280,7 @@ test('invitation links: single use, bounded, session-guarded, revocable, terms f
   assert.ok(!JSON.stringify(db.sqlite.prepare('SELECT * FROM access_invites').all()).includes(inv.token));
   assert.equal(await access.acceptInvite(V.own, inv.token, NOW), undefined, 'owner cannot accept own invite');
   assert.equal(await access.acceptInvite({ ...V.rec, generation: 5 }, inv.token, NOW), undefined, 'dead session');
-  assert.equal(await access.acceptInvite(V.rec, inv.token.slice(0, -1) + 'A', NOW), undefined, 'tampered token');
+  assert.equal(await access.acceptInvite(V.rec, inv.token.slice(0, -1) + (inv.token.endsWith('A') ? 'E' : 'A'), NOW), undefined, 'tampered token');
   assert.equal(await access.acceptInvite(V.rec, inv.token, NOW + 3600000), undefined, 'expired');
   assert.equal(count(db, 'access_grants'), 0);
   const ok = await access.acceptInvite(V.rec, inv.token, NOW + 1);
