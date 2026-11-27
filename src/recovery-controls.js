@@ -89,9 +89,12 @@ export class RecoveryControls {
   else if(row.kind==='email-escape-off')effect=this.db.prepare(`DELETE FROM email_recovery_optin WHERE owner_id=?2 AND ${mine}`).bind(changeId,o,g,receipt);
   else if(row.kind==='passkey-revoke')effect=this.db.prepare(`UPDATE passkey_credentials SET revoked_at=?5,revision=revision+1 WHERE credential_id=?6 AND owner_id=?2 AND revoked_at IS NULL AND ${mine} AND EXISTS(SELECT 1 FROM passkey_credentials o2 WHERE o2.owner_id=?2 AND o2.credential_id<>?6 AND o2.revoked_at IS NULL)`).bind(changeId,o,g,receipt,now,row.target);
   else effect=this.db.prepare(`UPDATE device_sessions SET revoked_at=?5 WHERE device_id=?6 AND owner_id=?2 AND revoked_at IS NULL AND ${mine}`).bind(changeId,o,g,receipt,now,row.target);
+  // A session revoke also revokes the seed-sync key last used by that device session, in the same batch and under the same guard (appended, so result indexes hold).
+  const keyLink=row.kind==='session-revoke'||!['email-escape-on','email-escape-off','passkey-revoke'].includes(row.kind)?[this.db.prepare(`UPDATE seed_sync_keys SET revoked_at=?5,revoked_reason='remote' WHERE last_device_id=?6 AND owner_id=?2 AND revoked_at IS NULL AND EXISTS(SELECT 1 FROM device_sessions WHERE device_id=?6 AND owner_id=?2 AND revoked_at=?5) AND ${mine}`).bind(changeId,o,g,receipt,now,row.target)]:[];
   let r;try{r=await this.db.batch([
    this.db.prepare(`UPDATE recovery_changes SET consumed_at=?5,consume_receipt=?4 WHERE change_id=?1 AND owner_id=?2 AND generation=?3 AND requester_device_id=?6 AND approved_at IS NOT NULL AND consumed_at IS NULL AND expires_at>?5 AND EXISTS(SELECT 1 FROM account_security s WHERE s.owner_id=?2 AND s.generation=?3) AND EXISTS(SELECT 1 FROM device_sessions d ${MJ} WHERE d.device_id=?6 AND d.owner_id=?2 AND d.generation=?3 AND d.revoked_at IS NULL AND d.expires_at>?5 AND ${MA}) AND ${approver}`).bind(changeId,o,g,receipt,now,deviceId),
    effect,
+   ...keyLink,
   ]);}catch{return;}
   if(r[0]/*exact-count-ok*/.meta.changes!==1)return;
   if(row.kind==='email-escape-on')return await this.db.prepare('SELECT 1 x FROM email_recovery_optin WHERE owner_id=?1').bind(o).first()?{emailEscape:true}:undefined;
@@ -133,13 +136,17 @@ export class RecoveryControls {
     const r=await this.db.batch([
      this.db.prepare(`UPDATE provider_identities SET revoked_at=?4 WHERE owner_id=?2 AND issuer='${GOOGLE_ISSUER}' AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now),
      this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE owner_id=?2 AND revoked_at IS NULL AND provider_identity_id IN ${gone}`).bind(c,o,g,now),
+     this.db.prepare(`UPDATE seed_sync_keys SET revoked_at=?4,revoked_reason='remote' WHERE owner_id=?2 AND revoked_at IS NULL AND last_device_id IN (SELECT device_id FROM device_sessions WHERE owner_id=?2 AND revoked_at=?4 AND provider_identity_id IN ${gone})`).bind(c,o,g,now),
      this.db.prepare(`UPDATE recognized_browsers SET revoked_at=?4 WHERE owner_id=?2 AND revoked_at IS NULL AND provider_identity_id IN ${gone}`).bind(c,o,g,now),
      this.db.prepare(`DELETE FROM pending_logins WHERE owner_id=?2 AND provider_identity_id IN ${gone}`).bind(c,o,g,now),
     ]);
     return r[0].meta.changes>=1?{revoked:'google'}:undefined;
    }
-   const r=await this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE device_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now,target).run();
-   return r.meta.changes>=1?{revoked:'session'}:undefined;
+   const rs=await this.db.batch([
+    this.db.prepare(`UPDATE device_sessions SET revoked_at=?4 WHERE device_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND ${live}`).bind(c,o,g,now,target),
+    this.db.prepare(`UPDATE seed_sync_keys SET revoked_at=?4,revoked_reason='remote' WHERE last_device_id=?5 AND owner_id=?2 AND revoked_at IS NULL AND EXISTS(SELECT 1 FROM device_sessions WHERE device_id=?5 AND owner_id=?2 AND revoked_at=?4)`).bind(c,o,g,now,target),
+   ]);
+   return rs[0].meta.changes>=1?{revoked:'session'}:undefined;
   }catch{return;}
  }
 }

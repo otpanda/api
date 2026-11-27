@@ -41,10 +41,11 @@ export class TotpSeedStore {
     if (!Number.isSafeInteger(now) || now < 0) throw new TypeError('Valid clock required');
     const parameters = readSeedInput(seed);
     const payload = JSON.stringify({ secret: base64urlEncode(parameters.secret), algorithm: parameters.algorithm, digits: parameters.digits, period: parameters.period });
+    const seedBytes = parameters.secret.byteLength;
     parameters.secret.fill(0);
     const envelope = await this.cipher.encrypt(payload, { ownerId, entryId });
-    const result = await this.db.prepare('INSERT INTO totp_seeds (owner_id, entry_id, envelope, created_at, updated_at) SELECT ?1, ?2, ?3, ?4, ?4 WHERE EXISTS (SELECT 1 FROM entries WHERE owner_id = ?1 AND entry_id = ?2) ON CONFLICT(entry_id) DO UPDATE SET envelope = excluded.envelope, updated_at = excluded.updated_at WHERE totp_seeds.owner_id = excluded.owner_id')
-      .bind(ownerId, entryId, JSON.stringify(envelope), now).run();
+    const result = await this.db.prepare('INSERT INTO totp_seeds (owner_id, entry_id, envelope, created_at, updated_at, algorithm, digits, period, seed_bytes) SELECT ?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8 WHERE EXISTS (SELECT 1 FROM entries WHERE owner_id = ?1 AND entry_id = ?2) ON CONFLICT(entry_id) DO UPDATE SET envelope = excluded.envelope, updated_at = excluded.updated_at, algorithm = excluded.algorithm, digits = excluded.digits, period = excluded.period, seed_bytes = excluded.seed_bytes WHERE totp_seeds.owner_id = excluded.owner_id')
+      .bind(ownerId, entryId, JSON.stringify(envelope), now, parameters.algorithm, parameters.digits, parameters.period, seedBytes).run();
     // The seed-sync triggers (migration 0052) add rows to this statement's meta.changes, so success is >= 1, never exactly 1. A write that
     // matches no row (missing entry, other owner) still reports 0 and stays false.
     return result.meta.changes >= 1;

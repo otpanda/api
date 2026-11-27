@@ -84,7 +84,7 @@ export function createTotpBatchImportHttp({db,sessions,getSeedCipher,clock=Date.
    if(!proof||proof.generation!==user.generation){wipe(items);return reply({error:'reauthenticate'},403);}
    const cipher=await getSeedCipher(),ids=[],rows=[];
    try{
-    for(const i of items){const id=crypto.randomUUID();ids.push(id);rows.push({id,label:i.label,account:i.account,catalog:i.catalogId,issuer:i.issuer,envelope:JSON.stringify(await cipher.encrypt(JSON.stringify({secret:base64urlEncode(i.secret),algorithm:i.algorithm,digits:i.digits,period:i.period}),{ownerId:user.ownerId,entryId:id}))});}
+    for(const i of items){const id=crypto.randomUUID();ids.push(id);rows.push({id,label:i.label,account:i.account,catalog:i.catalogId,issuer:i.issuer,algorithm:i.algorithm,digits:i.digits,period:i.period,seedBytes:i.secret.byteLength,envelope:JSON.stringify(await cipher.encrypt(JSON.stringify({secret:base64urlEncode(i.secret),algorithm:i.algorithm,digits:i.digits,period:i.period}),{ownerId:user.ownerId,entryId:id}))});}
    }finally{wipe(items);items=[];}
    const payload=JSON.stringify(rows);
    if(payload.length>90000)return reply({error:'invalid_request'},400);// D1 statement size; the 50-item cap keeps real batches far below
@@ -97,7 +97,7 @@ export function createTotpBatchImportHttp({db,sessions,getSeedCipher,clock=Date.
      db.prepare(`INSERT INTO tx_assert SELECT CASE WHEN ?4>?3 AND EXISTS(SELECT 1 FROM device_sessions d ${SESSION_METHOD_JOIN} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?1 AND d.owner_id=?2 AND d.generation=?5 AND s.generation=?5 AND d.revoked_at IS NULL AND d.expires_at>?3 AND ${SESSION_METHOD_ACTIVE}) THEN 1 ELSE 0 END`).bind(user.deviceId,user.ownerId,now,user.expiresAt,user.generation),
      db.prepare('INSERT INTO totp_batch_imports(owner_id,batch_nonce,action_digest,entry_ids,created_at) VALUES (?1,?2,?3,?4,?5)').bind(user.ownerId,value.batchNonce,digest,idsJson,now),
      db.prepare("INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,account_name,catalog_id,issuer) SELECT json_extract(value,'$.id'),?1,'custom-totp',json_extract(value,'$.label'),?2,json_extract(value,'$.account'),json_extract(value,'$.catalog'),json_extract(value,'$.issuer') FROM json_each(?3)").bind(user.ownerId,now,payload),
-     db.prepare("INSERT INTO totp_seeds(owner_id,entry_id,envelope,created_at,updated_at) SELECT ?1,json_extract(value,'$.id'),json_extract(value,'$.envelope'),?2,?2 FROM json_each(?3)").bind(user.ownerId,now,payload),
+     db.prepare("INSERT INTO totp_seeds(owner_id,entry_id,envelope,created_at,updated_at,algorithm,digits,period,seed_bytes) SELECT ?1,json_extract(value,'$.id'),json_extract(value,'$.envelope'),?2,?2,json_extract(value,'$.algorithm'),json_extract(value,'$.digits'),json_extract(value,'$.period'),json_extract(value,'$.seedBytes') FROM json_each(?3)").bind(user.ownerId,now,payload),
      // Trigger-independent proof that every entry and seed landed; failure rolls the whole batch back.
      db.prepare('INSERT INTO tx_assert SELECT CASE WHEN (SELECT count(*) FROM entries WHERE owner_id=?1 AND entry_id IN (SELECT value FROM json_each(?2)))=?3 AND (SELECT count(*) FROM totp_seeds WHERE owner_id=?1 AND entry_id IN (SELECT value FROM json_each(?2)))=?3 THEN 1 ELSE 0 END').bind(user.ownerId,idsJson,ids.length),
     ]);

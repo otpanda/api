@@ -49,14 +49,14 @@ export function createTotpManagementHttp({db,sessions,getSeedCipher,clock=Date.n
    }
    const proof=await passkeys.finishAuthentication({token:value.token,response:value.response,ownerId:user.ownerId,binding,action});
    if(!proof||proof.generation!==user.generation){secret.fill(0);return reply({error:'reauthenticate'},403);}
-   const entryId=crypto.randomUUID(),cipher=await getSeedCipher();let envelope;
+   const entryId=crypto.randomUUID(),cipher=await getSeedCipher(),seedBytes=secret.byteLength;let envelope;
    try{envelope=await cipher.encrypt(JSON.stringify({secret:base64urlEncode(secret),algorithm,digits,period}),{ownerId:user.ownerId,entryId});}finally{secret.fill(0);value.secret='';}
    const current=await auth.authenticate(request);if(!current||current.ownerId!==user.ownerId||current.deviceId!==user.deviceId||current.generation!==user.generation)return reply({error:'unauthorized'},401);
    const now=clock();
    const rows=await db.batch([
     db.prepare("INSERT OR IGNORE INTO services(service_id,name) VALUES ('custom-totp','Authenticator')"),
     db.prepare(`INSERT INTO entries(entry_id,owner_id,service_id,label,created_at,account_name,catalog_id,issuer) SELECT ?1,?2,?3,?4,?5,?6,?10,?11 WHERE ?9>?5 AND EXISTS(SELECT 1 FROM device_sessions d ${SESSION_METHOD_JOIN} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?7 AND d.owner_id=?2 AND d.generation=?8 AND s.generation=?8 AND d.revoked_at IS NULL AND d.expires_at>?5 AND ${SESSION_METHOD_ACTIVE.replaceAll('?3','?5')})`).bind(entryId,user.ownerId,'custom-totp',value.label.trim(),now,value.account.trim()||null,user.deviceId,user.generation,user.expiresAt,Object.hasOwn(value,'catalogId')?value.catalogId:null,issuer),
-    db.prepare('INSERT INTO totp_seeds(owner_id,entry_id,envelope,created_at,updated_at) SELECT ?1,?2,?3,?4,?4 WHERE EXISTS(SELECT 1 FROM entries WHERE owner_id=?1 AND entry_id=?2)').bind(user.ownerId,entryId,JSON.stringify(envelope),now),
+    db.prepare('INSERT INTO totp_seeds(owner_id,entry_id,envelope,created_at,updated_at,algorithm,digits,period,seed_bytes) SELECT ?1,?2,?3,?4,?4,?5,?6,?7,?8 WHERE EXISTS(SELECT 1 FROM entries WHERE owner_id=?1 AND entry_id=?2)').bind(user.ownerId,entryId,JSON.stringify(envelope),now,algorithm,digits,period,seedBytes),
    ]);
    // totp_seeds gets row-writing triggers with migration 0052 (D1 counts trigger rows in meta.changes), so success is >=1. A guarded insert that matched no entry still reports 0.
    return rows[2].meta.changes>=1?reply({entryId},201):reply({error:'unauthorized'},401);

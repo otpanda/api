@@ -80,6 +80,10 @@ const NOTIFY={
   intro:['Email recovery was completed for your OTPanda account.','Every old passkey, device key, session and automation token was removed and a new passkey was added. Your codes, shares and linked Google account were kept.'],
   warning:'If this was not you, contact support right away.',
   text:'Email recovery was completed for your OTPanda account. Every old passkey, device key, session and automation token was removed and a new passkey was added. Your codes, shares and linked Google account were kept. If this was not you, contact support right away.'},
+ 'seed-sync-enrolled':{subject:'OTPanda offline codes were turned on for a new device',title:'A new device can now hold your codes offline',eyebrow:'Security notice',preheader:'A new device was enrolled for offline codes on your OTPanda account.',
+  intro:['A new device was enrolled for offline codes on your OTPanda account, after a passkey check. That device is now authorized to save your authenticator keys in encrypted storage for offline codes.'],
+  warning:'If this was not you, open OTPanda on a device signed in with a passkey and sign the new device out. This stops future downloads, but cannot erase keys already saved on an offline device.',
+  text:'A new device was enrolled for offline codes on your OTPanda account, after a passkey check. That device is now authorized to save your authenticator keys in encrypted storage for offline codes. If this was not you, open OTPanda on a device signed in with a passkey and sign the new device out. This stops future downloads, but cannot erase keys already saved on an offline device.'},
 };
 export function notificationEmail(kind){
  const t=Object.hasOwn(NOTIFY,kind)?NOTIFY[kind]:undefined;if(!t)throw new TypeError('Server notification required');
