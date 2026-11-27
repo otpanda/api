@@ -120,7 +120,7 @@ export class EntryTotpGenerator {
     // Codes start at the period containing now + offset. Offset 0 is the current period.
     const startSeconds = unixSeconds + startOffsetSeconds;
     const marks = entryIds.map((_, i) => '?' + (i + 2)).join(',');
-    const permitted = '(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
+    const permitted = '(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_readers m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
     const query = `SELECT s.entry_id, s.owner_id, s.envelope FROM totp_seeds s JOIN entries e ON e.owner_id=s.owner_id AND e.entry_id=s.entry_id WHERE s.entry_id IN (${marks}) AND ${permitted}`;
     const rows = (await this.db.prepare(query).bind(actorId, ...entryIds).all()).results;
     const generated = new Map(), omitted = new Map(), eligible = [];

@@ -39,13 +39,20 @@ export function googlePictureUrl(value) {
   if (u.protocol !== 'https:' || u.username || u.password || u.port || u.search || u.hash || !/^[a-z0-9-]+\.googleusercontent\.com$/.test(u.hostname)) return undefined;
   return u.href === value ? value : undefined;
 }
+// Cosmetic display name from the verified Google ID token. Bounded plain text, never used for authority or matching.
+export function googleDisplayName(value) {
+  if (typeof value !== 'string') return undefined;
+  const v = value.normalize('NFC').trim();
+  return v && v.length <= 100 && !/[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/.test(v) ? v : undefined;
+}
 export function googleEmailEvidence(claims) {
   const identity = providerIdentity({ issuer: claims?.iss, subject: claims?.sub, email: claims?.email });
   if (claims.email_verified !== true) throw new TypeError('Verified provider email required');
   const domain = identity.email.split('@')[1];
   const authoritative = domain === 'gmail.com' || (typeof claims.hd === 'string' && claims.hd.toLowerCase() === domain);
   const picture = googlePictureUrl(claims.picture);
-  return Object.freeze({ ...identity, authoritative, ...(picture ? { picture } : {}) });
+  const name = googleDisplayName(claims.name);
+  return Object.freeze({ ...identity, authoritative, ...(picture ? { picture } : {}), ...(name ? { name } : {}) });
 }
 export class AccountIdentityService {
   constructor(db, { clock = Date.now } = {}) { this.db = db; this.clock = clock; }

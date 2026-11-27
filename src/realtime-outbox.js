@@ -10,7 +10,7 @@ export const CLOSE_ALL=Object.freeze({v:1,t:'closeAll'});
 
 // Recipients of an entry are resolved at delivery time, after the row is claimed, and only those that could have an open socket.
 // A recipient revoked by the change itself, or by a delete, got its own direct row or packed snapshot at write time.
-const ENTRY_RECIPIENTS='SELECT m.recipient_id AS r FROM entry_shares m JOIN realtime_activity a ON a.account_id=m.recipient_id AND a.last_ticket_at>?4 WHERE m.entry_id=?1 AND m.revoked_at IS NULL AND m.recipient_id>?2 ORDER BY m.recipient_id LIMIT ?3';
+const ENTRY_RECIPIENTS='SELECT m.recipient_id AS r FROM entry_readers m JOIN realtime_activity a ON a.account_id=m.recipient_id AND a.last_ticket_at>?4 WHERE m.entry_id=?1 AND m.revoked_at IS NULL AND m.recipient_id>?2 ORDER BY m.recipient_id LIMIT ?3';
 const SNAPSHOT_RECIPIENTS='SELECT j.value AS r FROM json_each(?1) j JOIN realtime_activity a ON a.account_id=j.value AND a.last_ticket_at>?2 WHERE j.value>?3 ORDER BY j.value';
 // A recipient whose hub call failed gets its own backing-off row (attempts 1), so the parent row's cursor can move on and later recipients are not starved.
 const ISOLATE="INSERT INTO realtime_outbox(kind,account_id,created_at,attempts,next_attempt_at) SELECT 'account',?1,?2,1,?3 WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL AND kind='account' AND account_id=?1)";

@@ -1,0 +1,76 @@
+name: Sharing and machine-access remote D1 qualification
+# Manual only. Creates a temporary synthetic D1 database and a throwaway Worker, runs the actual MachineAccess
+# SQL against remote D1, then deletes both even on failure. Touches no production database or Worker.
+on:
+  workflow_dispatch:
+  push:
+    branches: [feat/sharing-machine-qualification]
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-sharing-qualification
+  cancel-in-progress: false
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - name: Create isolated resources, run checks and delete
+        shell: bash
+        run: |
+          set -euo pipefail
+          config=qualification/sharing/wrangler.json
+          name="otpanda-sharing-qual-${GITHUB_RUN_ID}"
+          dbid=''
+          cleanup_failed=0
+          deployed=0
+          cleanup() {
+            result=$?
+            set +e
+            if [ "$deployed" = 1 ]; then
+              node qualification/sharing/delete-worker.mjs || cleanup_failed=1
+            fi
+            if [ -n "$dbid" ]; then
+              node qualification/sharing/delete-database.mjs "$dbid" || cleanup_failed=1
+            fi
+            if [ "$cleanup_failed" != 0 ]; then exit 1; fi
+            exit "$result"
+          }
+          trap cleanup EXIT
+          npx wrangler d1 create "$name" --config "$config" > qualification/sharing/database-create.txt
+          dbid=$(node -e 'const fs=require("fs");const x=fs.readFileSync("qualification/sharing/database-create.txt","utf8");const m=x.match(/"database_id"\s*:\s*"([0-9a-f-]{36})"/);if(m)process.stdout.write(m[1])')
+          test -n "$dbid"
+          node - "$dbid" "$name" <<'JS'
+          const fs=require('fs'),crypto=require('crypto');
+          const p='qualification/sharing/wrangler.json',x=JSON.parse(fs.readFileSync(p));
+          x.name=process.argv[3];
+          x.vars.FIXTURE_PREFIX='qualification-'+crypto.randomBytes(12).toString('hex');
+          x.d1_databases[0].database_id=process.argv[2];
+          x.d1_databases[0].database_name=process.argv[3];
+          fs.writeFileSync(p,JSON.stringify(x,null,2));
+          JS
+          npx wrangler d1 migrations apply "$name" --remote --config "$config"
+          # Set before deploy so an interrupted upload is still cleaned up.
+          deployed=1
+          npx wrangler deploy --config "$config"
+          sleep 10
+          prefix=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync("qualification/sharing/wrangler.json")).vars.FIXTURE_PREFIX)')
+          node qualification/sharing/driver.mjs "https://$name.abrahammurciano.workers.dev/$prefix"
+      - name: Preserve synthetic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sharing-qualification-results
+          path: qualification/sharing/sharing-result.json
+          retention-days: 2

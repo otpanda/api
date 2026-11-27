@@ -23,8 +23,9 @@ export class EntryAccess {
     const owner=await this.owner(entryId);
     if(!owner)return false;
     if(owner===actorId)return true;
-    const row=await this.db.prepare('SELECT allow_automation FROM entry_shares WHERE entry_id = ?1 AND recipient_id = ?2 AND revoked_at IS NULL').bind(entryId,actorId).first();
-    return Boolean(row) && (!automation || row.allow_automation===1);
+    // Canonical policy: legacy per-entry shares and account grants are both rows of entry_readers.
+    const row=await this.db.prepare('SELECT 1 AS ok FROM entry_readers WHERE entry_id = ?1 AND recipient_id = ?2 AND (?3 = 0 OR allow_automation = 1) LIMIT 1').bind(entryId,actorId,automation?1:0).first();
+    return Boolean(row);
   }
   async latest(actorId,entryId,now,{automation=false}={}) {
     if(!await this.canRead(actorId,entryId,{automation}))return undefined;
