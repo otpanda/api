@@ -45,13 +45,15 @@ export class TotpSeedStore {
     const envelope = await this.cipher.encrypt(payload, { ownerId, entryId });
     const result = await this.db.prepare('INSERT INTO totp_seeds (owner_id, entry_id, envelope, created_at, updated_at) SELECT ?1, ?2, ?3, ?4, ?4 WHERE EXISTS (SELECT 1 FROM entries WHERE owner_id = ?1 AND entry_id = ?2) ON CONFLICT(entry_id) DO UPDATE SET envelope = excluded.envelope, updated_at = excluded.updated_at WHERE totp_seeds.owner_id = excluded.owner_id')
       .bind(ownerId, entryId, JSON.stringify(envelope), now).run();
-    return result.meta.changes === 1;
+    // The seed-sync triggers (migration 0052) add rows to this statement's meta.changes, so success is >= 1, never exactly 1. A write that
+    // matches no row (missing entry, other owner) still reports 0 and stays false.
+    return result.meta.changes >= 1;
   }
 
   // Owner-only removal. Returns whether a seed was removed.
   async removeSeed(ownerId, entryId) {
     const result = await this.db.prepare('DELETE FROM totp_seeds WHERE owner_id = ?1 AND entry_id = ?2').bind(id(ownerId), id(entryId)).run();
-    return result.meta.changes === 1;
+    return result.meta.changes >= 1;
   }
 }
 
