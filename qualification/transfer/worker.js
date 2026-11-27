@@ -5,6 +5,7 @@ let used = false;
 export default {
   async fetch(request, env) {
     const u = new URL(request.url), prefix = '/' + env.FIXTURE_PREFIX;
+    if (u.pathname === prefix + '/ready' && request.method === 'GET') return Response.json({synthetic:true, ready:true});
     if (u.pathname !== prefix + '/run' || request.method !== 'POST') return new Response(null, { status: 404 });
     if (used) return new Response(null, { status: 409 });
     used = true;
