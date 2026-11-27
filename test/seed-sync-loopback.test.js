@@ -72,3 +72,32 @@ test('transport contract the installed client must match: the bare application/j
   assert.equal((await send('application/json; charset=utf-8')).status,400,'Dart ContentType.json adds a charset and would be refused');
   assert.equal((await w.state()).keys.length,0);
  }finally{await w.lb.close();}});
+test('TCP loopback: native passkey sign-in through the synthetic authenticator yields a real device session; /v1/manage/session names the owner (installed real-root qualification path)',async()=>{
+ const lb=await startLoopback();try{
+  const k=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),raw=new Uint8Array(await crypto.subtle.exportKey('raw',k.publicKey)),renewal=base64urlEncode(raw);
+  assert.equal(raw.length,65);
+  const post=async(p,b,auth)=>{const r=await fetch(lb.url+p,{method:'POST',headers:{'Content-Type':'application/json',...(auth?{Authorization:'Bearer '+auth}:{})},body:JSON.stringify(b)});return{status:r.status,body:await r.json().catch(()=>null)};};
+  const b=await post('/auth/native/passkey/begin',{renewal_key:renewal});assert.equal(b.status,200);
+  // Port of passkeyLoginRequestJson (native_passkey.dart): discoverable, empty or absent allowCredentials, expires_at snake_case, at most 300 s ahead.
+  const o=b.body.options,now=Date.now();assert.ok(TOKEN.test(b.body.token)&&o.rpId==='otpanda.github.io'&&o.userVerification==='required'&&NONCE.test(o.challenge)&&(o.allowCredentials==null||(Array.isArray(o.allowCredentials)&&o.allowCredentials.length===0))&&Number.isSafeInteger(b.body.expires_at)&&b.body.expires_at>now&&b.body.expires_at<=now+300000,'app would refuse sign-in options');
+  const req=JSON.stringify({rpId:o.rpId,challenge:o.challenge,userVerification:'required',timeout:Math.min(Math.max(b.body.expires_at-now,1),120000),allowCredentials:[]});
+  const ar=await fetch(lb.url+'/__loopback/assert',{method:'POST',body:req});assert.equal(ar.status,200);
+  const response=passkeyAssertionBody(JSON.stringify(await ar.json()));assert.equal(typeof response.response.userHandle,'string');
+  const c=await post('/auth/native/passkey/complete',{renewal_key:renewal,token:b.body.token,response});assert.equal(c.status,200);
+  assert.ok(c.body.access&&c.body.device_id);
+  const s=await fetch(lb.url+'/v1/manage/session',{headers:{Authorization:'Bearer '+c.body.access}});assert.equal(s.status,200);
+  const j=await s.json();assert.equal(j.ownerId,OWNER);
+ }finally{await lb.close();}
+});
+test('TCP loopback gate controls: session reads are counted, outage drops forwarded requests but not the control routes',async()=>{
+ const lb=await startLoopback();try{
+  const sess=await (await fetch(lb.url+'/__loopback/session',{method:'POST'})).json(),c=async()=>(await (await fetch(lb.url+'/__loopback/counters')).json()).sessionReads;
+  assert.equal(await c(),0);
+  assert.equal((await fetch(lb.url+'/v1/manage/session',{headers:{Authorization:'Bearer '+sess.access}})).status,200);assert.equal(await c(),1);
+  await fetch(lb.url+'/__loopback/outage',{method:'POST',body:'{"on":true}'});
+  await assert.rejects(fetch(lb.url+'/v1/manage/session',{headers:{Authorization:'Bearer '+sess.access}}));
+  assert.equal(await c(),1,'control route still answers');
+  await fetch(lb.url+'/__loopback/outage',{method:'POST',body:'{"on":false}'});
+  assert.equal((await fetch(lb.url+'/v1/manage/session',{headers:{Authorization:'Bearer '+sess.access}})).status,200);assert.equal(await c(),2);
+ }finally{await lb.close();}
+});

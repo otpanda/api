@@ -29,7 +29,7 @@ export async function startLoopback({port=0,host='127.0.0.1',fingerprint=DEFAULT
   if(!await store.putSeed(OWNER,e.id,{secret:e.seed,algorithm:e.algorithm,digits:e.digits,period:e.period},t0))throw Error('seed not stored');}
  const sessions=new DeviceSessionService(db,{clock});
  const rt=createIdentityRuntime({db,loadCodeKeys:async()=>config,trustedRequestKey:()=>'127.0.0.1',clock,native:{enabled:true,assetFingerprints:[fingerprint]},seedSync:{enabled:true}});
- let counter=0,n=0;const sent=new Set();
+ let counter=0,n=0,sessionReads=0,outage=false;const sent=new Set();
  const log=(req,status)=>{if(process.env.LOOPBACK_LOG==='1')console.log('REQ '+req.method+' '+new URL(req.url,'http://l').pathname+' '+status);};
  const json=(res,s,b)=>{res.writeHead(s,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(b));};
  const server=http.createServer(async(req,res)=>{res.once('finish',()=>log(req,res.statusCode));try{
@@ -42,14 +42,19 @@ export async function startLoopback({port=0,host='127.0.0.1',fingerprint=DEFAULT
     if(r.rpId!=='otpanda.github.io'||r.userVerification!=='required'||!/^[A-Za-z0-9_-]{43}$/.test(r.challenge??''))return json(res,400,{error:'refused'});
     if(Array.isArray(r.allowCredentials)&&r.allowCredentials.length&&!r.allowCredentials.some(c=>c.id===cred.id))return json(res,404,{error:'no credential'});
     const a=auth.assertion({expected:r.challenge,origin,counter:++counter});
-    return json(res,200,{id:a.id,rawId:a.rawId,type:'public-key',authenticatorAttachment:'platform',clientExtensionResults:{},response:{...a.response,userHandle:null}});
+    return json(res,200,{id:a.id,rawId:a.rawId,type:'public-key',authenticatorAttachment:'platform',clientExtensionResults:{},response:{...a.response,userHandle:base64urlEncode(new TextEncoder().encode(OWNER))}});
    }
+   // Gate qualification controls (non-secret): request counter for GET /v1/manage/session, and a switch that drops every forwarded request (server unreachable).
+   if(url.pathname==='/__loopback/counters'&&req.method==='GET')return json(res,200,{sessionReads});
+   if(url.pathname==='/__loopback/outage'&&req.method==='POST'){outage=JSON.parse(body.toString()||'{}').on===true;return json(res,200,{outage});}
    if(url.pathname==='/__loopback/state'&&req.method==='GET'){
     const keys=sq.prepare('SELECT key_id,install_id,generation,revoked_at,revoked_reason FROM seed_sync_keys ORDER BY rowid').all().map(k=>({keyId:k.key_id,installId:k.install_id,generation:k.generation,revoked:k.revoked_at!=null,reason:k.revoked_reason}));
     return json(res,200,{keys,notices:sq.prepare('SELECT count(*) n FROM seed_sync_notices').get().n,ownerRevision:sq.prepare('SELECT revision r FROM seed_sync_owner WHERE owner_id=?').get(OWNER)?.r??null,seeds:sq.prepare('SELECT entry_id,seed_version,algorithm,digits,period,seed_bytes FROM totp_seeds ORDER BY entry_id').all(),assertionsSigned:counter});
    }
    return json(res,404,{error:'not_found'});
   }
+  if(outage){req.socket.destroy();return;}
+  if(req.method==='GET'&&url.pathname==='/v1/manage/session')sessionReads++;
   const headers=new Headers();for(const[k,v]of Object.entries(req.headers))if(typeof v==='string'&&!['host','connection','content-length'].includes(k))headers.set(k,v);
   const r=await rt.fetch(new Request(API+req.url,{method:req.method,headers,body:req.method==='GET'||req.method==='HEAD'?undefined:body}),{clientAddress:'127.0.0.'+(1+(++n%200)),waitUntil(){}});
   const out=Buffer.from(await r.arrayBuffer()),h={};r.headers.forEach((v,k)=>{h[k]=v;});delete h['content-length'];delete h['content-encoding'];
