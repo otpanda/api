@@ -7,6 +7,6 @@ export const MIGRATION_ALLOWANCE = { writes: 1500, reads: 20000 };
 export const PER_REQUEST_CAP = { writes: 200, reads: 1000 };
 // True when one more request, if it used its full cap, still keeps the cumulative total within the ceiling. Stop-before-next rule.
 export const mayStartNext = cum => cum.writes + PER_REQUEST_CAP.writes <= CEILING.writes && cum.reads + PER_REQUEST_CAP.reads <= CEILING.reads;
-// Bound on how far a run can exceed the ceiling: the last admitted request stays under its cap except for one final statement (a statement here touches at most 3 rows
+// Unverified estimate of how far a run can exceed the meter allowance: the last admitted request stays under its cap except for one final statement (a statement here touches at most 3 rows
 // of data, each with a few trigger and index rows; 60 is a generous per-statement bound). Beyond that is unverified in-flight overshoot.
 export const IN_FLIGHT_OVERSHOOT = { writes: 60, reads: 200 };

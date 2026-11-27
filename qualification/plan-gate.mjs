@@ -2,8 +2,9 @@
 // by someone who has just read the authenticated Cloudflare dashboard, and only while they are fresh and bound to this account and this exact commit.
 // There is no standing permission: absent, malformed, stale, future-dated, mismatched or over-budget input exits 1 and nothing is created.
 // The observed plan is a dashboard reading supplied by the dispatcher. Nothing here proves it, so the dispatcher must have verified it.
-// The budget is the run's ENFORCED ceiling (seed-sync/budget.mjs, used by the driver's cumulative metering), not just headroom. Local measured envelope:
-// about 400 rows written by the 14 checks plus about 550 for migrations, and under 10k rows read.
+// The budget is a conservative allowance plus partial cumulative metering, not an absolute hard ceiling. first() reads are unmetered,
+// migration allowance is estimated and a single statement can overshoot. Safety also relies on the finite 14-check suite and large headroom.
+// Local measured envelope: about 400 rows written by checks plus about 550 for migrations, and under 10k rows read.
 import { CEILING } from './seed-sync/budget.mjs';
 const BUDGET_WRITES = CEILING.writes, BUDGET_READS = CEILING.reads;
 const FREE_WRITES = 100000, FREE_READS = 5000000, FREE_DBS = 10, HEADROOM = 0.5, MAX_AGE_MS = 30 * 60 * 1000, SKEW_MS = 2 * 60 * 1000;
