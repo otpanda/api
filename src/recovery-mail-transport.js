@@ -3,7 +3,7 @@
 import{BrevoMailTransport}from'./brevo-mail.js';
 import{recoveryEmail,notificationEmail}from'./email-templates.js';
 const KINDS={'recovery-request':1,'recovery-complete':1};
-const NOTIFY=new Set(['requested','canceled','completed']);
+const NOTIFY=new Set(['requested','canceled','completed','seed-sync-enrolled']);
 export function createRecoveryNotificationDelivery(configuration){
  const transport=new BrevoMailTransport(configuration);
  return async function deliver({kind,to}){if(!NOTIFY.has(kind)||typeof to!=='string')throw new TypeError('Server notification required');return transport.submit({to,...notificationEmail(kind)});};

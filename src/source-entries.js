@@ -105,7 +105,7 @@ export class SourceEntryStore {
   // source and current entry permission. At most 21 DB queries for 20 codes.
   async activeForActor(actorId,now){
     id(actorId);if(!Number.isSafeInteger(now)||now<0)throw new TypeError('Valid clock required');
-    const permitted='(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
+    const permitted='(e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_readers m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL))';
     const rows=(await this.db.prepare(`SELECT * FROM (SELECT c.owner_id,c.entry_id,c.source_id,c.event_id,c.envelope,c.received_at,c.expires_at,ROW_NUMBER() OVER (PARTITION BY c.entry_id ORDER BY c.received_at DESC,c.event_id DESC) AS position FROM incoming_codes c JOIN entries e ON e.entry_id=c.entry_id AND e.owner_id=c.owner_id JOIN sources s ON s.source_id=c.source_id AND s.owner_id=c.owner_id WHERE c.received_at<=?2 AND c.expires_at>?2 AND s.revoked_at IS NULL AND ${permitted}) WHERE position=1 ORDER BY received_at DESC,entry_id LIMIT 20`).bind(actorId,now).all()).results;
     const decoded=[];
     for(const row of rows){const code=await this.cipher.decrypt(JSON.parse(row.envelope),{ownerId:row.owner_id,recordId:await hashText(JSON.stringify([row.source_id,row.event_id])),serviceId:row.entry_id,receivedAt:row.received_at,expiresAt:row.expires_at});decoded.push({row,code});}

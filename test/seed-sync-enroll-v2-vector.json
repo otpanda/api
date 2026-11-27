@@ -1,0 +1,69 @@
+{
+ "note": "synthetic test keys only; digest = hex SHA-256 of the UTF-8 preimage",
+ "cases": [
+  {
+   "input": {
+    "ownerId": "owner0",
+    "installId": "IIIIIIIIIIIIIIIIIIIIII",
+    "keyId": "0123456789abcdef0123456789abcdef",
+    "publicJwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "gP4cej2SDLFzl2xDP9asB4vs65ouIHJpUsaiTXEdCdE",
+     "y": "rHzY-saAhe1wFmwqeUjBAUUkFd0PvXE5if5wBrdSt3U"
+    },
+    "generation": 0
+   },
+   "preimage": "[\"seed-sync-enroll-v2\",\"owner0\",\"IIIIIIIIIIIIIIIIIIIIII\",\"0123456789abcdef0123456789abcdef\",\"{\\\"kty\\\":\\\"EC\\\",\\\"crv\\\":\\\"P-256\\\",\\\"x\\\":\\\"gP4cej2SDLFzl2xDP9asB4vs65ouIHJpUsaiTXEdCdE\\\",\\\"y\\\":\\\"rHzY-saAhe1wFmwqeUjBAUUkFd0PvXE5if5wBrdSt3U\\\"}\",0]",
+   "digest": "b1bbd531e756125093dc5db9c8fad6df7f05c2dd8f3f49496a81ee33791a4fe5"
+  },
+  {
+   "input": {
+    "ownerId": "owner0",
+    "installId": "IIIIIIIIIIIIIIIIIIIIII",
+    "keyId": "0123456789abcdef0123456789abcdef",
+    "publicJwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "gP4cej2SDLFzl2xDP9asB4vs65ouIHJpUsaiTXEdCdE",
+     "y": "rHzY-saAhe1wFmwqeUjBAUUkFd0PvXE5if5wBrdSt3U"
+    },
+    "generation": 7
+   },
+   "preimage": "[\"seed-sync-enroll-v2\",\"owner0\",\"IIIIIIIIIIIIIIIIIIIIII\",\"0123456789abcdef0123456789abcdef\",\"{\\\"kty\\\":\\\"EC\\\",\\\"crv\\\":\\\"P-256\\\",\\\"x\\\":\\\"gP4cej2SDLFzl2xDP9asB4vs65ouIHJpUsaiTXEdCdE\\\",\\\"y\\\":\\\"rHzY-saAhe1wFmwqeUjBAUUkFd0PvXE5if5wBrdSt3U\\\"}\",7]",
+   "digest": "a550ad587d009bee85da7be9ddd09b7f62bb098a0f087c7b33ed9f1599e2ab41"
+  },
+  {
+   "input": {
+    "ownerId": "owner1",
+    "installId": "IIIIIIIIIIIIIIIIIIIIII",
+    "keyId": "0123456789abcdef0123456789abcdef",
+    "publicJwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "X5N64OpGFkwFEEWV03Wn668kXwBpykjcoWc4E5uNPS4",
+     "y": "R--012Ud5jnNIQpZOjE5q0ONpIHYJsZROSLmiHod8RM"
+    },
+    "generation": 0
+   },
+   "preimage": "[\"seed-sync-enroll-v2\",\"owner1\",\"IIIIIIIIIIIIIIIIIIIIII\",\"0123456789abcdef0123456789abcdef\",\"{\\\"kty\\\":\\\"EC\\\",\\\"crv\\\":\\\"P-256\\\",\\\"x\\\":\\\"X5N64OpGFkwFEEWV03Wn668kXwBpykjcoWc4E5uNPS4\\\",\\\"y\\\":\\\"R--012Ud5jnNIQpZOjE5q0ONpIHYJsZROSLmiHod8RM\\\"}\",0]",
+   "digest": "d4cd0baee3e6906b85762ac41f667b7d67f3113ef2a406dcd6a86508def30c87"
+  },
+  {
+   "input": {
+    "ownerId": "owner1",
+    "installId": "IIIIIIIIIIIIIIIIIIIIII",
+    "keyId": "0123456789abcdef0123456789abcdef",
+    "publicJwk": {
+     "kty": "EC",
+     "crv": "P-256",
+     "x": "X5N64OpGFkwFEEWV03Wn668kXwBpykjcoWc4E5uNPS4",
+     "y": "R--012Ud5jnNIQpZOjE5q0ONpIHYJsZROSLmiHod8RM"
+    },
+    "generation": 7
+   },
+   "preimage": "[\"seed-sync-enroll-v2\",\"owner1\",\"IIIIIIIIIIIIIIIIIIIIII\",\"0123456789abcdef0123456789abcdef\",\"{\\\"kty\\\":\\\"EC\\\",\\\"crv\\\":\\\"P-256\\\",\\\"x\\\":\\\"X5N64OpGFkwFEEWV03Wn668kXwBpykjcoWc4E5uNPS4\\\",\\\"y\\\":\\\"R--012Ud5jnNIQpZOjE5q0ONpIHYJsZROSLmiHod8RM\\\"}\",7]",
+   "digest": "f78b79916aadc8e9aa4c6aa6f110d1e47750f00a7ecd9c9823c3ddac8af01fc5"
+  }
+ ]
+}

@@ -1,0 +1,128 @@
+{
+ "note": "synthetic test keys only",
+ "signing": {
+  "publicJwk": {
+   "kty": "EC",
+   "crv": "P-256",
+   "x": "FUlvuIPmxIIPm6ZCSigFq94xCIAfMkV94roEHVzcRls",
+   "y": "J_DfwdhwPCNlAd4JrGOnt2NLarvBvWU-i0O555KW9SE"
+  }
+ },
+ "proofs": {
+  "seed-sync-enroll": {
+   "challenge": {
+    "ownerId": "owner",
+    "keyId": "key",
+    "installId": "IIIIIIIIIIIIIIIIIIIIII",
+    "generation": 1,
+    "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "actionDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "expiresAt": 1800000120000
+   },
+   "message": "WyJvdHBhbmRhLXNlZWQtc3luYy12MSIsInNlZWQtc3luYy1lbnJvbGwiLCJvd25lciIsImtleSIsIklJSUlJSUlJSUlJSUlJSUlJSUlJSUkiLDEsIkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwxODAwMDAwMTIwMDAwXQ==",
+   "signature": "-yfj7_2eZZeKmh8AC_jyRz5hgf-He4k_-Q3Q3I3Wb6QJDtG12_CoKNO_yIvf4m5kacqToP-ZJtWk5gRFkxjT2w"
+  },
+  "seed-sync-snapshot": {
+   "challenge": {
+    "ownerId": "owner",
+    "keyId": "key",
+    "deviceId": "device",
+    "generation": 1,
+    "epoch": 7,
+    "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expiresAt": 1800000120000
+   },
+   "message": "WyJvdHBhbmRhLXNlZWQtc3luYy12MSIsInNlZWQtc3luYy1zbmFwc2hvdCIsIm93bmVyIiwia2V5IiwiZGV2aWNlIiwxLDcsIkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLDE4MDAwMDAxMjAwMDBd",
+   "signature": "v1QuZmeBAjbE8uPrXVikUpjA-zQG-vN1VfcqbEouZ-F7syclcZ4GvgwyOun5ciGt92OYUdQJerbjWRfpnCupsQ"
+  },
+  "seed-sync-status": {
+   "challenge": {
+    "keyId": "key",
+    "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expiresAt": 1800000120000
+   },
+   "message": "WyJvdHBhbmRhLXNlZWQtc3luYy12MSIsInNlZWQtc3luYy1zdGF0dXMiLCJrZXkiLCJBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBIiwxODAwMDAwMTIwMDAwXQ==",
+   "signature": "K8X7atitxYSfskOLILf4Bqeh-jU18Sa-2b5Q22kNPM5HpCfAzXwxGVpdNVRm58ZRlMS3WkCunUzAMlv4j1LPlQ"
+  },
+  "seed-sync-revoke": {
+   "challenge": {
+    "ownerId": "owner",
+    "keyId": "key",
+    "deviceId": "device",
+    "generation": 1,
+    "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "expiresAt": 1800000120000
+   },
+   "message": "WyJvdHBhbmRhLXNlZWQtc3luYy12MSIsInNlZWQtc3luYy1yZXZva2UiLCJvd25lciIsImtleSIsImRldmljZSIsMSwiQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQSIsMTgwMDAwMDEyMDAwMF0=",
+   "signature": "Py5tmWlvvNROZAvf3PlYkX-itGvy7D1OE0D8W56MKIKpI1GU52Au1nK03UNRP-0dCO6Kfw833ZnM5Xk0eMvOwQ"
+  },
+  "seed-sync-batch": {
+   "challenge": {
+    "ownerId": "owner",
+    "keyId": "key",
+    "deviceId": "device",
+    "generation": 1,
+    "epoch": 7,
+    "challenge": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "ephemeralDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "entriesDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "expiresAt": 1800000120000
+   },
+   "message": "WyJvdHBhbmRhLXNlZWQtc3luYy12MSIsInNlZWQtc3luYy1iYXRjaCIsIm93bmVyIiwia2V5IiwiZGV2aWNlIiwxLDcsIkFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUEiLCJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwiZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZCIsMTgwMDAwMDEyMDAwMF0=",
+   "signature": "CYZ0RbcxM2l0ifLaCVOPG3Cc489o0yRsaUYjhyiBo1YjyYwrfiVLri00vXuKfyWhP0_noRdLnea2WWa1uAr7Tg"
+  }
+ },
+ "seal": {
+  "clientPrivateJwk": {
+   "key_ops": [
+    "deriveBits"
+   ],
+   "ext": true,
+   "kty": "EC",
+   "x": "A-ywYZmN61DpfnoHfoHvN1tq142eNbceAnTBlz0_cxE",
+   "y": "1rli2rdcvRaPQiss3X4EAGiGNfxvJGett1ufTd89Ht8",
+   "crv": "P-256",
+   "d": "DHnNE-lACnY9eD_-wrOW72gP_McXzdg1vMpcmoKlXAY"
+  },
+  "clientPublicRaw": "BAPssGGZjetQ6X56B36B7zdbateNnjW3HgJ0wZc9P3MR1rli2rdcvRaPQiss3X4EAGiGNfxvJGett1ufTd89Ht8",
+  "serverPrivateJwk": {
+   "key_ops": [
+    "deriveBits"
+   ],
+   "ext": true,
+   "kty": "EC",
+   "x": "QKkFGGZ4KgZoJYnbe4l7HndauEl286p0E-FwHJ6jU5I",
+   "y": "EjIzl-Gh1Sr8Yd4Qurz4_zmaDvMCJZBzWdjVIOQeZ8k",
+   "crv": "P-256",
+   "d": "gUiYG1fnjOYfAllukJNNgYCV1UGGNOqwmLP8VGejyYI"
+  },
+  "challengeDigest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "ephemeralDigest": "bb9414c491ded02d41892a2898169d86eca3e00ea9988886fb02ccf0b567519c",
+  "secret": "AQIDBAUGBwgJCgsMDQ4PEBESExQ=",
+  "aad": {
+   "ownerId": "owner",
+   "deviceId": "device",
+   "epoch": 7,
+   "entryId": "entry1",
+   "seedVersion": 3,
+   "algorithm": "SHA-1",
+   "digits": 6,
+   "period": 30
+  },
+  "aadBytes": "WyJvdHBhbmRhLXNlZWQtc3luYy1zZWFsLXYxIiwib3duZXIiLCJkZXZpY2UiLDcsImVudHJ5MSIsMywiU0hBLTEiLDYsMzAsImVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUiLCJiYjk0MTRjNDkxZGVkMDJkNDE4OTJhMjg5ODE2OWQ4NmVjYTNlMDBlYTk5ODg4ODZmYjAyY2NmMGI1Njc1MTljIl0=",
+  "nonce": "AQIDBAUGBwgJCgsM",
+  "serverPublicKey": "BECpBRhmeCoGaCWJ23uJex53WrhJdvOqdBPhcByeo1OSEjIzl-Gh1Sr8Yd4Qurz4_zmaDvMCJZBzWdjVIOQeZ8k",
+  "ciphertext": "00Bzdh8AxioBowDCucnOu1KOsH_lQZ8__zRo75blM1Km0U62"
+ },
+ "algorithmAads": {
+  "SHA-1": "WyJvdHBhbmRhLXNlZWQtc3luYy1zZWFsLXYxIiwib3duZXIiLCJkZXZpY2UiLDcsImVudHJ5MSIsMywiU0hBLTEiLDYsMzAsImVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWUiLCJiYjk0MTRjNDkxZGVkMDJkNDE4OTJhMjg5ODE2OWQ4NmVjYTNlMDBlYTk5ODg4ODZmYjAyY2NmMGI1Njc1MTljIl0=",
+  "SHA-256": "WyJvdHBhbmRhLXNlZWQtc3luYy1zZWFsLXYxIiwib3duZXIiLCJkZXZpY2UiLDcsImVudHJ5MSIsMywiU0hBLTI1NiIsNiwzMCwiZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZSIsImJiOTQxNGM0OTFkZWQwMmQ0MTg5MmEyODk4MTY5ZDg2ZWNhM2UwMGVhOTk4ODg4NmZiMDJjY2YwYjU2NzUxOWMiXQ==",
+  "SHA-512": "WyJvdHBhbmRhLXNlZWQtc3luYy1zZWFsLXYxIiwib3duZXIiLCJkZXZpY2UiLDcsImVudHJ5MSIsMywiU0hBLTUxMiIsNiwzMCwiZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZWVlZSIsImJiOTQxNGM0OTFkZWQwMmQ0MTg5MmEyODk4MTY5ZDg2ZWNhM2UwMGVhOTk4ODg4NmZiMDJjY2YwYjU2NzUxOWMiXQ=="
+ },
+ "badPoints": {
+  "offCurve": "BAPssGGZjetQ6X56B36B7zdbateNnjW3HgJ0wZc9P3MR1rli2rdcvRaPQiss3X4EAGiGNfxvJGett1ufTd89Ht4",
+  "compressedPrefix": "AgPssGGZjetQ6X56B36B7zdbateNnjW3HgJ0wZc9P3MR",
+  "wrongLength": "BAPssGGZjetQ6X56B36B7zdbateNnjW3HgJ0wZc9P3MR1rli2rdcvRaPQiss3X4EAGiGNfxvJGett1ufTd89Hg",
+  "nonCanonicalBase64": "BAPssGGZjetQ6X56B36B7zdbateNnjW3HgJ0wZc9P3MR1rli2rdcvRaPQiss3X4EAGiGNfxvJGett1ufTd89Ht8="
+ }
+}

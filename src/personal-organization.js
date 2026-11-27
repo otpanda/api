@@ -19,7 +19,7 @@ function validate(document) {
  });
  const value={tags,entries};if(new TextEncoder().encode(JSON.stringify(value)).byteLength>MAX_BYTES)throw new TypeError('Organization document too large');return value;
 }
-const ACCESS = `EXISTS (SELECT 1 FROM entries e WHERE e.entry_id=p.value->>'$.entryId' AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_shares s WHERE s.entry_id=e.entry_id AND s.recipient_id=?1 AND s.revoked_at IS NULL)))`;
+const ACCESS = `EXISTS (SELECT 1 FROM entries e WHERE e.entry_id=p.value->>'$.entryId' AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_readers s WHERE s.entry_id=e.entry_id AND s.recipient_id=?1 AND s.revoked_at IS NULL)))`;
 function guardJson(guard,viewerId) {
  if(guard===undefined)return null; // Trusted internal calls only; HTTP always supplies a guard.
  if(!guard||guard.ownerId!==viewerId||typeof guard.deviceId!=='string'||!Number.isSafeInteger(guard.generation)||!Number.isSafeInteger(guard.expiresAt))throw new TypeError('Invalid session guard');
@@ -60,7 +60,7 @@ export class PersonalOrganizationStore {
   const now=this.#clock();
   if(typeof receiptId!=='string'||!/^[A-Za-z0-9_-]{22,64}$/.test(receiptId)||!Number.isSafeInteger(createdAt)||createdAt<now-300000||createdAt>now+30000)throw new TypeError('Invalid copy receipt');
   const day=Math.floor(now/86400000);
-  const access=`EXISTS(SELECT 1 FROM entries e WHERE e.entry_id=?2 AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_shares s WHERE s.entry_id=e.entry_id AND s.recipient_id=?1 AND s.revoked_at IS NULL)))`;
+  const access=`EXISTS(SELECT 1 FROM entries e WHERE e.entry_id=?2 AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_readers s WHERE s.entry_id=e.entry_id AND s.recipient_id=?1 AND s.revoked_at IS NULL)))`;
   const result=await this.#db.batch([
    this.#db.prepare('DELETE FROM personal_copy_receipts WHERE viewer_id=?1 AND accepted_at<?2').bind(viewerId,now-600000),
    this.#db.prepare(`INSERT INTO personal_copy_receipts(viewer_id,receipt_id,accepted_at) SELECT ?1,?3,?4 WHERE ${access} AND ${sessionGuard(6,4)} AND (SELECT count(*) FROM personal_copy_receipts WHERE viewer_id=?1)<1000 AND ((SELECT count(DISTINCT entry_id) FROM personal_copy_days WHERE viewer_id=?1 AND day>=?5)<1000 OR EXISTS(SELECT 1 FROM personal_copy_days WHERE viewer_id=?1 AND entry_id=?2 AND day>=?5)) ON CONFLICT DO NOTHING`).bind(viewerId,entryId,receiptId,now,day-89,guardValue),
@@ -71,7 +71,7 @@ export class PersonalOrganizationStore {
  }
  async ranking(viewerId) {
   identifier(viewerId);const today=Math.floor(this.#clock()/86400000);
-  const rows=await this.#db.prepare(`SELECT c.entry_id,c.day,c.copies FROM personal_copy_days c JOIN entries e ON e.entry_id=c.entry_id WHERE c.viewer_id=?1 AND c.day>=?2 AND c.day<=?3 AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_shares s WHERE s.entry_id=e.entry_id AND s.recipient_id=?1 AND s.revoked_at IS NULL)) ORDER BY c.entry_id,c.day LIMIT 90000`).bind(viewerId,today-89,today).all();
+  const rows=await this.#db.prepare(`SELECT c.entry_id,c.day,c.copies FROM personal_copy_days c JOIN entries e ON e.entry_id=c.entry_id WHERE c.viewer_id=?1 AND c.day>=?2 AND c.day<=?3 AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_readers s WHERE s.entry_id=e.entry_id AND s.recipient_id=?1 AND s.revoked_at IS NULL)) ORDER BY c.entry_id,c.day LIMIT 90000`).bind(viewerId,today-89,today).all();
   const scores=new Map();
   for(const row of rows.results)scores.set(row.entry_id,(scores.get(row.entry_id)??0)+row.copies*Math.pow(0.5,(today-row.day)/7));
   return [...scores].map(([entryId,score])=>({entryId,score}));

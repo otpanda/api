@@ -462,3 +462,34 @@ test('stale-generation open request is retired atomically and a new mailbox proo
  const prior=x.db.sqlite.prepare('SELECT canceled_at,canceled_by FROM email_recovery_requests WHERE request_id=?').get(old.requestId);assert.equal(prior.canceled_at,x.t.now);assert.equal(prior.canceled_by,'generation-changed');
  assert.equal(x.db.sqlite.prepare('SELECT generation FROM email_recovery_requests WHERE request_id=?').get(fresh.requestId).generation,1);assert.equal(x.db.sqlite.prepare('SELECT count(*) n FROM email_recovery_requests WHERE canceled_at IS NULL AND completed_at IS NULL').get().n,1);
 });
+// Seed-sync key links: a remote sign-out revokes the seed-sync key last used by exactly the revoked session(s), in the same batch.
+const addKey=(db,id,owner,dev,extra={})=>db.sqlite.prepare("INSERT INTO seed_sync_keys(key_id,owner_id,install_id,public_jwk,public_key_digest,generation,created_at,last_device_id,revoked_at,revoked_reason) VALUES(?,?,?,'{}',?,0,1,?,?,?)").run(id,owner,'inst-'+id,'dg-'+id,dev,extra.at??null,extra.reason??null);
+const keyRow=(db,id)=>({...db.sqlite.prepare('SELECT revoked_at,revoked_reason FROM seed_sync_keys WHERE key_id=?').get(id)});
+async function keyWorld(x){const other=await x.mk(),pk=await x.sessions.issue({proof:{ownerId:'owner',credentialId:x.a.credential.id,generation:0,purpose:'authenticate',verifiedAt:NOW},clientKind:'web'});
+ db2(x);addKey(x.db,'k-other','owner',other.deviceId);addKey(x.db,'k-self','owner',x.d.deviceId);addKey(x.db,'k-pk','owner',pk.deviceId);addKey(x.db,'k-old','owner',other.deviceId,{at:5,reason:'superseded'});addKey(x.db,'k-foreign','o2','foreign');
+ return{other,pk};}
+function db2(x){x.db.sqlite.prepare("INSERT OR IGNORE INTO accounts(owner_id,created_at) VALUES('o2',?)").run(NOW);x.db.sqlite.prepare("INSERT OR IGNORE INTO account_security(owner_id) VALUES('o2')").run();}
+test('seed-sync links: apply session-revoke revokes only the key last used by that session; others, foreign owners and earlier revocations are untouched; no replay effect',async()=>{const x=await setup(),{other}=await keyWorld(x);
+ assert.equal((await x.flow('session-revoke',{target:other.deviceId})).status,200);
+ const k=keyRow(x.db,'k-other');assert.equal(k.revoked_reason,'remote');assert.equal(k.revoked_at,NOW);
+ for(const id of ['k-self','k-pk','k-foreign'])assert.deepEqual(keyRow(x.db,id),{revoked_at:null,revoked_reason:null},id);
+ assert.deepEqual(keyRow(x.db,'k-old'),{revoked_at:5,revoked_reason:'superseded'});
+ x.t.now+=1000;assert.equal((await x.flow('session-revoke',{target:other.deviceId})).status,403);assert.equal(keyRow(x.db,'k-other').revoked_at,NOW,'a refused replay changes nothing');});
+test('seed-sync links: a session already revoked elsewhere is refused and its key is not revoked by this path',async()=>{const x=await setup(),{other}=await keyWorld(x);
+ x.db.sqlite.prepare('UPDATE device_sessions SET revoked_at=? WHERE device_id=?').run(NOW-10,other.deviceId);
+ assert.equal((await x.flow('session-revoke',{target:other.deviceId})).status,403);assert.deepEqual(keyRow(x.db,'k-other'),{revoked_at:null,revoked_reason:null});});
+test('seed-sync links: consume-change session-revoke revokes the same key under the same guard; passkey-revoke touches no key',async()=>{const x=await setup({lv:V}),{other}=await keyWorld(x),{gg,call}=await clients(x),dk=await deviceKey(x);
+ const r=await call('request-change',{kind:'session-revoke',target:other.deviceId},x.d.access);const {changeId}=await r.json();
+ assert.equal((await call('consume-change',{changeId},x.d.access)).status,409);assert.equal(keyRow(x.db,'k-other').revoked_at,null,'unapproved consume revokes nothing');
+ assert.equal((await approve(x,dk,call,gg.access,changeId)).status,200);
+ assert.equal((await call('consume-change',{changeId},x.d.access)).status,200);
+ assert.equal(keyRow(x.db,'k-other').revoked_reason,'remote');for(const id of ['k-self','k-pk','k-foreign'])assert.equal(keyRow(x.db,id).revoked_at,null,id);
+ assert.equal((await call('consume-change',{changeId},x.d.access)).status,409);
+ const r2=await call('request-change',{kind:'passkey-revoke',target:x.b.credential.id},x.d.access),c2=(await r2.json()).changeId;
+ assert.equal((await approve(x,dk,call,gg.access,c2)).status,200);assert.equal((await call('consume-change',{changeId:c2},x.d.access)).status,200);
+ for(const id of ['k-self','k-pk','k-foreign'])assert.equal(keyRow(x.db,id).revoked_at,null,id);});
+test('seed-sync links: google-unlink revokes keys of the Google-linked sessions only, not a passkey session or another owner',async()=>{const x=await setup(),{other,pk}=await keyWorld(x);
+ assert.equal((await x.flow('google-unlink')).status,200);
+ assert.equal(keyRow(x.db,'k-other').revoked_reason,'remote');assert.equal(keyRow(x.db,'k-self').revoked_reason,'remote');
+ assert.deepEqual(keyRow(x.db,'k-pk'),{revoked_at:null,revoked_reason:null});assert.deepEqual(keyRow(x.db,'k-foreign'),{revoked_at:null,revoked_reason:null});
+ assert.deepEqual(keyRow(x.db,'k-old'),{revoked_at:5,revoked_reason:'superseded'});});

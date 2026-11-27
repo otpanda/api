@@ -4,7 +4,7 @@ import {SESSION_METHOD_JOIN as MJ,SESSION_METHOD_ACTIVE as MA} from './session-m
 import {normalizeWebsiteDomains} from './website-domains.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io',PATH='/v1/manage/entry/domains';
 // Associations belong to the viewer, not to the entry's owner or its recipients.
-const readable=`EXISTS(SELECT 1 FROM entries e WHERE e.entry_id=a.entry_id AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL)))`;
+const readable=`EXISTS(SELECT 1 FROM entries e WHERE e.entry_id=a.entry_id AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_readers m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL)))`;
 // extensionOrigins (array, default null = disabled): an EXTENSION-kind session may only GET the viewer's own associations. POST stays web/android only.
 export function createEntryDomainsHttp({db,sessions,clock=Date.now,native=false,extensionOrigins=null}={}){
  const auth=createDeviceSessionAuth({sessions,native}),extAuth=extensionOrigins?createDeviceSessionAuth({sessions,extension:true,extensionOrigins}):undefined;
@@ -42,7 +42,7 @@ export function createEntryDomainsHttp({db,sessions,clock=Date.now,native=false,
   }catch{return reply({error:'invalid_request'},400);}
   const kind=android?'android':'web',now=clock();
   const active=`EXISTS(SELECT 1 FROM device_sessions d ${MJ} JOIN account_security s ON s.owner_id=d.owner_id WHERE d.device_id=?4 AND d.owner_id=?1 AND d.generation=?5 AND s.generation=?5 AND d.client_kind='${kind}' AND d.revoked_at IS NULL AND ${MA} AND d.created_at<=?6 AND d.expires_at>?6)`;
-  const r=await db.prepare(`INSERT INTO entry_domain_associations(viewer_id,entry_id,domains_json) SELECT ?1,e.entry_id,?3 FROM entries e WHERE e.entry_id=?2 AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_shares m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL)) AND ${active} ON CONFLICT(viewer_id,entry_id) DO UPDATE SET domains_json=excluded.domains_json`).bind(viewer.ownerId,b.entryId,JSON.stringify(domains),viewer.deviceId,viewer.generation,now).run();
+  const r=await db.prepare(`INSERT INTO entry_domain_associations(viewer_id,entry_id,domains_json) SELECT ?1,e.entry_id,?3 FROM entries e WHERE e.entry_id=?2 AND (e.owner_id=?1 OR EXISTS(SELECT 1 FROM entry_readers m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL)) AND ${active} ON CONFLICT(viewer_id,entry_id) DO UPDATE SET domains_json=excluded.domains_json`).bind(viewer.ownerId,b.entryId,JSON.stringify(domains),viewer.deviceId,viewer.generation,now).run();
   return r.meta.changes>=1?reply({ok:true}):reply({error:'not_found'},404);
  }};
 }

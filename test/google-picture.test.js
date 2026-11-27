@@ -38,3 +38,11 @@ test('a new Google signup stores the picture on the created identity',async()=>{
  const r=await g.resolve({issuer:ISS,subject:'new-sub',email:'n@gmail.com',authoritative:true,picture:OK});assert.equal(r.status,'created');assert.equal(db.sqlite.prepare("SELECT picture FROM provider_identities WHERE subject='new-sub'").get().picture,OK);
  const r2=await g.resolve({issuer:ISS,subject:'new-2',email:'m@gmail.com',authoritative:true,picture:'http://lh3.googleusercontent.com/x'});assert.equal(r2.status,'created');assert.equal(db.sqlite.prepare("SELECT picture FROM provider_identities WHERE subject='new-2'").get().picture,null);
 });
+test('a Google sign-in stores, refreshes and clears the display name; invalid names never store',async()=>{
+ const x=await setup();link(x,null);const id={issuer:ISS,subject:'sub-1',email:'a@gmail.com',authoritative:true};
+ const name=()=>x.db.sqlite.prepare('SELECT display_name n FROM provider_identities').get().n;
+ await x.google.resolve({...id,name:'Abe M'});assert.equal(name(),'Abe M');
+ await x.google.resolve({...id,name:'Abe Murciano'});assert.equal(name(),'Abe Murciano');
+ await x.google.resolve({...id,name:'bad\u202ename'});assert.equal(name(),null,'an invalid claim clears it');
+ await x.google.resolve({...id,name:'Abe M'});await x.google.resolve(id);assert.equal(name(),null,'a missing claim clears it');
+});
