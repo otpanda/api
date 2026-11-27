@@ -24,6 +24,8 @@ jobs:
       - run: npm test
       - name: Fresh outbox guards
         run: FRESH_OUTBOX=1 node --test test/entry-rules.test.js test/gmail-guarded-disconnect.test.js
+      - name: Actual local workerd D1 runtime
+        run: node tool/signed-rules-runtime-d1-check.mjs
       - name: Worker dry run
         run: npx wrangler deploy --dry-run --outdir dist
   remote-d1:
