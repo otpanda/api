@@ -1,6 +1,7 @@
 // Synthetic-only seed-sync qualification against the supplied D1 binding (remote scratch D1 in the workflow, local workerd in tool/d1-qualify-seed-sync.mjs).
 // Never mounted by production. Needs migrations 0052 and 0053 applied. Groups: fence scenarios (ported from tool/seed-sync-d1-fence-check.mjs),
 // trigger-row meta.changes, and metadata writers.
+import {PER_REQUEST_CAP} from './budget.mjs';
 import {SeedCipher} from '../../src/seed-cipher.js';import {TotpSeedStore} from '../../src/totp-seeds.js';
 import {SeedSync,seedSyncEnrollAction} from '../../src/seed-sync.js';import {seedSyncProofMessage} from '../../src/seed-sync-proof.js';import {base64urlEncode} from '../../src/tokens.js';
 import {createTotpBatchImportHttp} from '../../src/totp-batch-import-http.js';
@@ -11,15 +12,17 @@ const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
 const assert={ok:(v,m)=>{if(!v)throw Error(m||'assertion failed');},equal:(a,b,m)=>{if(a!==b)throw Error((m||'not equal')+': '+String(a)+' vs '+String(b));},deepEqual:(a,b,m)=>{if(!same(a,b))throw Error((m||'not deep equal')+': '+JSON.stringify(a)+' vs '+JSON.stringify(b));}};
 export const GROUPS=Array.from({length:14},(_,i)=>'c'+String(i+1).padStart(2,'0'));
 // Counts D1 round trips (each run/first/all/raw call and each batch call is one query against the per-invocation limit).
-function counted(raw){const real=new WeakMap(),c={n:0};
- const wrap=st=>{const p=new Proxy(st,{get(t,k){if(k==='bind')return(...a)=>wrap(t.bind(...a));if(['run','first','all','raw'].includes(k))return(...a)=>{c.n++;return t[k](...a);};const v=t[k];return typeof v==='function'?v.bind(t):v;}});real.set(p,st);return p;};
- return{c,db:{prepare:sql=>wrap(raw.prepare(sql)),batch:s=>{c.n++;return raw.batch(s.map(x=>real.get(x)??x));}}};}
+function counted(raw){const real=new WeakMap(),c={n:0,rw:0,rr:0};
+ const guard=()=>{if(c.rw>PER_REQUEST_CAP.writes||c.rr>PER_REQUEST_CAP.reads)throw Error('per-request row cap reached');};
+ const add=r=>{const m=r?.meta;if(m){c.rw+=m.rows_written??0;c.rr+=m.rows_read??0;}return r;};
+ const wrap=st=>{const p=new Proxy(st,{get(t,k){if(k==='bind')return(...a)=>wrap(t.bind(...a));if(['run','all','raw'].includes(k))return async(...a)=>{guard();c.n++;return add(await t[k](...a));};if(k==='first')return(...a)=>{guard();c.n++;return t.first(...a);};const v=t[k];return typeof v==='function'?v.bind(t):v;}});real.set(p,st);return p;};
+ return{c,db:{prepare:sql=>wrap(raw.prepare(sql)),batch:async s=>{guard();c.n++;const r=await raw.batch(s.map(x=>real.get(x)??x));r.forEach(add);return r;}}};}
 // group: one check id from GROUPS, c01..c14 in source order (each runs in its own Worker request so it gets its own CPU and D1 query budget; the busiest check used 23 queries locally), or undefined for all.
 export async function runChecks(rawDb,group){
  const {c,db}=counted(rawDb);
  if(group!==undefined&&!GROUPS.includes(group))throw Error('unknown group');
  const checks=[],info={};let seq=0;
- async function check(name,fn){const g='c'+String(++seq).padStart(2,'0');if(group!==undefined&&g!==group)return;const q0=c.n;try{await fn();checks.push({name,group:g,pass:true,queries:c.n-q0});}catch(e){checks.push({name,group:g,pass:false,queries:c.n-q0,error:String(e?.message??e).slice(0,300)});}}
+ async function check(name,fn){const g='c'+String(++seq).padStart(2,'0');if(group!==undefined&&g!==group)return;const q0=c.n,w0=c.rw,r0=c.rr;try{await fn();checks.push({name,group:g,pass:true,queries:c.n-q0,rowsWritten:c.rw-w0,rowsRead:c.rr-r0});}catch(e){checks.push({name,group:g,pass:false,queries:c.n-q0,rowsWritten:c.rw-w0,rowsRead:c.rr-r0,error:String(e?.message??e).slice(0,300)});}}
  const note=()=>{};
  await db.batch([db.prepare('INSERT OR IGNORE INTO accounts(owner_id,created_at) VALUES(?,?)').bind('owner',NOW),db.prepare('INSERT OR IGNORE INTO account_security(owner_id) VALUES(?)').bind('owner'),
   db.prepare('INSERT OR IGNORE INTO passkey_credentials(credential_id,owner_id,public_key,counter,transports,device_type,backed_up,created_at) VALUES(?,?,?,?,?,?,?,?)').bind('cred','owner',new Uint8Array([1]),0,'[]','singleDevice',0,NOW),
@@ -132,5 +135,5 @@ export async function runChecks(rawDb,group){
   const n=(await db.prepare("SELECT count(*) n FROM totp_seeds WHERE entry_id IN (?1,?2,?3)").bind(...r.body.entryIds).first()).n;assert.equal(n,3,'replay wrote nothing new');
  });
  info.note='Counts reflect the D1 build that ran this check; local workerd and remote D1 may differ.';
- return{synthetic:true,group:group??'all',pass:checks.length>0&&checks.every(x=>x.pass),checks,info,totalQueries:c.n};
+ return{synthetic:true,group:group??'all',pass:checks.length>0&&checks.every(x=>x.pass),checks,info,totalQueries:c.n,totalRowsWritten:c.rw,totalRowsRead:c.rr};
 }
