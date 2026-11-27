@@ -28,7 +28,7 @@ export async function startLoopback({port=0,host='127.0.0.1',fingerprint=DEFAULT
  for(const e of entries){sq.prepare('INSERT INTO entries(entry_id,owner_id,service_id,label,created_at) VALUES(?,?,?,?,?)').run(e.id,OWNER,'custom-totp','Synthetic offline service',t0);
   if(!await store.putSeed(OWNER,e.id,{secret:e.seed,algorithm:e.algorithm,digits:e.digits,period:e.period},t0))throw Error('seed not stored');}
  const sessions=new DeviceSessionService(db,{clock});
- const rt=createIdentityRuntime({db,loadCodeKeys:async()=>config,trustedRequestKey:()=>'127.0.0.1',clock,native:{enabled:true,assetFingerprints:[fingerprint]},seedSync:{enabled:true}});
+ const rt=createIdentityRuntime({db,loadCodeKeys:async()=>config,trustedRequestKey:()=>'127.0.0.1',clock,native:{enabled:true,assetFingerprints:[fingerprint]},seedSync:{enabled:true},batch:{horizonPolicy:{entryCap:3,budget:100,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:60},ratePerMinute:24,minRemainingMs:1000}});
  let counter=0,n=0,sessionReads=0,outage=false;const sent=new Set();
  const log=(req,status)=>{if(process.env.LOOPBACK_LOG==='1')console.log('REQ '+req.method+' '+new URL(req.url,'http://l').pathname+' '+status);};
  const json=(res,s,b)=>{res.writeHead(s,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify(b));};

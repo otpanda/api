@@ -101,3 +101,10 @@ test('TCP loopback gate controls: session reads are counted, outage drops forwar
   assert.equal((await fetch(lb.url+'/v1/manage/session',{headers:{Authorization:'Bearer '+sess.access}})).status,200);assert.equal(await c(),2);
  }finally{await lb.close();}
 });
+
+test('TCP loopback: configured batch route serves real runtime native codes for synthetic root',async()=>{
+ const w=await world();try{
+  const r=await fetch(w.lb.url+'/v1/manage/totp-codes?entry=sealed-entry&window=60',{headers:{Authorization:'Bearer '+w.sess.access}});
+  assert.equal(r.status,200);const j=await r.json();assert.ok(j);
+ }finally{await w.lb.close();}
+});
