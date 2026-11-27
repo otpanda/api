@@ -587,3 +587,17 @@ test('enrollment cap counts only current-generation keys, without deleting or re
   assert.equal(f.sq.prepare('SELECT count(*) n FROM seed_sync_keys WHERE generation=1 AND revoked_at IS NULL').get().n,1);
  }finally{f.close();}
 });
+
+test('same-install new-generation enrollment supersedes stale active key without breaking unique-install fence',async()=>{
+ const f=await fixture();try{
+  const old=await f.enroll();assert.ok(old);
+  f.sq.exec("UPDATE account_security SET generation=1; UPDATE device_sessions SET generation=1");f.user.generation=1;
+  const kp=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),j=await pubJwk(kp.publicKey),keyId=kid();
+  const action=await seedSyncEnrollAction({ownerId:'owner',installId:INSTALL,keyId,publicJwk:j,generation:1});
+  const c=await f.svc.enrollBegin({user:f.user,installId:INSTALL,keyId,publicJwk:j,strongProof:{purpose:'step-up',ownerId:'owner',generation:1,credentialId:'cred',actionDigest:action,verifiedAt:NOW}});assert.ok(c);
+  const signature=base64urlEncode(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},kp.privateKey,seedSyncProofMessage('seed-sync-enroll',c.challenge))));
+  assert.deepEqual(await f.svc.enrollFinish({user:f.user,token:c.token,signature}),{keyId});
+  assert.deepEqual({...f.sq.prepare('SELECT generation,revoked_reason FROM seed_sync_keys WHERE key_id=?').get(old.keyId)},{generation:0,revoked_reason:'superseded'});
+  assert.deepEqual(f.sq.prepare('SELECT key_id,generation FROM seed_sync_keys WHERE install_id=? AND revoked_at IS NULL').all(INSTALL).map(r=>({...r})),[{key_id:keyId,generation:1}]);
+ }finally{f.close();}
+});
