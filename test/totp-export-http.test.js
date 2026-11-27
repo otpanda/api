@@ -27,6 +27,7 @@ async function begin(f,c,extra={}){const r=await f.call('export-begin',{ephemera
 test('begin freezes the owned exportable set with versions; shared-in, other owners and seedless entries are excluded',async()=>{
  const f=await fixture(),c=await clientKey();try{
   const {r,b}=await begin(f,c);assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');
+  assert.equal(b.ownerId,'owner');assert.equal(b.deviceId,'device');assert.equal(b.generation,0);
   assert.deepEqual(b.entries.map(e=>e.entryId),['e1','e2','e3']);assert.deepEqual(b.unavailable,['noseed']);
   for(const e of b.entries)assert.match(e.version,/^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(b).includes(base64urlEncode(secretOf(0))),false);

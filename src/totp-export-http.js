@@ -73,7 +73,7 @@ export function createTotpExportHttp({db,sessions,getSeedCipher,clock=Date.now,n
     const entries=[];for(const r of usable)entries.push({entryId:r.entry_id,version:await hashText(r.envelope),label:r.label,account:r.account_name,issuer:r.issuer,catalogId:r.catalog_id});
     const digest=await digestOf(user,entries,ephemeralDigest);
     const challenge=await passkeys.begin({purpose:'step-up',ownerId:user.ownerId,binding:JSON.stringify(['totp-export',user.ownerId,user.deviceId,user.generation,digest]),action:'totp-export:'+digest});
-    return challenge?reply({...challenge,entries,unavailable}):reply({error:'reauthenticate'},403);
+    return challenge?reply({...challenge,ownerId:user.ownerId,deviceId:user.deviceId,generation:user.generation,entries,unavailable}):reply({error:'reauthenticate'},403);
    }
    // finish: the set is exactly what the client echoes; it is re-resolved after the proof and must match to the version.
    const digest=await digestOf(user,pairs,ephemeralDigest);
