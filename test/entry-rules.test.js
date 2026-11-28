@@ -604,3 +604,26 @@ for(const change of ['entry-token','machine-token','grant-delete'])test('shared 
  const ri=f.mkRi(hooked),b=await ri.begin(f.auth,{operation:'edit',entryId:f.entry,ruleId:f.rows()[0].route_id,phrase:'race'});const response=f.a.assertion({expected:b.options.challenge});await ri.finish(f.auth,{intentId:b.intentId,token:b.token,action:b.action,response});assert.equal(f.rows()[0].phrase,null);assert.notEqual((await ri.status(f.auth,b.intentId))?.status,'applied');
  }finally{f.db.sqlite.close();}
 });
+
+for(const operation of ['review','edit','resume'])test('shared Android '+operation+' verifies real device signature over exact 19-field action',async()=>{
+ const f=await rfx();try{
+  const {DurableDeviceKeys,deviceEnrollmentAction}=await import('../src/durable-device-keys.js'),{deviceProofMessage}=await import('../src/device-key-proof.js'),{base64urlEncode}=await import('../src/tokens.js'),{hashText}=await import('../src/sessions.js');
+  const clock=()=>NOW,keys=new DurableDeviceKeys(f.db,{clock}),pair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},true,['sign','verify']),raw=await crypto.subtle.exportKey('jwk',pair.publicKey),jwk={kty:raw.kty,crv:raw.crv,x:raw.x,y:raw.y};
+  const sign=async c=>base64urlEncode(new Uint8Array(await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},pair.privateKey,deviceProofMessage(c))));
+  const credentialId=f.db.sqlite.prepare('SELECT credential_id FROM passkey_credentials WHERE owner_id=?').get(f.o).credential_id;
+  const enroll=await keys.beginEnrollment({jwk,strongProof:{ownerId:f.o,credentialId,generation:0,purpose:'step-up',actionDigest:await deviceEnrollmentAction(jwk),verifiedAt:NOW},browserBinding:'z'.repeat(43)});
+  const enrolled=await keys.finish({token:enroll.token,signature:await sign(enroll.challenge),browserBinding:'z'.repeat(43)});assert.ok(enrolled);
+  let args={operation,entryId:f.entry};
+  if(operation==='review'){const ctx=await f.review();args.contextId=ctx.context_id;}
+  else{await f.assign(f.mail('android-rule'),f.entry);args.ruleId=f.rows()[0].route_id;if(operation==='edit')args.phrase='changed phrase';else f.db.sqlite.prepare('UPDATE service_routes SET paused_at=?').run(NOW);}
+  f.db.sqlite.prepare('INSERT INTO entry_shares(entry_id,recipient_id,created_at)VALUES(?,?,?)').run(f.entry,f.other.ownerId,NOW);
+  const auth=await f.ownerAuth(f.android.access,'android');args.keyId=enrolled.keyId;
+  // Malformed arrays carry matching server digest, so refusal exercises shape,
+  // not merely the earlier byte-digest mismatch guard.
+  for(const n of [18,20]){const b=await f.ri.begin(auth,args),a=JSON.parse(b.action);assert.equal(a.length,19);n===18?a.pop():a.push('extra');const action=JSON.stringify(a);f.db.sqlite.prepare('UPDATE rule_intents SET action_digest=? WHERE intent_id=?').run(await hashText(action),b.intentId);assert.equal(await f.ri.finish(auth,{intentId:b.intentId,action,token:b.token,signature:await sign(b.challenge)}),undefined);}
+  const bad=await f.ri.begin(auth,args),wrong={...bad.challenge,actionDigest:'0'.repeat(64)};assert.equal(await f.ri.finish(auth,{intentId:bad.intentId,action:bad.action,token:bad.token,signature:await sign(wrong)}),undefined,'signature for another action cannot apply');
+  const b=await f.ri.begin(auth,args);assert.equal(JSON.parse(b.action).length,19);const signature=await sign(b.challenge);
+  assert.deepEqual(await f.ri.finish(auth,{intentId:b.intentId,action:b.action,token:b.token,signature}),{status:'applied',rule:{status:operation==='review'?'saved':operation==='edit'?'updated':'resumed'}});
+  assert.deepEqual(await f.ri.status(auth,b.intentId),{status:'applied',rule:{status:operation==='review'?'saved':operation==='edit'?'updated':'resumed'}});
+ }finally{f.db.sqlite.close();}
+});

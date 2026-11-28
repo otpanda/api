@@ -107,7 +107,7 @@ export class RuleIntents {
   let parsed;try{parsed=JSON.parse(action);}catch{return;}
   if(!Array.isArray(parsed)||parsed[0]!=='otpanda-rule'||parsed[2]!==intentId||parsed[3]!==auth.ownerId||parsed[4]!==auth.deviceId||parsed[5]!==auth.generation||parsed[6]!==row.operation)return;
   const priv=parsed[1]===VERSION&&parsed[12]===0&&parsed[13]===0&&parsed[14]===true,deviceShared=android&&!priv;
-  if(priv?(token!==undefined||response!==undefined||signature!==undefined):deviceShared?(parsed.length!==18||parsed[1]!==VERSION+1||typeof signature!=='string'||response!==undefined||!parseAccessToken(token)):(parsed.length!==16||parsed[1]!==VERSION||signature!==undefined))return;
+  if(priv?(token!==undefined||response!==undefined||signature!==undefined):deviceShared?(parsed.length!==19||parsed[1]!==VERSION+1||typeof signature!=='string'||response!==undefined||!parseAccessToken(token)):(parsed.length!==16||parsed[1]!==VERSION||signature!==undefined))return;
   let claimed=false,committed=false;
   try{
    let proof;
