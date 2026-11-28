@@ -6,6 +6,7 @@
   "workers_dev": true,
   "preview_urls": false,
   "vars": {
+    "CONTEXT_RETENTION_DAYS": "30",
     "DEPLOYMENT_STAGE": "auth-only",
     "AUTH_ONLY_SIGNUP_MODE": "public",
     "EXTENSION_AUTH_ENABLED": "1",
