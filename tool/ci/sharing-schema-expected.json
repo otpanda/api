@@ -124,55 +124,55 @@
       "type": "trigger",
       "name": "audience_machine_profile_entries_delete",
       "tbl_name": "machine_profile_entries",
-      "sql": "CREATE TRIGGER audience_machine_profile_entries_delete AFTER DELETE ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_profile_entries_delete AFTER DELETE ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entries.entry_id=OLD.entry_id; END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_profile_entries_insert",
       "tbl_name": "machine_profile_entries",
-      "sql": "CREATE TRIGGER audience_machine_profile_entries_insert AFTER INSERT ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_profile_entries_insert AFTER INSERT ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entries.entry_id=NEW.entry_id; END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_profile_entries_update",
       "tbl_name": "machine_profile_entries",
-      "sql": "CREATE TRIGGER audience_machine_profile_entries_update AFTER UPDATE ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_profile_entries_update AFTER UPDATE ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entries.entry_id=OLD.entry_id OR entries.entry_id=NEW.entry_id; END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_profiles_delete",
       "tbl_name": "machine_profiles",
-      "sql": "CREATE TRIGGER audience_machine_profiles_delete AFTER DELETE ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=OLD.creator_id UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=OLD.creator_id AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_profiles_delete AFTER DELETE ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE ((entries.owner_id=OLD.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=OLD.creator_id AND r.allow_automation=1)) AND (OLD.mode='all' OR (OLD.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=OLD.profile_id AND n.entry_id=entries.entry_id)) OR (OLD.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=OLD.profile_id AND n.entry_id=entries.entry_id)))); END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_profiles_insert",
       "tbl_name": "machine_profiles",
-      "sql": "CREATE TRIGGER audience_machine_profiles_insert AFTER INSERT ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=NEW.creator_id UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=NEW.creator_id AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_profiles_insert AFTER INSERT ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE ((entries.owner_id=NEW.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=NEW.creator_id AND r.allow_automation=1)) AND (NEW.mode='all' OR (NEW.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=NEW.profile_id AND n.entry_id=entries.entry_id)) OR (NEW.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=NEW.profile_id AND n.entry_id=entries.entry_id)))); END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_profiles_update",
       "tbl_name": "machine_profiles",
-      "sql": "CREATE TRIGGER audience_machine_profiles_update AFTER UPDATE ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=NEW.creator_id UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=NEW.creator_id AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_profiles_update AFTER UPDATE ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE ((entries.owner_id=OLD.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=OLD.creator_id AND r.allow_automation=1)) AND (OLD.mode='all' OR (OLD.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=OLD.profile_id AND n.entry_id=entries.entry_id)) OR (OLD.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=OLD.profile_id AND n.entry_id=entries.entry_id)))) OR ((entries.owner_id=NEW.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=NEW.creator_id AND r.allow_automation=1)) AND (NEW.mode='all' OR (NEW.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=NEW.profile_id AND n.entry_id=entries.entry_id)) OR (NEW.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=NEW.profile_id AND n.entry_id=entries.entry_id)))); END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_tokens_delete",
       "tbl_name": "machine_tokens",
-      "sql": "CREATE TRIGGER audience_machine_tokens_delete AFTER DELETE ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_tokens_delete AFTER DELETE ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE (EXISTS (SELECT 1 FROM machine_profiles p WHERE p.profile_id=OLD.profile_id AND (entries.owner_id=p.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=p.creator_id AND r.allow_automation=1)) AND (p.mode='all' OR (p.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id)) OR (p.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id))))); END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_tokens_insert",
       "tbl_name": "machine_tokens",
-      "sql": "CREATE TRIGGER audience_machine_tokens_insert AFTER INSERT ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_tokens_insert AFTER INSERT ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE (EXISTS (SELECT 1 FROM machine_profiles p WHERE p.profile_id=NEW.profile_id AND (entries.owner_id=p.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=p.creator_id AND r.allow_automation=1)) AND (p.mode='all' OR (p.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id)) OR (p.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id))))); END"
     },
     {
       "type": "trigger",
       "name": "audience_machine_tokens_update",
       "tbl_name": "machine_tokens",
-      "sql": "CREATE TRIGGER audience_machine_tokens_update AFTER UPDATE ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+      "sql": "CREATE TRIGGER audience_machine_tokens_update AFTER UPDATE ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE (EXISTS (SELECT 1 FROM machine_profiles p WHERE p.profile_id=OLD.profile_id AND (entries.owner_id=p.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=p.creator_id AND r.allow_automation=1)) AND (p.mode='all' OR (p.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id)) OR (p.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id))))) OR (EXISTS (SELECT 1 FROM machine_profiles p WHERE p.profile_id=NEW.profile_id AND (entries.owner_id=p.creator_id OR EXISTS (SELECT 1 FROM entry_readers r WHERE r.entry_id=entries.entry_id AND r.recipient_id=p.creator_id AND r.allow_automation=1)) AND (p.mode='all' OR (p.mode='allow' AND EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id)) OR (p.mode='deny' AND NOT EXISTS (SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=entries.entry_id))))); END"
     },
     {
       "type": "trigger",
