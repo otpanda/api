@@ -113,3 +113,20 @@ test('NATIVE_AUTH_ENABLED is part of the latched configuration: flipping it on a
  const flipped=await worker.fetch(request('/v1/manage/session',{headers:{Origin:'https://otpanda.github.io',Authorization:'Bearer '+'a'.repeat(43)}}),{...env,NATIVE_AUTH_ENABLED:'1'},ctx1);assert.equal(flipped.status,503);
  db.sqlite?.close?.();
 });
+
+test('actual auth-only ready reports cached read-only context health for off, valid, overdue and failed probes',async()=>{
+ const secret=Array.from({length:32},(_,i)=>(i*7+13).toString(16).padStart(2,'0')).join(''),now=1800000000000;
+ for(const c of [{name:'off empty',on:false,row:null,want:'ok'},{name:'off residual',on:false,row:{x:1},want:'attention'},{name:'valid empty',on:true,row:null,want:'ok'},{name:'valid overdue',on:true,row:{x:1},want:'attention'},{name:'probe failure',on:true,fail:true,want:'attention'}]){
+  const raw=database();let probes=0,writes=0;const queries=[];
+  const db={prepare(sql){queries.push(sql);if(sql.includes('unassigned_context')&&!/^\s*SELECT\b/i.test(sql))writes++;if(sql.includes('FROM unassigned_context')){probes++;assert.match(sql,/LIMIT 1/);assert.doesNotMatch(sql,/count\s*\(/i);const q={bind(){return q;},async first(){if(c.fail)throw Error('private-owner-source-secret');return c.row;}};return q;}return raw.prepare(sql);}};
+  const worker=createAuthOnlyWorker({clock:()=>now}),env={...config(db),BREVO_SENDER_EMAIL:'otpanda.app@gmail.com',BREVO_REPLY_TO_EMAIL:'otpanda.app@gmail.com',...(c.on?{CONTEXT_DIGEST_SECRET:secret,CONTEXT_RETENTION_DAYS:'30'}:{})};
+  try{
+   const before=raw.sqlite.prepare('SELECT total_changes() n').get().n;
+   const responses=await Promise.all(Array.from({length:4},()=>worker.fetch(request('/ready'),env)));
+   for(const r of responses){assert.equal(r.status,200,c.name);const j=await r.json();assert.equal(j.context,c.want,c.name);assert.deepEqual(Object.keys(j).sort(),['application','context','database','edgeBindings','mail','recoveryDelivery','service','stage'].sort());assert.doesNotMatch(JSON.stringify(j),/private-owner|retain_until|context_id|fingerprint|sender|count/i);}
+   assert.equal(probes,1,c.name+': concurrent cache');assert.equal(writes,0,queries.filter(q=>!/^\s*SELECT\b/i.test(q)).join(";"));assert.equal(raw.sqlite.prepare('SELECT total_changes() n').get().n,before);
+   const cached=await worker.fetch(request('/ready'),env);assert.equal((await cached.json()).context,c.want);assert.equal(probes,1,c.name+': repeated cache');
+   assert.ok(queries.filter(q=>q.includes('FROM unassigned_context')).every(q=>/^SELECT /i.test(q)));
+  }finally{raw.sqlite.close();}
+ }
+});
