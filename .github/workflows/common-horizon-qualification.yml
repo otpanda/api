@@ -1,7 +1,8 @@
 name: Common-horizon actual Worker CPU qualification
+# Reusable only, called by release.yml before the production deploy. No push or dispatch trigger.
+# Deploys a throwaway Worker and scratch D1, never production.
 on:
-  push:
-    branches: [feat/batch-future-offset]
+  workflow_call:
 permissions:
   contents: read
 concurrency:
