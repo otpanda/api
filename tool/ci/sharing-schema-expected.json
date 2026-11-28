@@ -38,6 +38,24 @@
     },
     {
       "type": "index",
+      "name": "rule_intents_cleanup",
+      "tbl_name": "rule_intents",
+      "sql": "CREATE INDEX rule_intents_cleanup ON rule_intents(result_expires_at)"
+    },
+    {
+      "type": "index",
+      "name": "rule_intents_owner",
+      "tbl_name": "rule_intents",
+      "sql": "CREATE INDEX rule_intents_owner ON rule_intents(owner_id,expires_at)"
+    },
+    {
+      "type": "index",
+      "name": "service_routes_unique",
+      "tbl_name": "service_routes",
+      "sql": "CREATE UNIQUE INDEX service_routes_unique ON service_routes(owner_id,service_id,source_id,origin_kind,origin_value,COALESCE(entry_id,''),COALESCE(account_hint,''),COALESCE(phrase,''),COALESCE(template_fp,''))"
+    },
+    {
+      "type": "index",
       "name": "totp_import_admissions_expiry",
       "tbl_name": "totp_import_admissions",
       "sql": "CREATE INDEX totp_import_admissions_expiry ON totp_import_admissions(expires_at)"
@@ -47,6 +65,30 @@
       "name": "totp_import_admissions_owner",
       "tbl_name": "totp_import_admissions",
       "sql": "CREATE INDEX totp_import_admissions_owner ON totp_import_admissions(owner_id)"
+    },
+    {
+      "type": "index",
+      "name": "unassigned_context_expiry",
+      "tbl_name": "unassigned_context",
+      "sql": "CREATE INDEX unassigned_context_expiry ON unassigned_context(retain_until)"
+    },
+    {
+      "type": "index",
+      "name": "unassigned_context_fingerprint",
+      "tbl_name": "unassigned_context",
+      "sql": "CREATE INDEX unassigned_context_fingerprint ON unassigned_context(key_fingerprint, retain_until)"
+    },
+    {
+      "type": "index",
+      "name": "unassigned_context_id",
+      "tbl_name": "unassigned_context",
+      "sql": "CREATE UNIQUE INDEX unassigned_context_id ON unassigned_context(context_id)"
+    },
+    {
+      "type": "index",
+      "name": "unassigned_context_owner_recent",
+      "tbl_name": "unassigned_context",
+      "sql": "CREATE INDEX unassigned_context_owner_recent ON unassigned_context(owner_id, arrived_at DESC)"
     },
     {
       "type": "table",
@@ -74,9 +116,27 @@
     },
     {
       "type": "table",
+      "name": "assignment_intents",
+      "tbl_name": "assignment_intents",
+      "sql": "CREATE TABLE assignment_intents (\n intent_id TEXT PRIMARY KEY,\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n device_id TEXT NOT NULL REFERENCES device_sessions(device_id) ON DELETE CASCADE,\n generation INTEGER NOT NULL,\n source_id TEXT NOT NULL,\n event_id TEXT NOT NULL,\n entry_id TEXT NOT NULL,\n entry_revision INTEGER NOT NULL,\n envelope TEXT NOT NULL CHECK(json_valid(envelope)),\n received_at INTEGER NOT NULL,\n code_expires_at INTEGER NOT NULL,\n action_digest TEXT NOT NULL,\n created_at INTEGER NOT NULL,\n expires_at INTEGER NOT NULL,\n consumed_at INTEGER,\n result_expires_at INTEGER NOT NULL,\n retired_at INTEGER\n, rule_json TEXT, rule_result TEXT CHECK (rule_result IS NULL OR rule_result IN ('saved','exists','paused','unavailable')))"
+    },
+    {
+      "type": "table",
       "name": "device_sessions",
       "tbl_name": "device_sessions",
       "sql": "CREATE TABLE device_sessions (\n  device_id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  credential_id TEXT REFERENCES passkey_credentials(credential_id) ON DELETE CASCADE,\n  provider_identity_id TEXT REFERENCES provider_identities(identity_id) ON DELETE CASCADE,\n  generation INTEGER NOT NULL,\n  client_kind TEXT NOT NULL CHECK (client_kind IN ('web', 'android', 'extension')),\n  created_at INTEGER NOT NULL,\n  last_used_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  revoked_at INTEGER,\n  browser_binding_digest TEXT,\n  CHECK ((credential_id IS NULL) <> (provider_identity_id IS NULL))\n)"
+    },
+    {
+      "type": "table",
+      "name": "entries",
+      "tbl_name": "entries",
+      "sql": "CREATE TABLE entries (\n  entry_id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  service_id TEXT NOT NULL,\n  label TEXT NOT NULL,\n  created_at INTEGER NOT NULL, account_name TEXT, mutation_revision INTEGER NOT NULL DEFAULT 0, catalog_id TEXT CHECK(catalog_id IS NULL OR (length(catalog_id) BETWEEN 1 AND 128 AND catalog_id GLOB '[a-z0-9]*' AND catalog_id NOT GLOB '*[^a-z0-9._-]*')), issuer TEXT CHECK(issuer IS NULL OR (length(issuer) BETWEEN 1 AND 254 AND issuer=trim(issuer))),\n  UNIQUE(owner_id, entry_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "incoming_codes",
+      "tbl_name": "incoming_codes",
+      "sql": "CREATE TABLE incoming_codes (\n  owner_id TEXT NOT NULL,\n  event_id TEXT NOT NULL,\n  source_id TEXT NOT NULL,\n  entry_id TEXT,\n  envelope TEXT NOT NULL CHECK (json_valid(envelope)),\n  received_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL CHECK (expires_at > received_at),\n  assignment TEXT NOT NULL CHECK (assignment IN ('unassigned', 'rule', 'confirmed')), sender_envelope TEXT CHECK (sender_envelope IS NULL OR json_valid(sender_envelope)), template_fp TEXT CHECK (template_fp IS NULL OR (length(template_fp)=67 AND template_fp LIKE 'v1:%')),\n  PRIMARY KEY(owner_id, source_id, event_id),\n  FOREIGN KEY(owner_id, source_id) REFERENCES sources(owner_id, source_id) ON DELETE CASCADE,\n  FOREIGN KEY(owner_id, entry_id) REFERENCES entries(owner_id, entry_id) ON DELETE CASCADE,\n  CHECK ((entry_id IS NULL AND assignment = 'unassigned') OR (entry_id IS NOT NULL AND assignment != 'unassigned'))\n)"
     },
     {
       "type": "table",
@@ -122,9 +182,27 @@
     },
     {
       "type": "table",
+      "name": "rule_intents",
+      "tbl_name": "rule_intents",
+      "sql": "CREATE TABLE rule_intents (\n intent_id TEXT PRIMARY KEY,\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n device_id TEXT NOT NULL REFERENCES device_sessions(device_id) ON DELETE CASCADE,\n generation INTEGER NOT NULL,\n operation TEXT NOT NULL CHECK(operation IN ('review','edit','resume')),\n subject_id TEXT NOT NULL,\n source_id TEXT,\n entry_id TEXT NOT NULL,\n entry_revision INTEGER NOT NULL,\n subject_json TEXT NOT NULL CHECK(json_valid(subject_json)),\n action_digest TEXT NOT NULL,\n created_at INTEGER NOT NULL,\n expires_at INTEGER NOT NULL,\n consumed_at INTEGER,\n retired_at INTEGER,\n result_expires_at INTEGER NOT NULL,\n rule_json TEXT,\n rule_result TEXT CHECK(rule_result IS NULL OR rule_result IN ('saved','exists','paused','updated','resumed','unavailable'))\n)"
+    },
+    {
+      "type": "table",
+      "name": "service_routes",
+      "tbl_name": "service_routes",
+      "sql": "CREATE TABLE service_routes (\n  route_id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL,\n  service_id TEXT NOT NULL REFERENCES services(service_id),\n  source_id TEXT NOT NULL,\n  origin_kind TEXT NOT NULL CHECK (origin_kind IN ('email_address','email_domain','sms_number')),\n  origin_value TEXT NOT NULL,\n  entry_id TEXT,\n  account_hint TEXT, phrase TEXT CHECK (phrase IS NULL OR length(phrase) BETWEEN 1 AND 120), created_at INTEGER, template_fp TEXT CHECK (template_fp IS NULL OR (length(template_fp)=67 AND template_fp LIKE 'v1:%')), saved_template_fp TEXT CHECK (saved_template_fp IS NULL OR (length(saved_template_fp)=67 AND saved_template_fp LIKE 'v1:%')), paused_at INTEGER,\n  FOREIGN KEY(owner_id,source_id) REFERENCES sources(owner_id,source_id) ON DELETE CASCADE,\n  FOREIGN KEY(owner_id,entry_id) REFERENCES entries(owner_id,entry_id) ON DELETE CASCADE\n)"
+    },
+    {
+      "type": "table",
       "name": "sharing_contacts",
       "tbl_name": "sharing_contacts",
       "sql": "CREATE TABLE sharing_contacts (\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  contact_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  -- Opaque handle the owner's clients use. The recipient's internal account id is never sent to the owner.\n  contact_ref TEXT NOT NULL UNIQUE,\n  created_at INTEGER NOT NULL CHECK (created_at >= 0),\n  -- Hidden from suggestions and from new shares. The row stays while a grant is live so it can still be revoked.\n  removed_at INTEGER,\n  PRIMARY KEY (owner_id, contact_id),\n  CHECK (owner_id <> contact_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "sources",
+      "tbl_name": "sources",
+      "sql": "CREATE TABLE sources (\n  source_id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  kind TEXT NOT NULL CHECK (kind IN ('gmail', 'outlook', 'sms')),\n  label TEXT NOT NULL,\n  created_at INTEGER NOT NULL,\n  revoked_at INTEGER, receiver TEXT,\n  UNIQUE(owner_id, source_id)\n)"
     },
     {
       "type": "table",
@@ -143,6 +221,12 @@
       "name": "tx_assert",
       "tbl_name": "tx_assert",
       "sql": "CREATE TABLE tx_assert (ok INTEGER NOT NULL CHECK (ok = 1))"
+    },
+    {
+      "type": "table",
+      "name": "unassigned_context",
+      "tbl_name": "unassigned_context",
+      "sql": "CREATE TABLE unassigned_context (\n  context_id TEXT NOT NULL,\n  owner_id TEXT NOT NULL,\n  source_id TEXT NOT NULL,\n  sender_digest TEXT NOT NULL CHECK (length(sender_digest) BETWEEN 16 AND 128),\n  kind TEXT NOT NULL CHECK (kind IN ('sms','email')),\n  latest_event_id TEXT NOT NULL,\n  received_at INTEGER NOT NULL, -- provider date, display only, clamped to the arrival time\n  arrived_at INTEGER NOT NULL, -- server clock at ingest: drives retention and 'latest' ordering\n  key_fingerprint TEXT NOT NULL CHECK (length(key_fingerprint) = 16), -- identifies the digest secret the row was written under; rows under another secret are purged\n  retain_until INTEGER NOT NULL CHECK (retain_until > arrived_at),\n  sender_envelope TEXT NOT NULL CHECK (json_valid(sender_envelope)),\n  text_envelope TEXT CHECK (text_envelope IS NULL OR json_valid(text_envelope)),\n  truncated INTEGER NOT NULL DEFAULT 0 CHECK (truncated IN (0,1)),\n  size_bytes INTEGER NOT NULL CHECK (size_bytes BETWEEN 1 AND 65536), template_fp TEXT CHECK (template_fp IS NULL OR (length(template_fp)=67 AND template_fp LIKE 'v1:%')), hint_envelope TEXT CHECK (hint_envelope IS NULL OR json_valid(hint_envelope)),\n  PRIMARY KEY(owner_id, source_id, sender_digest),\n  FOREIGN KEY(owner_id, source_id) REFERENCES sources(owner_id, source_id) ON DELETE CASCADE\n)"
     },
     {
       "type": "trigger",
@@ -257,6 +341,36 @@
       "name": "realtime_grant_update",
       "tbl_name": "access_grants",
       "sql": "CREATE TRIGGER realtime_grant_update AFTER UPDATE ON access_grants BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', a, CAST(strftime('%s','now') AS INTEGER)*1000 FROM (SELECT NEW.grantee_id AS a UNION SELECT NEW.owner_id) t\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox o WHERE o.claimed_at IS NULL AND o.cursor IS NULL AND o.kind='account' AND o.account_id=t.a);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_routes_delete",
+      "tbl_name": "service_routes",
+      "sql": "CREATE TRIGGER realtime_routes_delete AFTER DELETE ON service_routes BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', OLD.owner_id, CAST(strftime('%s','now') AS INTEGER)*1000\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL AND kind='account' AND account_id=OLD.owner_id);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_routes_insert",
+      "tbl_name": "service_routes",
+      "sql": "CREATE TRIGGER realtime_routes_insert AFTER INSERT ON service_routes BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', NEW.owner_id, CAST(strftime('%s','now') AS INTEGER)*1000\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL AND kind='account' AND account_id=NEW.owner_id);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_routes_update",
+      "tbl_name": "service_routes",
+      "sql": "CREATE TRIGGER realtime_routes_update AFTER UPDATE OF phrase,template_fp ON service_routes BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', NEW.owner_id, CAST(strftime('%s','now') AS INTEGER)*1000\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox WHERE claimed_at IS NULL AND cursor IS NULL AND kind='account' AND account_id=NEW.owner_id);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "sources_pause_rules_on_revoke",
+      "tbl_name": "sources",
+      "sql": "CREATE TRIGGER sources_pause_rules_on_revoke AFTER UPDATE OF revoked_at ON sources WHEN OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL BEGIN\n  UPDATE service_routes SET paused_at=COALESCE(paused_at,NEW.revoked_at) WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\n  DELETE FROM unassigned_context WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "sources_pause_rules_on_unrevoke",
+      "tbl_name": "sources",
+      "sql": "CREATE TRIGGER sources_pause_rules_on_unrevoke AFTER UPDATE OF revoked_at ON sources WHEN OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NULL BEGIN\n  UPDATE service_routes SET paused_at=COALESCE(paused_at,OLD.revoked_at) WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\n  DELETE FROM unassigned_context WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\nEND"
     },
     {
       "type": "trigger",
@@ -739,6 +853,614 @@
     {
       "table": "provider_identities",
       "name": "display_name",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "context_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "unassigned_context",
+      "name": "source_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 2
+    },
+    {
+      "table": "unassigned_context",
+      "name": "sender_digest",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 3
+    },
+    {
+      "table": "unassigned_context",
+      "name": "kind",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "latest_event_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "received_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "arrived_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "key_fingerprint",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "retain_until",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "sender_envelope",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "text_envelope",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "truncated",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": "0",
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "size_bytes",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "template_fp",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "unassigned_context",
+      "name": "hint_envelope",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "intent_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "rule_intents",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "device_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "generation",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "operation",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "subject_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "source_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "entry_revision",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "subject_json",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "action_digest",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "consumed_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "retired_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "result_expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "rule_json",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "rule_intents",
+      "name": "rule_result",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "route_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "service_routes",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "service_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "source_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "origin_kind",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "origin_value",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "account_hint",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "phrase",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "template_fp",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "saved_template_fp",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "service_routes",
+      "name": "paused_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "incoming_codes",
+      "name": "event_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 3
+    },
+    {
+      "table": "incoming_codes",
+      "name": "source_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 2
+    },
+    {
+      "table": "incoming_codes",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "envelope",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "received_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "assignment",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "sender_envelope",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "incoming_codes",
+      "name": "template_fp",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "intent_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "assignment_intents",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "device_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "generation",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "source_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "event_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "entry_revision",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "envelope",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "received_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "code_expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "action_digest",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "consumed_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "result_expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "retired_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "rule_json",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "assignment_intents",
+      "name": "rule_result",
       "type": "TEXT",
       "notnull": 0,
       "dflt_value": null,

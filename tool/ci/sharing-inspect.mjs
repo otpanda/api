@@ -16,7 +16,7 @@ async function call(label,path,sql){
 }
 const settings=await call('settings','workers/scripts/'+S+'/settings');
 if(settings&&!Array.isArray(settings.bindings)){failed=true;console.log(JSON.stringify({check:'settings',status:'unverifiable'}));}
-if(Array.isArray(settings?.bindings)){const expected=['DB','IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT','REALTIME_HUB','SHARING_ENABLED'];
+if(Array.isArray(settings?.bindings)){const expected=['DB','IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT','REALTIME_HUB','SHARING_ENABLED','CONTEXT_DIGEST_SECRET','CONTEXT_DIGEST_KEYRING','CONTEXT_RETENTION_DAYS'];
  if(['DB','IDENTITY_ADDRESS_LIMIT','IDENTITY_AUTH_GLOBAL_LIMIT','IDENTITY_READ_GLOBAL_LIMIT'].some(name=>!settings.bindings.some(b=>b.name===name)))failed=true;
  console.log(JSON.stringify({check:'settings',status:'read',bindings:expected.map(name=>{const b=settings.bindings?.find(b=>b.name===name);return{name,present:!!b,type:['d1','ratelimit','durable_object_namespace','plain_text','secret_text'].includes(b?.type)?b.type:'other',...(b?.type==='ratelimit'?{limit:Number.isSafeInteger(b.simple?.limit)?b.simple.limit:null,period:Number.isSafeInteger(b.simple?.period)?b.simple.period:null}:{}),...(name==='DB'&&b?{expectedDatabase:b.id===D}:{}),...(name==='SHARING_ENABLED'&&b?.type==='plain_text'?{exactOn:b.text==='1'}:{})};})}));}
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
