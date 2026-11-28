@@ -1,6 +1,6 @@
 name: cloudflare-preflight
-# Read-only. Manual only. Runs only from the repository default branch AND only for the exact commit in expected_sha.
-# Makes no create, deploy or delete call: GET/list requests plus two read-only POST queries (GraphQL analytics, observability telemetry). Produces no artifact.
+# Manual exact-source modes. Existing preflight stays read-only on default.
+# Qualification branch adds finite synthetic workload and independent exact-run cleanup.
 # The Cloudflare token is exposed only to the steps that call Cloudflare (step env, never job env).
 on:
   workflow_dispatch:
@@ -8,17 +8,20 @@ on:
       confirm:
         description: 'Type read-only-preflight to confirm'
         required: true
+      workload_run_id:
+        description: 'Numeric sharing-edge workload run ID for independent cleanup only'
+        required: false
       expected_sha:
         description: 'Full 40-char commit SHA (must equal the dispatched commit)'
         required: true
 permissions:
   contents: read
 concurrency:
-  group: otpanda-cloudflare-preflight
+  group: otpanda-cloudflare-preflight-${{ inputs.confirm }}-${{ inputs.workload_run_id }}
   cancel-in-progress: false
 jobs:
   preflight:
-    if: github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: inputs.confirm == 'read-only-preflight' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -53,3 +56,77 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
         run: node tool/ci/preflight.mjs readout
+
+  sharing-edge-qualify:
+    if: inputs.confirm == 'isolated-synthetic-only' && github.ref == 'refs/heads/qualification/sharing-edge-cpu-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Validate exact reviewed source before secret access
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          node --input-type=module -e "if(!/^[a-f0-9]{40}$/.test(process.env.EXPECTED_SHA)||process.env.EXPECTED_SHA!==process.env.GITHUB_SHA||process.env.CONFIRM!=='isolated-synthetic-only')process.exit(1)"
+          node --check qualification/sharing-edge/worker.js
+          node --check qualification/sharing-edge/run.mjs
+          node --check qualification/sharing-edge/sanitize-tail.mjs
+      - run: npm ci --ignore-scripts
+      - name: Bounded existing meter check, fail before create if unreadable
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+        run: node tool/ci/preflight.mjs readout
+      - name: Run and always clean isolated resources
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+        run: node qualification/sharing-edge/run.mjs
+      - name: Meter after cleanup
+        if: always()
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+        run: node tool/ci/preflight.mjs readout
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: synthetic-sharing-edge-aggregates
+          retention-days: 2
+          path: |
+            qualification/sharing-edge/result.json
+            qualification/sharing-edge/cpu.json
+            qualification/sharing-edge/cleanup.json
+
+  sharing-edge-cleanup:
+    if: inputs.confirm == 'delete-exact-synthetic-run' && github.ref == 'refs/heads/qualification/sharing-edge-cpu-v1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Validate before credential access
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          WORKLOAD_RUN_ID: ${{ inputs.workload_run_id || github.run_id }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          node --input-type=module -e "if(!/^[a-f0-9]{40}$/.test(process.env.EXPECTED_SHA)||process.env.EXPECTED_SHA!==process.env.GITHUB_SHA||!/^[0-9]{8,20}$/.test(process.env.WORKLOAD_RUN_ID)||process.env.CONFIRM!=='delete-exact-synthetic-run')process.exit(1)"
+      - name: Delete and independently verify exact run resources absent
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+          WORKLOAD_RUN_ID: ${{ inputs.workload_run_id || github.run_id }}
+        run: node qualification/sharing-edge/cleanup.mjs

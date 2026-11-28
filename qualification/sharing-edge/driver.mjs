@@ -1,0 +1,5 @@
+import{writeFileSync}from'node:fs';
+const base=process.argv[2];if(!/^https:\/\/otpanda-sharing-edge-[0-9]+\.abrahammurciano\.workers\.dev\/[0-9a-f]{48}$/.test(base))throw Error('Isolated URL required');
+const actions=['setup','session','allow','deny','all','token','machine','revoke','revoked-machine'],out=[];let totalRead=0,totalWritten=0;
+for(const action of actions){const r=await fetch(base+'/'+action,{method:'POST',signal:AbortSignal.timeout(15000)});const b=await r.json();totalRead+=b.rowsRead??0;totalWritten+=b.rowsWritten??0;if(totalRead>100000||totalWritten>20000)throw Error('Run budget exceeded');if(b.d1ApiCalls>50||b.rowsRead>50000||b.rowsWritten>10000)throw Error('Sample budget exceeded');if(!r.ok||b.pass===false)throw Error('Synthetic step failed: '+action);out.push(b);await new Promise(r=>setTimeout(r,1000));}
+writeFileSync('qualification/sharing-edge/result.json',JSON.stringify({source:process.env.GITHUB_SHA,results:out},null,2));console.log(JSON.stringify({synthetic:true,steps:out.length,pass:true}));

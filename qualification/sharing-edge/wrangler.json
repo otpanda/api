@@ -1,0 +1,21 @@
+{
+  "name": "otpanda-sharing-edge-placeholder",
+  "main": "worker.js",
+  "compatibility_date": "2026-11-23",
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "FIXTURE_PREFIX": "replaced-before-deploy"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "placeholder",
+      "database_id": "00000000-0000-4000-8000-000000000000",
+      "migrations_dir": "../../migrations"
+    }
+  ],
+  "observability": {
+    "enabled": false
+  }
+}
