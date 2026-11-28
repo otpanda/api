@@ -1,0 +1,8 @@
+// Mirror MachineAccess.canMachineRead: live selector and a delegating path that predates token issue.
+// These are SQL fragments built only from fixed internal aliases / numbered placeholders.
+export const readers = entry => `(SELECT count(*) FROM entry_readers m WHERE m.entry_id=${entry} AND m.revoked_at IS NULL)`;
+export const automations = (entry, owner, now) => `((SELECT count(*) FROM entry_readers m WHERE m.entry_id=${entry} AND m.revoked_at IS NULL AND m.allow_automation=1)+(SELECT count(*) FROM entry_tokens t WHERE t.entry_id=${entry} AND t.revoked_at IS NULL AND t.created_at<=${now} AND t.expires_at>${now})+(SELECT count(*) FROM machine_tokens t JOIN machine_profiles p ON p.profile_id=t.profile_id WHERE t.revoked_at IS NULL AND p.revoked_at IS NULL AND t.created_at<=${now} AND (t.expires_at IS NULL OR t.expires_at>${now}) AND (p.creator_id=${owner} OR EXISTS(SELECT 1 FROM entry_readers m WHERE m.entry_id=${entry} AND m.recipient_id=p.creator_id AND m.allow_automation=1 AND m.created_at<=t.created_at)) AND (p.mode='all' OR (p.mode='allow' AND EXISTS(SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=${entry})) OR (p.mode='deny' AND NOT EXISTS(SELECT 1 FROM machine_profile_entries n WHERE n.profile_id=p.profile_id AND n.entry_id=${entry})))))`;
+export function pinnedAudience(entry, owner, now, recipients, automation) {
+ if(!Number.isSafeInteger(recipients)||recipients<0||!Number.isSafeInteger(automation)||automation<0)throw new TypeError('Invalid signed audience');
+ return `${readers(entry)}=${recipients} AND ${automations(entry,owner,now)}=${automation}`;
+}
