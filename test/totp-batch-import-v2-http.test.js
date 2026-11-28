@@ -17,7 +17,7 @@ async function fixture({now=59000}={}){
  const http=createTotpBatchImportHttp({db,sessions:{authenticate:async t=>t==='access'?actor:undefined},getSeedCipher:async()=>{await hook();return cipher;},clock:()=>clock,passkeys});
  const call=(step,body,headers={})=>http.fetch(new Request(API+'/v1/manage/totp/'+step,{method:'POST',headers:{Origin:APP,Authorization:'Bearer access','Content-Type':'application/json',...headers},body:JSON.stringify(body)}),{clientAddress:'t'+Math.random()});
  const count=async t=>(await db.prepare('SELECT count(*) n FROM '+t).first()).n;
- return{db,cipher,seen,call,count,setActor:v=>actor=v,setHook:v=>hook=v,setClock:v=>clock=v};
+ return{db,cipher,key,seen,call,count,setActor:v=>actor=v,setHook:v=>hook=v,setClock:v=>clock=v};
 }
 const items=n=>Array.from({length:n},(_,i)=>({label:'Acct '+i,account:'a'+i+'@example.test',secret:uri('a'+i,i%2?'&digits=7&period=60':'')}));
 const V2='v2:'+NONCE;
@@ -51,4 +51,72 @@ test('seed insertion fault rolls back protocol2 receipt and entries in D1 batch'
  const b=await(await begin(f)).json();await f.db.prepare("CREATE TRIGGER synthetic_v2_abort BEFORE INSERT ON totp_seeds BEGIN SELECT RAISE(ABORT,'synthetic rollback'); END").run();
  assert.equal((await finish(f,b.admissionId)).status,503);assert.equal(await f.count('entries'),0);assert.equal(await f.count('totp_seeds'),0);assert.equal(await f.count('totp_batch_imports'),0);
  await f.db.prepare('DROP TRIGGER synthetic_v2_abort').run();assert.equal((await(await fence(f,b.admissionId)).json()).status,'fenced');assert.equal((await finish(f,b.admissionId)).status,409);
+}finally{await f.db.sqlite.close();}});
+
+const recover=(f,id,nonce=V2)=>f.call('batch-recover',{protocol:2,admissionId:id,batchNonce:nonce,recover:true});
+test('cross-session recovery is readonly pending then exact saved without new proof',async()=>{const f=await fixture();try{
+ const b=await(await begin(f)).json();
+ f.setActor({ownerId:'owner',deviceId:'replacement',generation:0,clientKind:'web',expiresAt:9999999999999});
+ const before=await f.db.prepare('SELECT total_changes() n').first();
+ const pending=await(await recover(f,b.admissionId)).json();assert.equal(pending.status,'pending');assert.ok(pending.retryAfterMs>0&&pending.retryAfterMs<=120000);
+ assert.equal((await f.db.prepare('SELECT total_changes() n').first()).n,before.n+1);// parent address rate counter only
+ assert.equal(f.seen.length,1);assert.equal((await f.db.prepare('SELECT fenced FROM totp_import_admissions').first()).fenced,0);
+ f.setActor({ownerId:'owner',deviceId:'device',generation:0,clientKind:'web',expiresAt:9999999999999});assert.equal((await finish(f,b.admissionId)).status,201);
+ f.setActor({ownerId:'owner',deviceId:'replacement',generation:0,clientKind:'web',expiresAt:9999999999999});
+ const saved=await(await recover(f,b.admissionId)).json();assert.equal(saved.status,'saved');assert.equal(saved.entryIds.length,2);
+ assert.equal((await recover(f,'Z'.repeat(32))).status,409);
+}finally{await f.db.sqlite.close();}});
+test('readonly recovery expiry or swept absence terminal, old identity cannot revive',async()=>{const f=await fixture();try{
+ const old=await(await begin(f)).json();await f.db.prepare('UPDATE totp_import_admissions SET expires_at=0').run();
+ assert.equal((await(await recover(f,old.admissionId)).json()).status,'not_saved');
+ const fresh=await(await begin(f)).json();assert.notEqual(old.admissionId,fresh.admissionId);
+ assert.equal((await(await recover(f,old.admissionId)).json()).status,'not_saved');
+ assert.equal((await finish(f,old.admissionId)).status,409);assert.equal((await finish(f,fresh.admissionId)).status,201);
+ assert.equal((await recover(f,old.admissionId)).status,409);
+}finally{await f.db.sqlite.close();}});
+test('recover snapshot during held encryption stays pending and later returns saved',async()=>{const f=await fixture();try{
+ const b=await(await begin(f)).json();let observed;
+ f.setHook(async()=>{observed=await(await recover(f,b.admissionId)).json();});
+ assert.equal((await finish(f,b.admissionId)).status,201);assert.equal(observed.status,'pending');
+ assert.equal((await(await recover(f,b.admissionId)).json()).status,'saved');
+}finally{await f.db.sqlite.close();}});
+test('recover owner and exact shapes fail closed without revealing another owner receipt',async()=>{const f=await fixture();try{
+ const b=await(await begin(f)).json();assert.equal((await finish(f,b.admissionId)).status,201);
+ assert.equal((await f.call('batch-recover',{protocol:2,admissionId:b.admissionId,batchNonce:V2,recover:true,ownerId:'owner'})).status,400);
+ f.setActor({ownerId:'other',deviceId:'other',generation:0,clientKind:'web',expiresAt:9999999999999});
+ assert.deepEqual(await(await recover(f,b.admissionId)).json(),{status:'not_saved'});
+}finally{await f.db.sqlite.close();}});
+
+test('recover legacy nullable receipt is conflict, never absence',async()=>{const f=await fixture();try{
+ await f.db.prepare('INSERT INTO totp_batch_imports(owner_id,batch_nonce,action_digest,entry_ids,created_at) VALUES (?,?,?,?,?)').bind('owner',V2,'0'.repeat(64),'[]',0).run();
+ const r=await recover(f,'Z'.repeat(32));assert.equal(r.status,409);assert.equal((await r.json()).error,'identity_conflict');
+}finally{await f.db.sqlite.close();}});
+test('recover uses SQL expiry boundary and fence without cancelling live admission',async()=>{const f=await fixture();try{
+ const b=await(await begin(f)).json();f.setClock(9999999999999);
+ assert.equal((await(await recover(f,b.admissionId)).json()).status,'pending');
+ await f.db.prepare('UPDATE totp_import_admissions SET expires_at=unixepoch()*1000').run();
+ assert.equal((await(await recover(f,b.admissionId)).json()).status,'not_saved');assert.equal((await finish(f,b.admissionId)).status,409);
+ const fresh=await(await begin(f)).json();await fence(f,fresh.admissionId);
+ assert.equal((await(await recover(f,fresh.admissionId)).json()).status,'not_saved');
+}finally{await f.db.sqlite.close();}});
+test('recover after commit rollback retains pending admission until authoritative expiry',async()=>{const f=await fixture();try{
+ const b=await(await begin(f)).json();await f.db.prepare("CREATE TRIGGER recover_abort BEFORE INSERT ON totp_seeds BEGIN SELECT RAISE(ABORT,'synthetic'); END").run();
+ assert.equal((await finish(f,b.admissionId)).status,503);assert.equal((await(await recover(f,b.admissionId)).json()).status,'pending');assert.equal(await f.count('totp_batch_imports'),0);
+ await f.db.prepare('UPDATE totp_import_admissions SET expires_at=0').run();assert.equal((await(await recover(f,b.admissionId)).json()).status,'not_saved');
+}finally{await f.db.sqlite.close();}});
+test('recover rejects no auth and wrong origin, request contains no seed values',async()=>{const f=await fixture();try{
+ const body={protocol:2,admissionId:'Z'.repeat(32),batchNonce:V2,recover:true};
+ assert.equal((await f.call('batch-recover',body,{Authorization:'Bearer invalid'})).status,401);
+ assert.equal((await f.call('batch-recover',body,{Origin:'https://other.test'})).status,403);
+ assert.equal((await f.call('batch-recover',{...body,items:items(1)})).status,400);
+}finally{await f.db.sqlite.close();}});
+
+test('authenticated real runtime dispatch reaches v2 recover, v1 shape rejects without write',async()=>{const f=await fixture();try{
+ const {generateAccessToken,digestSecret,digestToHex}=await import('../src/tokens.js');const {createIdentityRuntime}=await import('../src/identity-runtime.js');
+ const access=generateAccessToken();await f.db.prepare('INSERT INTO device_access_handles(handle_id,secret_digest,device_id,created_at,expires_at) VALUES (?,?,?,?,?)').bind(access.tokenId,digestToHex(await digestSecret(access.secret)),'device',0,9999999999999).run();
+ const b=await(await begin(f)).json();const app=createIdentityRuntime({db:f.db,keys:new Map([['test',f.key]]),activeKeyId:'test',trustedRequestKey:()=> '192.0.2.1',clock:()=>59000,transfer:{batchImport:true}});
+ const send=body=>app.fetch(new Request(API+'/v1/manage/totp/batch-recover',{method:'POST',headers:{Origin:APP,Authorization:'Bearer '+access.token,'Content-Type':'application/json'},body:JSON.stringify(body)}));
+ const request={protocol:2,admissionId:b.admissionId,batchNonce:V2,recover:true};
+ assert.equal((await(await send(request)).json()).status,'pending');assert.equal((await finish(f,b.admissionId)).status,201);assert.equal((await(await send(request)).json()).status,'saved');
+ assert.equal((await send({batchNonce:NONCE})).status,400);assert.equal(await f.count('entries'),2);assert.equal(await f.count('totp_batch_imports'),1);
 }finally{await f.db.sqlite.close();}});

@@ -157,7 +157,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}
    else if(deviceKeyPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=deviceKey;}
    else if(url.pathname.startsWith('/v1/manage/seed-sync/')){handler=seedSyncHttp;if(!handler)return json({error:'not_found'},404);}
-   else if(/^\/v1\/manage\/totp\/batch-(begin|finish|outcome)$/.test(url.pathname)){handler=totpBatchImport;if(!handler)return json({error:'not_found'},404);}
+   else if(/^\/v1\/manage\/totp\/batch-(begin|finish|outcome|recover)$/.test(url.pathname)){handler=totpBatchImport;if(!handler)return json({error:'not_found'},404);}
    else if(/^\/v1\/manage\/totp\/export-(begin|finish)$/.test(url.pathname)){handler=totpExport;if(!handler)return json({error:'not_found'},404);}
    else if(url.pathname==='/v1/manage/totp-code')handler=totpRead;
    else if(totpBatch&&url.pathname==='/v1/manage/totp-codes')handler=totpBatch;
