@@ -37,6 +37,18 @@
       "sql": "CREATE UNIQUE INDEX provider_identities_subject ON provider_identities(issuer,subject) WHERE revoked_at IS NULL"
     },
     {
+      "type": "index",
+      "name": "totp_import_admissions_expiry",
+      "tbl_name": "totp_import_admissions",
+      "sql": "CREATE INDEX totp_import_admissions_expiry ON totp_import_admissions(expires_at)"
+    },
+    {
+      "type": "index",
+      "name": "totp_import_admissions_owner",
+      "tbl_name": "totp_import_admissions",
+      "sql": "CREATE INDEX totp_import_admissions_owner ON totp_import_admissions(owner_id)"
+    },
+    {
       "type": "table",
       "name": "access_grant_entries",
       "tbl_name": "access_grant_entries",
@@ -113,6 +125,18 @@
       "name": "sharing_contacts",
       "tbl_name": "sharing_contacts",
       "sql": "CREATE TABLE sharing_contacts (\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  contact_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  -- Opaque handle the owner's clients use. The recipient's internal account id is never sent to the owner.\n  contact_ref TEXT NOT NULL UNIQUE,\n  created_at INTEGER NOT NULL CHECK (created_at >= 0),\n  -- Hidden from suggestions and from new shares. The row stays while a grant is live so it can still be revoked.\n  removed_at INTEGER,\n  PRIMARY KEY (owner_id, contact_id),\n  CHECK (owner_id <> contact_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "totp_batch_imports",
+      "tbl_name": "totp_batch_imports",
+      "sql": "CREATE TABLE totp_batch_imports (\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  batch_nonce TEXT NOT NULL CHECK (length(batch_nonce) BETWEEN 22 AND 64),\n  action_digest TEXT NOT NULL CHECK (length(action_digest) = 64),\n  entry_ids TEXT NOT NULL CHECK (json_valid(entry_ids)),\n  created_at INTEGER NOT NULL CHECK (created_at >= 0), import_admission_id TEXT, import_device_id TEXT,\n  PRIMARY KEY (owner_id, batch_nonce)\n)"
+    },
+    {
+      "type": "table",
+      "name": "totp_import_admissions",
+      "tbl_name": "totp_import_admissions",
+      "sql": "CREATE TABLE totp_import_admissions (\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n admission_id TEXT NOT NULL PRIMARY KEY,\n batch_nonce TEXT NOT NULL,\n device_id TEXT NOT NULL,\n generation INTEGER NOT NULL,\n digest TEXT NOT NULL,\n expires_at INTEGER NOT NULL,\n fenced INTEGER NOT NULL CHECK(fenced IN (0,1)),\n UNIQUE(owner_id,batch_nonce)\n)"
     },
     {
       "type": "table",

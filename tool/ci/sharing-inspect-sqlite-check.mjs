@@ -25,6 +25,6 @@ try{
  assert.equal(executed.length,3);
  const columns=out.find(x=>x.check==='columns');assert.equal(columns.status,'matches');
  const view=columns.columns.filter(c=>c.table==='entry_readers');assert.equal(view.length,5);assert.ok(view.every(c=>c.state==='matches'));
- const schema=out.find(x=>x.check==='schema');assert.equal(schema.status,'matches');assert.equal(schema.objects.length,41);
- console.log('real source migrations plus three exact inspection SELECTs pass; 41 scoped objects and 5 entry_readers view columns match');
+ const schema=out.find(x=>x.check==='schema');assert.equal(schema.status,'matches');assert.equal(schema.objects.length,45);
+ console.log('real source migrations plus three exact inspection SELECTs pass; 45 scoped objects and 5 entry_readers view columns match');
 }finally{db.sqlite.close();}
