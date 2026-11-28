@@ -1,3 +1,4 @@
+import {parseDigestSecret,parseDigestKeys} from './template-fingerprint.js';
 import {lazyHttp} from './lazy-http.js';
 import {GoogleContinuation} from './google-continuation.js';
 import {createNativeGoogleLinkHttp} from './native-google-link-http.js';
@@ -27,15 +28,19 @@ import {createGoogleLinkTicketHttp} from './google-link-http.js';
 // OIDC, signup delivery or automatic account creation. Deployment stays gated.
 import {createEntryDomainsHttp} from './entry-domains-http.js';
 import {createEntryManageHttp} from './entry-manage-http.js';
+import {createEntrySourcesHttp} from './entry-sources-http.js';
+import {createEntryRulesHttp} from './entry-rules-http.js';
 import {AssignmentIntents} from './assignment-intents.js';
 import {createAssignmentIntentHttp} from './assignment-intent-http.js';
+import {RuleIntents} from './rule-intents.js';
+import {createRuleIntentHttp} from './rule-intent-http.js';
 import {createDeviceKeyHttp} from './device-key-http.js';
 import {createApprovalsHttp,APPROVAL_PATHS} from './approvals-http.js';
 import {EnrolledApprovals} from './enrolled-approvals.js';
 import {GoogleDeviceEnrollment} from './google-device-enrollment.js';
 import {DurableDeviceKeys} from './durable-device-keys.js';
 import {CodeCipher} from './code-cipher.js';
-import {SourceEntryStore} from './source-entries.js';
+import {SourceEntryStore,createSourceEntryStore} from './source-entries.js';
 import {ServiceMetadata} from './service-metadata.js';
 import {EntryAccess} from './entry-access.js';
 import {PasskeyService} from './passkey-service.js';
@@ -59,7 +64,7 @@ import {createForegroundDrain} from './realtime-foreground.js';
 // Each unrelated HTTP service is built on its first route use. Configuration
 // gates that must fail during startup (extension/batch) remain eager below.
 
-export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,transfer,seedSync,clock=Date.now}={}) {
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,templateSecret=null,templateKeyring=null,context={},deliverRecoveryMail,realtime,native,extension,batch,transfer,seedSync,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
  // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
@@ -71,11 +76,12 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  let codeDependencies;
  const encrypted=()=>codeDependencies??=Promise.resolve().then(async()=>{
   const configuration=loadCodeKeys?await loadCodeKeys():{keys,activeKeyId};
-  const cipher=new CodeCipher(configuration),metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,cipher,{matcher:metadata});
+  const cipher=new CodeCipher(configuration),metadata=new ServiceMetadata(db),sources=createSourceEntryStore(db,cipher,{matcher:metadata,templateSecret:parseDigestSecret(templateSecret)?templateSecret:null,templateKeyring:parseDigestKeys(null,templateKeyring)?templateKeyring:null,...context});
   const access=new EntryAccess(db,sources),seedCipher=new SeedCipher(configuration),seeds=new TotpSeedStore(db,seedCipher);
   return{cipher,sources,access,seedCipher,generator:new EntryTotpGenerator(db,seeds,access)};
  });
  const sources={
+  contextsForOwner:async(...args)=>(await encrypted()).sources.contextsForOwner(...args),
   unassignedForOwner:async(...args)=>(await encrypted()).sources.unassignedForOwner(...args),
   sourcesForOwner:async(...args)=>(await encrypted()).sources.sourcesForOwner(...args),
  };
@@ -110,9 +116,12 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const firstPasskey=lazyHttp(()=>createFirstPasskeyHttp({db,sessions,clock,native:nativeOn,enrollment:new FirstPasskeyEnrollment(db,{clock,passkeys:managedPasskeys})})),addPasskey=lazyHttp(()=>createAddPasskeyHttp({db,sessions,clock,native:nativeOn,passkeys:managedPasskeys})),recovery=lazyHttp(()=>createRecoveryControlsHttp({db,sessions,clock,passkeys:managedPasskeys,native:nativeOn})),emailRecovery=lazyHttp(()=>createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys})),nativeEmailRecovery=nativeOn&&nativePasskeys?lazyHttp(()=>createEmailRecoveryHttp({db,deliver:deliverRecoveryMail,getCipher:async()=>(await encrypted()).cipher,clock,passkeys:nativePasskeys,native:true})):undefined,nativeLink=nativeOn&&nativeOrigins.length?createNativeGoogleLinkHttp({db,sessions,clock,continuations:async()=>new GoogleContinuation(db,{cipher:(await encrypted()).cipher,clock,passkeys:managedPasskeys})}):undefined;
  const deviceInfo=lazyHttp(()=>createDeviceSessionInfoHttp({db,sessions,native:nativeOn,clock})),passkeyLabel=lazyHttp(()=>createPasskeyLabelHttp({db,sessions,clock,native:nativeOn})),overview=lazyHttp(()=>createAccountOverviewHttp({db,sessions,native:nativeOn,clock})),googleLink=lazyHttp(()=>createGoogleLinkTicketHttp({db,sessions,clock,native:nativeOn}));
  const organization=lazyHttp(()=>createPersonalOrganizationHttp({db,sessions,organization:new PersonalOrganizationStore(db,{clock}),native:nativeOn,clock}));
- const assignment=lazyHttp(()=>createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn}));
+ const assignment=lazyHttp(()=>createAssignmentIntentHttp({db,sessions,intents:new AssignmentIntents({db,passkeys:managedPasskeys,deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},rules:true,cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn}));
+ const ruleIntent=lazyHttp(()=>createRuleIntentHttp({db,sessions,intents:new RuleIntents({db,passkeys:managedPasskeys,keyIds:parseDigestKeys(parseDigestSecret(templateSecret)?templateSecret:null,templateKeyring)?.map(k=>k.id)??[],deviceKeys:new DurableDeviceKeys(db,{clock}),clock,prepare:async()=>{await encrypted();},cipher:{decrypt:async(...args)=>(await encrypted()).cipher.decrypt(...args),encrypt:async(...args)=>(await encrypted()).cipher.encrypt(...args)}}),clock,native:nativeOn}));
  // Inactive unless a deployment passes {limiter,connect,deliver}: without it the realtime paths are not_found and nothing drains.
  const entryDomains=lazyHttp(()=>createEntryDomainsHttp({db,sessions,clock,native:nativeOn,extensionOrigins:extensionHttp?extension.origins??[]:null}));
+ const entryRules=lazyHttp(()=>createEntryRulesHttp({db,sessions,metadata:new ServiceMetadata(db),clock,native:nativeOn,keyIds:parseDigestKeys(parseDigestSecret(templateSecret)?templateSecret:null,templateKeyring)?.map(k=>k.id)??null}));
+ const entrySources=lazyHttp(()=>createEntrySourcesHttp({db,sessions,clock,native:nativeOn}));
  const entryManage=lazyHttp(()=>createEntryManageHttp({db,sessions,clock,native:nativeOn}));
  const realtimeExtensionHttp=realtime?.extensionLimiter&&extensionHttp?createRealtimeHttp({db,sessions,limiter:realtime.extensionLimiter,connect:realtime.connect,extension:true,extensionOrigins:extension.origins??[],clock}):undefined;
  const realtimeHttp=realtime?createRealtimeHttp({db,sessions,limiter:realtime.limiter,connect:realtime.connect,native:nativeOn,clock}):undefined;
@@ -120,8 +129,9 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const approvals=lazyHttp(()=>createApprovalsHttp({db,sessions,approvals:new EnrolledApprovals(db,{clock,keys:new DurableDeviceKeys(db,{clock})}),clock}));
  const approvalPaths=new Set(APPROVAL_PATHS);
  const deviceKeyPaths=new Set(['enroll-begin','enroll-finish','enroll-status','adopt-begin','adopt-finish'].map(p=>'/v1/manage/device-key/'+p));
+ const ruleIntentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/rule-intent/'+p));
  const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));
- const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
+ const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/unassigned-context','/v1/manage/sources']);
  const loginPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete']);
  const inner=async(request,{waitUntil}={})=>{
   try {
@@ -155,7 +165,10 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    else if(url.pathname==='/auth/device/logout')handler=logoutHttp;
    else if(readPaths.has(url.pathname))handler=reads;
    else if(assignmentPaths.has(url.pathname))handler=assignment;
+   else if(ruleIntentPaths.has(url.pathname))handler=ruleIntent;
    else if(url.pathname==='/v1/manage/entry/domains')handler=entryDomains;
+   else if(url.pathname==='/v1/manage/entry/sources')handler=entrySources;
+   else if(['/v1/manage/entry/rules','/v1/manage/entry/rule','/v1/manage/entry/rule/delete'].includes(url.pathname))handler=entryRules;
    else if(['/v1/manage/entry/rename','/v1/manage/entry/account'].includes(url.pathname))handler=entryManage;
    else if(['/v1/manage/organization','/v1/manage/organization-copy'].includes(url.pathname))handler=organization;
    else if(realtimeHttp&&['/auth/realtime/ticket','/auth/realtime'].includes(url.pathname))handler=realtimeHttp;
@@ -167,5 +180,11 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
   }catch{return json({error:'unavailable'},503);}
  };
  // A committed write already has its outbox row; deliver bounded and best effort after the response. Failures stay for cron.
- return {fetch:foreground.wrap(inner),health:Object.freeze({batch:batchStatus}),async cleanup(){return cleanupIdentity({db,clock,limit:100});}};
+ return {fetch:foreground.wrap(inner),health:Object.freeze({batch:batchStatus}),async cleanup(){
+  const removed=await cleanupIdentity({db,clock,limit:100});
+  await db.prepare('DELETE FROM rule_intents WHERE intent_id IN(SELECT intent_id FROM rule_intents WHERE result_expires_at<=?1 LIMIT 100)').bind(clock()).run();
+  const contextStore=createSourceEntryStore(db,null,{...context});
+  try{removed.unassigned_context=await contextStore.cleanupContext(clock(),{maxPasses:5});}catch(error){removed.unassigned_context_failed=true;throw error;}
+  return removed;
+ }};
 }

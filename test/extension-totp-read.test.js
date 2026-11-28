@@ -123,5 +123,5 @@ test('edge host: the extension reaches totp-code only with extensionApi, GET, no
  for(const o of [EXTO])assert.equal((await run(true,'/v1/manage/totp-code?entry=x',{origin:o})).init,1,o);
  assert.equal((await run(true,'/v1/manage/totp-code?entry=x',{origin:'https://evil.example'})).init,0,'foreign origin never reaches D1');
  assert.equal((await run(true,'/v1/manage/totp-code?entry=x',{method:'POST'})).init,0);
- for(const p of ['/v1/manage/totp','/v1/manage/totp/begin','/v1/manage/session','/v1/manage/sources','/v1/manage/unassigned'])assert.equal((await run(true,p)).init,0,p);
+ for(const p of ['/v1/manage/totp','/v1/manage/totp/begin','/v1/manage/session','/v1/manage/sources','/v1/manage/unassigned','/v1/manage/unassigned-context'])assert.equal((await run(true,p)).init,0,p);
 });

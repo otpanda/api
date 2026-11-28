@@ -22,7 +22,7 @@ async function fixture(){
  const host=on=>createIdentityEdgeHost({nativeApi:on,resolveTrustedIngress:()=>'192.0.2.1',edgeAddress:yes,edgeAuthGlobal:yes,edgeReadGlobal:yes,initialize:async()=>createIdentityRuntime({db,keys:new Map(),activeKeyId:'x',trustedRequestKey:()=>'192.0.2.1',clock,native:{enabled:on}})});
  return{db,webAccess,android:and.access,host};
 }
-const GETS=['/v1/manage/account','/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/sources','/v1/manage/unassigned','/v1/manage/organization','/v1/manage/totp-code?entry=x'];
+const GETS=['/v1/manage/account','/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/sources','/v1/manage/unassigned','/v1/manage/unassigned-context','/v1/manage/organization','/v1/manage/totp-code?entry=x'];
 test('activation ON: each Android client route accepts the android token with NO Origin; web token and browser Origin stay segregated',async()=>{
  const f=await fixture(),h=f.host(true);
  for(const p of GETS){

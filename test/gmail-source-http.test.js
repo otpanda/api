@@ -17,3 +17,31 @@ test('disconnect begin refuses a source the owner does not hold before issuing a
 
 test('callback redirects with a neutral refused marker for every failure and never a reason',async()=>{const x=await setup();try{for(const outcome of [()=>({ok:false,reason:'mailbox_not_allowed'}),()=>{throw Error('mailbox someone@x.test');}]){const host=createGmailSourceHttp({...x,ready:true,oauth:{async callback(){return outcome();}},sync:{}}),r=await host.fetch(new Request(API+'/sources/gmail/oauth/callback?state=one&code=two',{headers:{cookie:'__Host-otpanda_device='+x.device.refresh}}));assert.equal(r.status,303);assert.equal(r.headers.get('location'),APP+'/app/?gmail=refused#/sources');assert.equal(await r.text(),'');}
  }finally{x.db.sqlite.close();}});
+
+test('disconnect rules choice is validated: only delete|keep, only on disconnect; absent stays legacy-valid',async()=>{const x=await setup();try{const host=createGmailSourceHttp({...x,ready:true,oauth:{},sync:{}});
+ for(const [v,status] of [[{action:'disconnect',sourceId:'missing',rules:'delete'},404],[{action:'disconnect',sourceId:'missing',rules:'keep'},404],[{action:'disconnect',sourceId:'missing'},404],[{action:'disconnect',sourceId:'missing',rules:'drop'},400],[{action:'disconnect',sourceId:'missing',rules:null},400],[{action:'connect',sourceId:'',rules:'delete'},400]]){
+  const r=await host.fetch(req(x.device,v,PATH+'/begin'));assert.equal(r.status,status,JSON.stringify(v));}
+}finally{x.db.sqlite.close();}});
+
+test('actual Gmail HTTP passkey binds keep/delete and pauses or removes rules atomically',async()=>{
+ for(const choice of ['keep','delete']){const x=await setup();try{
+  x.db.sqlite.prepare("INSERT INTO sources(source_id,owner_id,kind,label,created_at)VALUES('lifecycle-source',?,'gmail','Synthetic',0)").run(x.account.ownerId);
+  x.db.sqlite.exec("INSERT INTO services(service_id,name)VALUES('lifecycle-service','Synthetic')");
+  x.db.sqlite.prepare("INSERT INTO entries(entry_id,owner_id,service_id,label,created_at)VALUES('lifecycle-entry',?,'lifecycle-service','Synthetic',0)").run(x.account.ownerId);
+  x.db.sqlite.prepare("INSERT INTO service_routes(route_id,owner_id,service_id,source_id,origin_kind,origin_value,entry_id,created_at)VALUES('lifecycle-rule',?,'lifecycle-service','lifecycle-source','email_address','synthetic@example.test','lifecycle-entry',0)").run(x.account.ownerId);
+  const host=createGmailSourceHttp({...x,clock:()=>NOW,ready:true,oauth:{},sync:{}}),value={action:'disconnect',sourceId:'lifecycle-source',rules:choice};
+  const ceremony=await(await host.fetch(req(x.device,value,PATH+'/begin'))).json();
+  const result=await host.fetch(req(x.device,{...value,token:ceremony.token,response:x.a.assertion({expected:ceremony.options.challenge})}));
+  assert.equal(result.status,200);assert.equal((await result.json()).disconnected,true);
+  const rows=x.db.sqlite.prepare("SELECT paused_at FROM service_routes WHERE route_id='lifecycle-rule'").all();
+  assert.equal(rows.length,choice==='keep'?1:0);if(choice==='keep')assert.equal(rows[0].paused_at,NOW);
+  assert.equal(x.db.sqlite.prepare("SELECT revoked_at FROM sources WHERE source_id='lifecycle-source'").get().revoked_at,NOW);
+ }finally{x.db.sqlite.close();}}
+});
+test('actual Gmail HTTP rejects rules choice swap after passkey challenge without a revoke or delete',async()=>{const x=await setup();try{
+ x.db.sqlite.prepare("INSERT INTO sources(source_id,owner_id,kind,label,created_at)VALUES('swap-source',?,'gmail','Synthetic',0)").run(x.account.ownerId);
+ const host=createGmailSourceHttp({...x,clock:()=>NOW,ready:true,oauth:{},sync:{}}),value={action:'disconnect',sourceId:'swap-source',rules:'keep'};
+ const c=await(await host.fetch(req(x.device,value,PATH+'/begin'))).json();
+ assert.equal((await host.fetch(req(x.device,{...value,rules:'delete',token:c.token,response:x.a.assertion({expected:c.options.challenge})}))).status,403);
+ assert.equal(x.db.sqlite.prepare("SELECT revoked_at FROM sources WHERE source_id='swap-source'").get().revoked_at,null);
+}finally{x.db.sqlite.close();}});

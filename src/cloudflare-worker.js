@@ -1,6 +1,7 @@
 import {json} from './sessions.js';
 import {importBrowserKeyring} from './browser-keyring.js';
 import {cleanupIdentity} from './identity-cleanup.js';
+import {runContextCleanup,contextCleanupStatus} from './context-config.js';
 
 // Deployment bootstrap only. Authentication intentionally stays unavailable
 // until the separately reviewed cross-origin/passkey protocol is integrated.
@@ -11,7 +12,7 @@ export function createDeploymentWorker() {
     async scheduled(event,env,ctx) {
       if(env?.DEPLOYMENT_STAGE!=='bootstrap'||!env?.DB?.prepare)return;
       // Housekeeping only, no auth routes are enabled. Fixed per-table cap.
-      const work=cleanupIdentity({db:env.DB,limit:100});
+      const work=Promise.all([cleanupIdentity({db:env.DB,limit:100}),runContextCleanup({db:env.DB,env})]);
       if(ctx?.waitUntil)ctx.waitUntil(work);else await work;
     },
     async fetch(request, env) {
@@ -30,7 +31,7 @@ export function createDeploymentWorker() {
           // A harmless read checks all required schema generations, not merely
           // the presence of a DB binding. Never return counts or private data.
           await env.DB.prepare('SELECT a.owner_id FROM accounts a LEFT JOIN identities i ON i.owner_id=a.owner_id LEFT JOIN sources s ON s.owner_id=a.owner_id LEFT JOIN entries e ON e.owner_id=a.owner_id LEFT JOIN entry_shares sh ON sh.entry_id=e.entry_id LEFT JOIN entry_tokens t ON t.entry_id=e.entry_id LEFT JOIN service_routes r ON r.entry_id=e.entry_id WHERE 0').all();
-          return json({service: 'otpanda-api', database: 'available', keyring: 'valid-format', application: 'setup-required'}, 200);
+          return json({service: 'otpanda-api', database: 'available', keyring: 'valid-format', application: 'setup-required', context: await contextCleanupStatus({db: env.DB, env})}, 200);
         } catch {
           return json({error: 'unavailable'}, 503);
         }
