@@ -624,3 +624,16 @@ for(const mutation of ['grant-delete-reinsert','selector-delete-reinsert','token
  assert.equal(await f.ri.finish(f.auth,{intentId:b.intentId,action:b.action,token:b.token,response}),undefined);assert.equal(f.rows()[0].phrase,null);
  }finally{f.db.sqlite.close();}
 });
+test('entryless legacy fence survives revoke/reconnect and later signed Assign, explicit delete still removes it',async()=>{
+ const f=await fx();try{
+ f.db.sqlite.prepare("INSERT INTO service_routes(route_id,owner_id,service_id,source_id,origin_kind,origin_value,entry_id) VALUES('legacy-fence',?,'test',?,'email_address','noreply@bank.example',NULL)").run(f.o,f.gmail);
+ const match=()=>f.meta.match(f.o,{sourceId:f.gmail,sender:'noreply@bank.example',receiver:'me@example.test',accountHint:'me@example.test',text:'another code'});
+ assert.equal((await match()).reason,'ambiguous');
+ await f.assign(f.mail('fence-before'),f.entry);assert.equal((await match()).reason,'ambiguous');
+ f.db.sqlite.prepare('UPDATE sources SET revoked_at=? WHERE source_id=?').run(NOW,f.gmail);assert.equal((await match()).reason,'unassigned');
+ f.db.sqlite.prepare('UPDATE sources SET revoked_at=NULL WHERE source_id=?').run(f.gmail);assert.equal((await match()).reason,'ambiguous');assert.equal(f.db.sqlite.prepare("SELECT paused_at FROM service_routes WHERE route_id='legacy-fence'").get().paused_at,null);
+ await f.assign(f.mail('fence-after',{text:'Another code',subject:'Another code'}),f.entry2,'another');assert.equal((await match()).reason,'ambiguous');
+ f.db.sqlite.prepare("UPDATE service_routes SET paused_at=? WHERE route_id='legacy-fence'").run(NOW);assert.equal((await match()).entryId,f.entry2,'without the fence the new signed phrase rule would assign');f.db.sqlite.prepare("UPDATE service_routes SET paused_at=NULL WHERE route_id='legacy-fence'").run();assert.equal((await match()).reason,'ambiguous');
+ const {disconnectGmailGuarded}=await import('../src/gmail-source-http.js');await disconnectGmailGuarded(f.db,f.auth,f.gmail,NOW,{rules:'delete'});assert.equal(f.rows().length,0);
+ }finally{f.db.sqlite.close();}
+});
