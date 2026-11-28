@@ -22,10 +22,10 @@ const context={createHash,readFileSync,readdirSync,AbortSignal,process:{env:{CLO
 try{
  await vm.runInNewContext('(async()=>{'+text+'})()',context);
  assert.equal(context.process.exitCode,undefined,JSON.stringify(out));
- assert.equal(executed.length,3);
+ assert.equal(executed.length,4);
  for(const name of ['unassigned_context_id','service_routes_unique'])assert.equal(out.find(x=>x.check==='schema').objects.find(x=>x.name===name)?.state,'matches');
  const columns=out.find(x=>x.check==='columns');assert.equal(columns.status,'matches');
  const view=columns.columns.filter(c=>c.table==='entry_readers');assert.equal(view.length,5);assert.ok(view.every(c=>c.state==='matches'));
  const schema=out.find(x=>x.check==='schema');assert.equal(schema.status,'matches');assert.equal(schema.objects.length,64);
- console.log('real source migrations plus three exact inspection SELECTs pass; 64 scoped objects and 5 entry_readers view columns match');
+ console.log('real source migrations plus four exact inspection SELECTs pass; 64 scoped objects and 5 entry_readers view columns match');
 }finally{db.sqlite.close();}
