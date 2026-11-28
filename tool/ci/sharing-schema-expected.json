@@ -364,13 +364,13 @@
       "type": "trigger",
       "name": "sources_pause_rules_on_revoke",
       "tbl_name": "sources",
-      "sql": "CREATE TRIGGER sources_pause_rules_on_revoke AFTER UPDATE OF revoked_at ON sources WHEN OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL BEGIN\n  UPDATE service_routes SET paused_at=COALESCE(paused_at,NEW.revoked_at) WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\n  DELETE FROM unassigned_context WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\nEND"
+      "sql": "CREATE TRIGGER sources_pause_rules_on_revoke AFTER UPDATE OF revoked_at ON sources WHEN OLD.revoked_at IS NULL AND NEW.revoked_at IS NOT NULL BEGIN\n  UPDATE service_routes SET paused_at=COALESCE(paused_at,NEW.revoked_at) WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id AND entry_id IS NOT NULL;\n  DELETE FROM unassigned_context WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\nEND"
     },
     {
       "type": "trigger",
       "name": "sources_pause_rules_on_unrevoke",
       "tbl_name": "sources",
-      "sql": "CREATE TRIGGER sources_pause_rules_on_unrevoke AFTER UPDATE OF revoked_at ON sources WHEN OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NULL BEGIN\n  UPDATE service_routes SET paused_at=COALESCE(paused_at,OLD.revoked_at) WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\n  DELETE FROM unassigned_context WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\nEND"
+      "sql": "CREATE TRIGGER sources_pause_rules_on_unrevoke AFTER UPDATE OF revoked_at ON sources WHEN OLD.revoked_at IS NOT NULL AND NEW.revoked_at IS NULL BEGIN\n  UPDATE service_routes SET paused_at=COALESCE(paused_at,OLD.revoked_at) WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id AND entry_id IS NOT NULL;\n  DELETE FROM unassigned_context WHERE owner_id=NEW.owner_id AND source_id=NEW.source_id;\nEND"
     },
     {
       "type": "trigger",
