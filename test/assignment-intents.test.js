@@ -214,3 +214,20 @@ test('android private HTTP: begin with or without keyId, finish exactly {action,
  const r=await run('begin',{sourceId:f.sourceId,eventId:'event',entryId:f.entryId,keyId:'key-one'}),b=await r.json();assert.equal(r.status,200);assert.equal(b.proofRequired,false);
  assert.equal((await run('finish',{intentId:b.intentId,action:b.action,token:'x'})).status,400);assert.equal((await run('finish',{intentId:b.intentId,action:b.action,extra:1})).status,400);
  const fin=await run('finish',{intentId:b.intentId,action:b.action});assert.equal(fin.status,200);assert.deepEqual(await fin.json(),{status:'assigned'});}finally{f.db.sqlite.close();}});
+function machineToken(f,{mode='all',include=false}={}){
+ f.db.sqlite.prepare('INSERT INTO machine_profiles(profile_id,creator_id,name,mode,created_at)VALUES(?,?,?,?,?)').run('machine',f.account.ownerId,'Synthetic',mode,NOW);
+ if(include)f.db.sqlite.prepare("INSERT INTO machine_profile_entries(profile_id,entry_id)VALUES('machine',?)").run(f.entryId);
+ f.db.sqlite.prepare("INSERT INTO machine_tokens(token_id,token_digest,profile_id,created_at)VALUES('machine-token',?,'machine',?)").run(new Uint8Array(32),NOW);
+}
+for(const [mode,include,count] of [['all',false,1],['allow',true,1],['allow',false,0],['deny',false,1],['deny',true,0]])test('machine audience counted for assignment '+mode+'/'+include,async()=>{const f=await fixture({priv:true});try{machineToken(f,{mode,include});const b=await f.begin();assert.equal(b.summary.automationRecipients,count);assert.equal(b.proofRequired,count>0);if(count){assert.equal(await f.intents.finish(f.auth,{intentId:b.intentId,action:b.action}),undefined);assert.deepEqual(await f.finish(b),{status:'assigned'});}else assert.deepEqual(await f.intents.finish(f.auth,{intentId:b.intentId,action:b.action}),{status:'assigned'});}finally{f.db.sqlite.close();}});
+for(const kind of ['machine','entry','grant-delete','same-count-machine'])test('atomic assignment audience guard defeats late '+kind,async()=>{const f=await fixture();try{
+ if(kind==='same-count-machine')machineToken(f);
+ if(kind==='grant-delete')f.db.sqlite.prepare("INSERT INTO access_grants(grant_id,owner_id,grantee_id,mode,created_at,granted_at)VALUES('cascade',?,'fixture-recipient','all',?,?)").run(f.account.ownerId,NOW,NOW);
+ const b=await f.begin(),batch=f.db.batch.bind(f.db);f.db.batch=async statements=>{
+ if(kind==='machine')machineToken(f);
+ else if(kind==='same-count-machine'){f.db.sqlite.prepare("UPDATE machine_tokens SET revoked_at=? WHERE token_id='machine-token'").run(NOW);f.db.sqlite.prepare("INSERT INTO machine_tokens(token_id,token_digest,profile_id,created_at)VALUES('replacement',?,'machine',?)").run(new Uint8Array(32),NOW);}
+ else if(kind==='entry')f.db.sqlite.prepare("INSERT INTO entry_tokens(token_id,token_digest,actor_id,entry_id,client_id,created_at,expires_at)VALUES('late',?,?,?,'test',?,?)").run(new Uint8Array(32),f.account.ownerId,f.entryId,NOW,NOW+1000);
+ else f.db.sqlite.prepare("DELETE FROM accounts WHERE owner_id='fixture-recipient'").run();
+ return batch(statements);};
+ assert.equal(await f.finish(b),undefined);assert.equal(f.db.sqlite.prepare('SELECT entry_id FROM incoming_codes').get().entry_id,null);assert.notEqual((await f.intents.status(f.auth,b.intentId))?.status,'assigned');
+ }finally{f.db.sqlite.close();}});

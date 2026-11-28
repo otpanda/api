@@ -2,7 +2,7 @@
 // Pre-state matches deployed main through0051; all remaining migrations apply in order after legacy seeding.
 import test from 'node:test';import assert from 'node:assert/strict';
 import {database} from './sqlite-helper.js';import {seedLegacy,verifyUpgrade,newCipher,LEGACY} from '../qualification/seed-sync-upgrade/upgrade.js';
-const SKIP=['0052_seed_sync.sql','0053_seed_sync_notices.sql','0063_access_grants_machine_profiles.sql','0064_totp_batch_imports.sql'];
+const SKIP=['0052_seed_sync.sql','0053_seed_sync_notices.sql','0063_access_grants_machine_profiles.sql','0064_totp_batch_imports.sql','0065_action_audience_revisions.sql'];
 test('upgrade from legacy rows: seed, apply 0052 then 0053, verify revisions, versions, pending metadata, writers and cascades; measure rows written',async()=>{
  const db=database(':memory:',{skip:SKIP}),cipher=await newCipher();try{
   const p1=await seedLegacy(db,cipher);assert.equal(p1.pass,true);assert.equal(p1.legacyRows,LEGACY.length);
