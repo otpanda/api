@@ -1,40 +1,79 @@
 name: API release
-# Production deploys already happen from main in test.yml. A version tag only
-# re-runs the checks and records the exact bundle on the GitHub release page.
+# Runs when a GitHub release is published (including a prerelease, or a draft
+# later published). A merge to main, a tag push or an edit to a release does not
+# deploy. The release must already exist: the workflow never creates it, because
+# a release created with the workflow's own GITHUB_TOKEN would not trigger it.
+# It re-runs the checks on the release commit, applies migrations, deploys that
+# exact commit to production, then attaches the bundle to the release.
 on:
-  push:
-    tags: ['v[0-9]+.[0-9]+.[0-9]+*']
+  release:
+    types: [published]
 permissions:
   contents: read
+concurrency:
+  group: otpanda-production
+  cancel-in-progress: false
 jobs:
+  qualify-sharing-d1:
+    # Real remote D1 qualification on scratch resources (never the production database),
+    # on the release commit, before anything is deployed to production.
+    uses: ./.github/workflows/sharing-d1-qualification.yml
+    secrets: inherit
+  qualify-common-horizon:
+    uses: ./.github/workflows/common-horizon-qualification.yml
+    secrets: inherit
   release:
+    needs: [qualify-sharing-d1, qualify-common-horizon]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
+      - name: Require a version tag release
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_REF_NAME" = "$TAG" ] || { echo "::error::Ref $GITHUB_REF_NAME does not match release tag $TAG."; exit 1; }
+          echo "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+' || { echo "::error::Release tag $TAG is not a version tag."; exit 1; }
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
       - run: npm ci
+      - run: npm audit
+      - name: Lint
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts eslint@9.39.5 @eslint/js@9.39.5 globals@17.14.0
+          npx eslint .
       - run: npm run build
+      - run: npm run db:local
+      - run: npm run db:local
       - name: Package worker bundle
         run: |
           set -euo pipefail
           mkdir -p out
           tar -czf "out/otpanda-api-${GITHUB_REF_NAME}.tar.gz" dist
           (cd out && sha256sum * > SHA256SUMS.txt)
-      - name: Create GitHub release
+      - name: Apply migrations and deploy the release commit
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+          WRANGLER_SEND_METRICS: 'false'
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ]; then
+            echo '::error::Cloudflare deployment secret is not provisioned.'
+            exit 1
+          fi
+          npm run deploy
+      - name: Attach bundle to the existing release
         env:
           GH_TOKEN: ${{ github.token }}
-        shell: bash
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          flags=(--verify-tag --generate-notes --title "OTPanda API ${GITHUB_REF_NAME}")
-          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" out/* --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" "${flags[@]}" out/*
-          fi
+          gh release view "$GITHUB_REF_NAME" >/dev/null
+          gh release upload "$GITHUB_REF_NAME" out/*

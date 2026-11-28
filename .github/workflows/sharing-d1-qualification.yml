@@ -1,10 +1,8 @@
 name: Sharing and machine-access remote D1 qualification
-# Manual only. Creates a temporary synthetic D1 database and a throwaway Worker, runs the actual MachineAccess
+# Reusable only, called by release.yml before the production deploy. No push or dispatch trigger. Creates a temporary synthetic D1 database and a throwaway Worker, runs the actual MachineAccess
 # SQL against remote D1, then deletes both even on failure. Touches no production database or Worker.
 on:
-  workflow_dispatch:
-  push:
-    branches: [feat/sharing-machine-qualification]
+  workflow_call:
 permissions:
   contents: read
 concurrency:

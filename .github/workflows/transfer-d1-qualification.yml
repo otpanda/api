@@ -1,17 +1,17 @@
 name: 'Remote D1 qualification, transfer, seed-sync or legacy upgrade'
-# Manual only. Creates a temporary synthetic D1 database and a throwaway Worker, runs the actual batch-import
+# Reusable only (workflow_call), NOT called by release.yml: its plan gate needs dashboard observations that a release event cannot supply. A caller must pass them. No push or dispatch trigger. Creates a temporary synthetic D1 database and a throwaway Worker, runs the actual batch-import
 # SQL against remote D1, then deletes both even on failure. Touches no production database or Worker.
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      suite: {description: 'Which qualification suite to run', type: choice, options: [transfer, seed-sync, seed-sync-upgrade], default: transfer, required: true}
-      observed_at: {description: 'Dashboard observation time, ISO UTC ending in Z, at most 30 minutes old', required: true}
-      observed_plan: {description: 'Exactly workers-free, as read from the authenticated dashboard', required: true}
-      account_id: {description: 'Cloudflare account id the observation was read from', required: true}
-      commit: {description: 'Exact commit SHA this run must be for', required: true}
-      daily_rows_written: {description: 'D1 rows written today (UTC), as observed', required: true}
-      daily_rows_read: {description: 'D1 rows read today (UTC), as observed', required: true}
-      database_count: {description: 'D1 databases in the account, as observed', required: true}
+      suite: {description: 'Which qualification suite to run', type: string, required: true}
+      observed_at: {description: 'Dashboard observation time, ISO UTC ending in Z, at most 30 minutes old', type: string, required: true}
+      observed_plan: {description: 'Exactly workers-free, as read from the authenticated dashboard', type: string, required: true}
+      account_id: {description: 'Cloudflare account id the observation was read from', type: string, required: true}
+      commit: {description: 'Exact commit SHA this run must be for', type: string, required: true}
+      daily_rows_written: {description: 'D1 rows written today (UTC), as observed', type: string, required: true}
+      daily_rows_read: {description: 'D1 rows read today (UTC), as observed', type: string, required: true}
+      database_count: {description: 'D1 databases in the account, as observed', type: string, required: true}
 permissions:
   contents: read
 concurrency:
