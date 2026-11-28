@@ -1,3 +1,4 @@
+import {createTotpBatchImportV2Http} from './totp-batch-import-v2-http.js';
 // Owner-only whole-batch TOTP import. One passkey step-up covers the exact reviewed batch; the commit is ONE
 // transaction (all entries and seeds, or none). Never replaces or exports a seed. No raw body or secret logging.
 // Source only: not registered in any runtime until primary composes it.
@@ -39,6 +40,7 @@ async function digestOf(user,nonce,raw){
  return hashText(JSON.stringify(['totp-batch-import-v1',user.ownerId,user.deviceId,user.generation,nonce,rows]));
 }
 export function createTotpBatchImportHttp({db,sessions,getSeedCipher,clock=Date.now,native=false,passkeys=new PasskeyService(db,{clock})}){
+ const v2=createTotpBatchImportV2Http({db,sessions,getSeedCipher,clock,native,passkeys});
  const auth=createDeviceSessionAuth({sessions,native});
  const stored=async(ownerId,nonce)=>db.prepare('SELECT action_digest,entry_ids FROM totp_batch_imports WHERE owner_id=?1 AND batch_nonce=?2').bind(ownerId,nonce).first();
  return{async fetch(request,{clientAddress}={}){
@@ -59,6 +61,7 @@ export function createTotpBatchImportHttp({db,sessions,getSeedCipher,clock=Date.
    let value,digest;
    try{
     value=await bodyOf(request);
+    if(value?.protocol===2)return v2.fetch(new Request(request.url,{method:'POST',headers:request.headers,body:JSON.stringify(value)}),{clientAddress});
     if(step==='batch-outcome'){if(!exactKeys(value,'batchNonce')||typeof value.batchNonce!=='string'||!NONCE.test(value.batchNonce))throw Error();}
     else{
      if(!exactKeys(value,step==='batch-begin'?'batchNonce,items':'batchNonce,items,response,token')||typeof value.batchNonce!=='string'||!NONCE.test(value.batchNonce)||!Array.isArray(value.items)||value.items.length<1||value.items.length>MAX_BATCH_ITEMS)throw Error();
