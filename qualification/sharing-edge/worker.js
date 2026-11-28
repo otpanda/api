@@ -11,7 +11,7 @@ function configuration(env,db){const e={DEPLOYMENT_STAGE:'auth-only',AUTH_ONLY_S
 function meter(db){let calls=0,read=0,written=0;const take=x=>{const m=x?.meta??{};read+=m.rows_read??0;written+=m.rows_written??0;return x;};const statement=s=>new Proxy(s,{get(t,k){if(k==='bind')return(...a)=>statement(t.bind(...a));if(['all','run','raw'].includes(k))return async(...a)=>{calls++;return take(await t[k](...a));};if(k==='first')return async(column)=>{calls++;const r=take(await t.all());const row=r.results?.[0]??null;return column&&row?row[column]:row;};const v=t[k];return typeof v==='function'?v.bind(t):v;}});return{db:{prepare:s=>statement(db.prepare(s)),batch:async ss=>{calls++;return(await db.batch(ss)).map(take);}},reset:()=>{calls=0;read=0;written=0;},result:()=>({d1ApiCalls:calls,rowsRead:read,rowsWritten:written})};}
 async function invoke(env,path,body,token,query=''){
  const h={'CF-Connecting-IP':'192.0.2.1',Authorization:'Bearer '+token};if(!path.startsWith('/v1/machine/')){h.Origin=APP;h['Content-Type']='application/json';}
- const r=Object.assign(new Request(API+path+query,{method:body?'POST':'GET',headers:h,...(body?{body:JSON.stringify(body)}:{})}),{cf:{colo:'TLV',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'}});
+ const r=new Request(API+path+query,{method:body?'POST':'GET',headers:h,cf:{colo:'TLV',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'},...(body?{body:JSON.stringify(body)}:{})});
  app??=createAuthOnlyWorker();return app.fetch(r,env,{waitUntil:()=>{}});
 }
 export default{async fetch(request,env){
