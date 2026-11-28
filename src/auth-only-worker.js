@@ -1,3 +1,4 @@
+import {contextCleanupStatus} from './context-config.js';
 import {sharingManagementPaths} from './sharing-routes-http.js';
 // Public auth-only deployment entry. Interactive screens belong to the app.
 // Auth-only is deliberately smaller than the complete browser adapter.
@@ -59,7 +60,7 @@ export function createAuthOnlyWorker({fetchImpl=(...args)=>globalThis.fetch(...a
      if(typeof env.BREVO_API_KEY!=='string'||!env.BREVO_API_KEY||env.BREVO_SENDER_EMAIL!=='otpanda.app@gmail.com'||env.BREVO_REPLY_TO_EMAIL!=='otpanda.app@gmail.com')throw Error();
      await env.DB.prepare('SELECT c.challenge_id FROM auth_challenges c LEFT JOIN device_sessions d ON d.owner_id=c.owner_id LEFT JOIN signup_mail_bindings s ON s.proof_id=c.challenge_id WHERE 0').all();
      const recoveryDelivery=await recoveryDeliveryHealth({db:env.DB,clock});
-     return json({service:'otpanda-api',stage:'auth-only',database:'available',recoveryDelivery:(recoveryDelivery.deadNotifications+recoveryDelivery.deadCodeJobs)>0?'attention':'ok',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged'},200);
+     return json({service:'otpanda-api',stage:'auth-only',database:'available',recoveryDelivery:(recoveryDelivery.deadNotifications+recoveryDelivery.deadCodeJobs)>0?'attention':'ok',edgeBindings:'configured',mail:'configured-not-delivery-proof',application:'staged',context:await contextCleanupStatus({db:env.DB,env,clock})},200);
     }catch{return json({error:'unavailable'},503);}
    }
    if(gmailPaths.has(url.pathname)&&gmailDevEnabled(env))return gmail.fetch(request,env);
