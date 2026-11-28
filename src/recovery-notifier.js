@@ -82,3 +82,21 @@ export async function retryFailedRecoveryNotifications({db,clock=Date.now,limit=
  const r=await db.prepare('UPDATE recovery_notifications SET attempts=0,failed_at=NULL,next_attempt_at=?1,claimed_until=0 WHERE notification_id IN(SELECT notification_id FROM recovery_notifications WHERE failed_at IS NOT NULL AND delivered_at IS NULL ORDER BY failed_at LIMIT ?2)').bind(clock(),limit).run();
  return r.meta.changes;
 }
+
+// Public readiness is read-only. Keep the operator's detailed health/expiry path
+// above unchanged. Cache per DB/isolate, not a global D1 scan bound; absent failed
+// indexes mean each uncached existence probe can still scan its table.
+const publicHealthCache=new WeakMap();
+export async function recoveryDeliveryStatus({db,clock=Date.now}={}){
+ const now=clock(),hit=publicHealthCache.get(db);if(hit){if(hit.pending)return hit.pending;if(now>=hit.at&&now-hit.at<hit.ttl)return hit.value;}
+ const pending=(async()=>{
+  try{
+   const n=await db.prepare('SELECT 1 x FROM recovery_notifications WHERE failed_at IS NOT NULL LIMIT 1').first();
+   // An expired pending job would have been marked failed by the former public
+   // expiry UPDATE. Report attention immediately without mutating it instead.
+   const c=await db.prepare("SELECT 1 x FROM recovery_code_jobs WHERE kind<>'decoy' AND (failed_at IS NOT NULL OR (delivered_at IS NULL AND failed_at IS NULL AND superseded_at IS NULL AND expires_at<=?1)) LIMIT 1").bind(now).first();
+   return {value:n||c?'attention':'ok',ttl:60000};
+  }catch{return {value:'attention',ttl:10000};}
+ })().then(r=>{publicHealthCache.set(db,{at:now,value:r.value,ttl:r.ttl});return r.value;});
+ publicHealthCache.set(db,{pending});return pending;
+}
