@@ -14,11 +14,14 @@ export function gmailSessionGuard({ownerId,deviceId,generation},now){
 // With `sync` (label mode capable), the same session-guarded revoke is handed to sync.disconnect as its local step,
 // so Google-side cleanup of this app's own label and filter runs only after the guard passed and the token is still
 // readable beforehand. Without `sync` the behavior is the original: local revoke only, no Google contact.
-export async function disconnectGmailGuarded(db,user,sourceId,now,{sync}={}){
+export async function disconnectGmailGuarded(db,user,sourceId,now,{sync,rules}={}){
  if(!Number.isSafeInteger(user.expiresAt)||user.expiresAt<=now)return {disconnected:false};
  const g=gmailSessionGuard(user,now);
  // Migration 0051's AFTER UPDATE trigger atomically wipes the refresh envelope.
- const revoke=async()=>(await db.prepare(`UPDATE sources SET revoked_at=COALESCE(revoked_at,?) WHERE owner_id=? AND source_id=? AND kind='gmail' AND EXISTS (${g.sql})`).bind(now,user.ownerId,sourceId,...g.params).run()).meta.changes>=1;
+  // rules=delete: the owner's explicit choice, in the same batch and under the same live-session guard. Otherwise the 0062 trigger has already paused them.
+ const revoke=async()=>{const stmts=[db.prepare(`UPDATE sources SET revoked_at=COALESCE(revoked_at,?) WHERE owner_id=? AND source_id=? AND kind='gmail' AND EXISTS (${g.sql})`).bind(now,user.ownerId,sourceId,...g.params)];
+  if(rules==='delete')stmts.push(db.prepare(`DELETE FROM service_routes WHERE owner_id=? AND source_id=? AND EXISTS (SELECT 1 FROM sources WHERE owner_id=? AND source_id=? AND kind='gmail' AND revoked_at IS NOT NULL) AND EXISTS (${g.sql})`).bind(user.ownerId,sourceId,user.ownerId,sourceId,...g.params));
+  return (await db.batch(stmts))[0].meta.changes>=1;};
  if(typeof sync?.disconnect==='function'){const r=await sync.disconnect(user.ownerId,sourceId,{revoke});return {disconnected:r.disconnected===true,remoteRevoked:false,googlePermissionRemains:true,...(r.lifecycleBlocked?{lifecycleBlocked:true}:{}),...(r.artifactsRemoved===undefined?{}:{artifactsRemoved:r.artifactsRemoved})};}
  return {disconnected:await revoke(),remoteRevoked:false,googlePermissionRemains:true};
 }
@@ -28,7 +31,8 @@ async function bodyOf(request){
  try{for(;;){const {done,value}=await reader.read();if(done)break;n+=value.byteLength;if(n>16384){await reader.cancel();throw Error();}text+=d.decode(value,{stream:true});}return JSON.parse(text+d.decode());}finally{reader.releaseLock();}
 }
 const binding=u=>JSON.stringify(['gmail-source',u.deviceId,u.generation]);
-const actionFor=(name,sourceId)=>name==='connect'?'gmail-source-connect':'gmail-source-disconnect:'+sourceId;
+// The rules choice is part of the signed action. A legacy client sends none: the rules are kept and paused (never deleted without an explicit choice).
+const actionFor=(name,sourceId,rules)=>name==='connect'?'gmail-source-connect':'gmail-source-disconnect:'+sourceId+(rules?':rules='+rules:'');
 export function createGmailSourceHttp({db,sessions,oauth,sync,sourceStore,clock=Date.now,ready=false,passkeys=new PasskeyService(db,{clock})}={}){
  const auth=createDeviceSessionAuth({sessions});
  return {async fetch(request){
@@ -51,8 +55,8 @@ export function createGmailSourceHttp({db,sessions,oauth,sync,sourceStore,clock=
   if(!ready)return reply({error:'collection_not_ready'},503);
   try{
    const user=await auth.authenticate(request);if(!user)return reply({error:'unauthorized'},401);
-   let v;try{v=await bodyOf(request);if(!v||Array.isArray(v)||!actions.has(v.action)||Object.keys(v).sort().join(',')!==(u.pathname.endsWith('/begin')?'action,sourceId':'action,response,sourceId,token')||typeof v.sourceId!=='string'||(v.action==='connect'?v.sourceId!=='':!/^[a-zA-Z0-9_-]{1,128}$/.test(v.sourceId)))throw Error();}catch{return reply({error:'invalid_request'},400);}
-   const action=actionFor(v.action,v.sourceId);
+   let v,rules;try{v=await bodyOf(request);if(v&&!Array.isArray(v)&&typeof v==='object'&&Object.hasOwn(v,'rules')){rules=v.rules;const {rules:_x,...rest}=v;v=rest;if(!['delete','keep'].includes(rules)||v.action!=='disconnect')throw Error();} if(!v||Array.isArray(v)||!actions.has(v.action)||Object.keys(v).sort().join(',')!==(u.pathname.endsWith('/begin')?'action,sourceId':'action,response,sourceId,token')||typeof v.sourceId!=='string'||(v.action==='connect'?v.sourceId!=='':!/^[a-zA-Z0-9_-]{1,128}$/.test(v.sourceId)))throw Error();}catch{return reply({error:'invalid_request'},400);}
+   const action=actionFor(v.action,v.sourceId,rules);
    // Disconnect only ever targets a Gmail source this owner holds; checked before any step-up challenge is issued or consumed.
    if(v.action==='disconnect'&&!await db.prepare("SELECT 1 FROM sources WHERE owner_id=?1 AND source_id=?2 AND kind='gmail'").bind(user.ownerId,v.sourceId).first())return reply({error:'not_found'},404);
    if(u.pathname.endsWith('/begin')){
@@ -63,7 +67,7 @@ export function createGmailSourceHttp({db,sessions,oauth,sync,sourceStore,clock=
    if(!proof||proof.generation!==user.generation)return reply({error:'reauthenticate'},403);
    const current=await auth.authenticate(request);if(!current||current.ownerId!==user.ownerId||current.deviceId!==user.deviceId||current.generation!==user.generation)return reply({error:'unauthorized'},401);
    if(v.action==='connect')return reply(await oauth.start({...user,stepUp:proof}));
-   return reply(await disconnectGmailGuarded(db,user,v.sourceId,clock(),{sync}));
+   return reply(await disconnectGmailGuarded(db,user,v.sourceId,clock(),{sync,rules}));
   }catch{return reply({error:'unavailable'},503);}
  }};
 }

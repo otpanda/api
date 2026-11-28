@@ -29,7 +29,7 @@ export function createAssignmentIntentHttp({db,sessions,intents,clock=Date.now,n
    let body;try{body=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));}catch{return json({error:'invalid_request'},400,cors);}
    if(!body||Array.isArray(body)||typeof body!=='object')return json({error:'invalid_request'},400,cors);
    const operation=url.pathname.split('/').at(-1),required=operation==='begin'?(android?['entryId','eventId','keyId','sourceId']:['entryId','eventId','sourceId']):operation==='finish'?(android?['action','intentId','signature','token']:['action','intentId','response','token']):['intentId'];
-   const keys=Object.keys(body).sort().join(','),okSets=android&&operation==='begin'?[required.join(','),required.filter(k=>k!=='keyId').join(',')]:operation==='finish'?[required.join(','),['action','intentId'].join(',')]:[required.join(',')];
+   const keys=Object.keys(body).sort().join(','),okSets=android&&operation==='begin'?[required.join(','),required.filter(k=>k!=='keyId').join(','),[...required,'phrase'].sort().join(','),[...required.filter(k=>k!=='keyId'),'phrase'].sort().join(',')]:operation==='begin'?[required.join(','),[...required,'phrase'].sort().join(',')]:operation==='finish'?[required.join(','),['action','intentId'].join(',')]:[required.join(',')];
    if(!okSets.includes(keys))return json({error:'invalid_request'},400,cors);
    const result=operation==='begin'?await intents.begin(user,body):operation==='finish'?await intents.finish(user,body):await intents.status(user,body.intentId);
    // Finish linearizes at the guarded D1 commit. A later revoke must not

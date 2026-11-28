@@ -1,3 +1,5 @@
+import {contextStoreOptions} from './context-config.js';
+import {parseDigestSecret,parseDigestKeys} from './template-fingerprint.js';
 // Dev-mailbox-only source composition. Nothing runs unless the deployment sets the single exact enable value below AND every
 // pinned identity is present (mailbox, source client and secret, push audience, push service account). Any other value or a
 // missing piece leaves the routes unmounted (enable var) or fails closed with 503 (enabled but misconfigured).
@@ -10,7 +12,7 @@ import {GMAIL_CODE_FILTER} from './gmail-label-filter.js';
 import {runGmailDevMaintenance} from './gmail-dev-maintenance.js';
 import {GmailTokenCipher} from './gmail-token-cipher.js';
 import {DeviceSessionService} from './device-sessions.js';
-import {SourceEntryStore} from './source-entries.js';
+import {SourceEntryStore,createSourceEntryStore} from './source-entries.js';
 import {ServiceMetadata} from './service-metadata.js';
 import {CodeCipher} from './code-cipher.js';
 import {createGmailSourceHttp,gmailSessionGuard} from './gmail-source-http.js';
@@ -39,7 +41,7 @@ export async function createGmailSourceServices(env,{clock=Date.now,fetchImpl=fe
  if(typeof env.GMAIL_SOURCE_CLIENT_SECRET!=='string'||!env.GMAIL_SOURCE_CLIENT_SECRET)throw new TypeError('Gmail source client secret required');
  const budget=createRequestBudget(budgetLimit),db=budgetedDb(env.DB,budget),f=budgetedFetch(fetchImpl,budget);
  const keys=await importBrowserKeyring(env),sessions=new DeviceSessionService(db,{clock}),store=new GmailSourceStore(db,new GmailTokenCipher(keys));
- const sources=new SourceEntryStore(db,new CodeCipher(keys),{matcher:new ServiceMetadata(db)});
+ const sources=createSourceEntryStore(db,new CodeCipher(keys),{matcher:new ServiceMetadata(db),templateSecret:parseDigestSecret(env.CONTEXT_DIGEST_SECRET)?env.CONTEXT_DIGEST_SECRET:null,templateKeyring:parseDigestKeys(null,env.CONTEXT_DIGEST_KEYRING)?env.CONTEXT_DIGEST_KEYRING:null,...contextStoreOptions(env)});
  const sync=new GmailSync({store,sources,fetchImpl:f,clientId:env.GMAIL_SOURCE_CLIENT_ID,clientSecret:env.GMAIL_SOURCE_CLIENT_SECRET,topicName:'projects/otpanda/topics/gmail-push',clock,budget,maxMessageUnits:1,labelFilter:GMAIL_CODE_FILTER});
  // OAuth's proof consumer is created per start invocation. It accepts only the
  // exact cryptographically verified object from the same HTTP handler call.

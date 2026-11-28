@@ -840,3 +840,36 @@ test('a failed revoke is reported as not revoked and does not poison the dev lif
  s=await setup({labelFilter:LF,devMailbox:'someone-else@gmail.test',revokeThrow:true});c=await connect(s);
  assert.equal(c.res.grantRevoked,false);assert.equal(c.res.reason,'mailbox_not_allowed');assert.equal(await s.store.opFor('someone-else@gmail.test'),undefined);s.db.sqlite.close();
 });
+
+test('receiver binding: reconnect with a different mailbox is a new source; the old source keeps its mailbox, receiver and revoked state; same mailbox keeps its source_id',async()=>{
+ const s=await setup();s.state.mailbox='first@gmail.test';await connect(s,'a');
+ const one=s.db.sqlite.prepare("SELECT source_id FROM sources WHERE kind='gmail'").get().source_id;
+ assert.equal(await s.store.disconnect('a',one,NOW),true);
+ s.state.mailbox='Second@Gmail.test';assert.equal((await connect(s,'a')).res.ok,true);
+ const rows=s.db.sqlite.prepare("SELECT s.source_id,s.receiver,s.revoked_at,c.mailbox FROM sources s JOIN gmail_connections c ON c.source_id=s.source_id ORDER BY c.mailbox").all();
+ assert.equal(rows.length,2);
+ const old=rows.find(r=>r.mailbox==='first@gmail.test'),neu=rows.find(r=>r.mailbox==='second@gmail.test');
+ assert.equal(old.source_id,one);assert.equal(old.receiver,'first@gmail.test');assert.notEqual(old.revoked_at,null);
+ assert.notEqual(neu.source_id,one);assert.equal(neu.receiver,'second@gmail.test');assert.equal(neu.revoked_at,null);
+ // the original mailbox reconnects onto the original source_id, with the receiver unchanged
+ s.state.mailbox='FIRST@gmail.test';assert.equal((await connect(s,'a')).res.ok,true);
+ const back=s.db.sqlite.prepare("SELECT s.source_id,s.receiver,s.revoked_at FROM sources s JOIN gmail_connections c ON c.source_id=s.source_id WHERE c.mailbox='first@gmail.test'").get();
+ assert.equal(back.source_id,one);assert.equal(back.receiver,'first@gmail.test');assert.equal(back.revoked_at,null);
+ s.db.sqlite.close();
+});
+test('receiver binding guard: no production statement rewrites gmail_connections.mailbox; sources.receiver is written only by the Gmail connect batch and ServiceMetadata.setReceiver, which has no production caller',async()=>{
+ const {readdirSync,readFileSync}=await import('node:fs');
+ const hits=[];for(const f of readdirSync(new URL('../src/',import.meta.url)))if(f.endsWith('.js')){const t=readFileSync(new URL('../src/'+f,import.meta.url),'utf8');
+  if(/UPDATE\s+gmail_connections\s+SET[^`'"]*\bmailbox\s*=/i.test(t))hits.push(f+':mailbox');
+  if(/UPDATE\s+sources\s+SET[^`'"]*\breceiver\s*=/i.test(t)&&f!=='gmail-source-store.js'&&f!=='service-metadata.js')hits.push(f+':receiver');
+  if(/\.setReceiver\(/.test(t))hits.push(f+':setReceiver caller');}
+ assert.deepEqual(hits,[]);
+ const st=readFileSync(new URL('../src/gmail-source-store.js',import.meta.url),'utf8');assert.equal((st.match(/UPDATE\s+sources\s+SET[^`'"]*\breceiver\s*=/gi)??[]).length,1);
+});
+
+test('ServiceMetadata.setReceiver cannot rebind a connected Gmail source',async()=>{
+ const s=await setup();s.state.mailbox='first@gmail.test';await connect(s,'a');
+ const id=s.db.sqlite.prepare("SELECT source_id FROM sources WHERE kind='gmail'").get().source_id;
+ assert.equal(await new ServiceMetadata(s.db).setReceiver('a',id,'evil@gmail.test'),false);
+ assert.equal(s.db.sqlite.prepare('SELECT receiver FROM sources WHERE source_id=?').get(id).receiver,'first@gmail.test');s.db.sqlite.close();
+});

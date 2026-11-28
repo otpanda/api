@@ -3,7 +3,7 @@
 import {json,takeRateLimit,hashText} from './sessions.js';
 import {createDeviceSessionAuth} from './device-session-auth.js';
 const API='https://otpanda-api.abrahammurciano.workers.dev',APP='https://otpanda.github.io';
-const paths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
+const paths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/unassigned-context','/v1/manage/sources']);
 const WEB_CORS={'Access-Control-Allow-Origin':APP,'Access-Control-Expose-Headers':'Retry-After',Vary:'Origin'};
 // extensionOrigins (array, default null = disabled): lets an EXTENSION-kind session, and only that kind, GET entries and active-codes. Never any other
 // path, never any other method, no CORS headers for it. Pinned origins are a coarse filter; the token kind is what authenticates.
@@ -37,10 +37,12 @@ export function createDeviceReadHttp({db,sessions,sources,access,clock=Date.now,
    const rows=await db.prepare(`SELECT e.entry_id,e.service_id,e.label,e.account_name,e.owner_id AS capability_owner,CASE WHEN e.service_id='custom-totp' THEN e.label ELSE s.name END AS service_name,s.icon_key,e.catalog_id,e.issuer FROM entries e JOIN services s ON s.service_id=e.service_id WHERE e.owner_id=?1 OR EXISTS (SELECT 1 FROM entry_readers m WHERE m.entry_id=e.entry_id AND m.recipient_id=?1 AND m.revoked_at IS NULL) ORDER BY e.entry_id LIMIT 100`).bind(user.ownerId).all();
    result={entries:rows.results.map(({capability_owner,catalog_id,issuer,...entry})=>({...entry,...(catalog_id?{catalogId:catalog_id}:{}),...(issuer?{issuer}:{}),capabilities:{manage:capability_owner===user.ownerId}}))};
   }else if(url.pathname==='/v1/manage/active-codes')result={records:await access.activeRecent(user.ownerId,clock())};
+  else if(url.pathname==='/v1/manage/unassigned-context')result={contexts:await sources.contextsForOwner(user.ownerId,clock())};
   else if(url.pathname==='/v1/manage/unassigned')result={records:await sources.unassignedForOwner(user.ownerId,clock())};
   else result={sources:await sources.sourcesForOwner(user.ownerId)};
   // Security reset/device revocation/expiry during decrypt or DB work wins.
   if(!await authn(request,url.pathname))return json({error:'unauthorized'},401,cors);
+  if(result.contexts)result.contexts=result.contexts.filter(c=>c.retainedUntil>clock());
   if(result.records)result.records=result.records.filter(r=>r.receivedAt<=clock()&&r.expiresAt>clock());
   return json(result,200,cors);
   }catch{return json({error:'unavailable'},503,cors);}
