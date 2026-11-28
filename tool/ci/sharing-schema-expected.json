@@ -1,0 +1,724 @@
+{
+  "objects": [
+    {
+      "type": "index",
+      "name": "access_grants_grantee",
+      "tbl_name": "access_grants",
+      "sql": "CREATE INDEX access_grants_grantee ON access_grants(grantee_id)"
+    },
+    {
+      "type": "index",
+      "name": "access_invites_owner",
+      "tbl_name": "access_invites",
+      "sql": "CREATE INDEX access_invites_owner ON access_invites(owner_id, created_at)"
+    },
+    {
+      "type": "index",
+      "name": "machine_profiles_creator",
+      "tbl_name": "machine_profiles",
+      "sql": "CREATE INDEX machine_profiles_creator ON machine_profiles(creator_id, created_at)"
+    },
+    {
+      "type": "index",
+      "name": "machine_tokens_profile",
+      "tbl_name": "machine_tokens",
+      "sql": "CREATE INDEX machine_tokens_profile ON machine_tokens(profile_id)"
+    },
+    {
+      "type": "index",
+      "name": "provider_identities_owner",
+      "tbl_name": "provider_identities",
+      "sql": "CREATE INDEX provider_identities_owner ON provider_identities(owner_id)"
+    },
+    {
+      "type": "index",
+      "name": "provider_identities_subject",
+      "tbl_name": "provider_identities",
+      "sql": "CREATE UNIQUE INDEX provider_identities_subject ON provider_identities(issuer,subject) WHERE revoked_at IS NULL"
+    },
+    {
+      "type": "table",
+      "name": "access_grant_entries",
+      "tbl_name": "access_grant_entries",
+      "sql": "CREATE TABLE access_grant_entries (\n  grant_id TEXT NOT NULL REFERENCES access_grants(grant_id) ON DELETE CASCADE,\n  entry_id TEXT NOT NULL REFERENCES entries(entry_id) ON DELETE CASCADE,\n  PRIMARY KEY(grant_id, entry_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "access_grants",
+      "tbl_name": "access_grants",
+      "sql": "CREATE TABLE access_grants (\n  grant_id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  grantee_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  mode TEXT NOT NULL CHECK (mode IN ('all','allow','deny')),\n  can_delegate INTEGER NOT NULL DEFAULT 0 CHECK (can_delegate IN (0,1)),\n  created_at INTEGER NOT NULL,\n  -- Start of the current continuous delegating grant. Moves on (re)activation or when delegation is switched on, never on narrowing.\n  granted_at INTEGER NOT NULL,\n  revoked_at INTEGER, write_nonce TEXT,\n  CHECK (owner_id <> grantee_id),\n  UNIQUE(owner_id, grantee_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "access_invite_entries",
+      "tbl_name": "access_invite_entries",
+      "sql": "CREATE TABLE access_invite_entries (\n  invite_id TEXT NOT NULL REFERENCES access_invites(invite_id) ON DELETE CASCADE,\n  entry_id TEXT NOT NULL REFERENCES entries(entry_id) ON DELETE CASCADE,\n  PRIMARY KEY(invite_id, entry_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "access_invites",
+      "tbl_name": "access_invites",
+      "sql": "CREATE TABLE access_invites (\n  invite_id TEXT PRIMARY KEY,\n  token_digest BLOB NOT NULL CHECK (length(token_digest) = 32),\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  mode TEXT NOT NULL CHECK (mode IN ('all','allow','deny')),\n  can_delegate INTEGER NOT NULL DEFAULT 0 CHECK (can_delegate IN (0,1)),\n  created_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL CHECK (expires_at > created_at),\n  revoked_at INTEGER,\n  accepted_by TEXT REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  accepted_at INTEGER,\n  accept_nonce TEXT\n)"
+    },
+    {
+      "type": "table",
+      "name": "device_sessions",
+      "tbl_name": "device_sessions",
+      "sql": "CREATE TABLE device_sessions (\n  device_id TEXT PRIMARY KEY,\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  credential_id TEXT REFERENCES passkey_credentials(credential_id) ON DELETE CASCADE,\n  provider_identity_id TEXT REFERENCES provider_identities(identity_id) ON DELETE CASCADE,\n  generation INTEGER NOT NULL,\n  client_kind TEXT NOT NULL CHECK (client_kind IN ('web', 'android', 'extension')),\n  created_at INTEGER NOT NULL,\n  last_used_at INTEGER NOT NULL,\n  expires_at INTEGER NOT NULL,\n  revoked_at INTEGER,\n  browser_binding_digest TEXT,\n  CHECK ((credential_id IS NULL) <> (provider_identity_id IS NULL))\n)"
+    },
+    {
+      "type": "table",
+      "name": "machine_profile_entries",
+      "tbl_name": "machine_profile_entries",
+      "sql": "CREATE TABLE machine_profile_entries (\n  profile_id TEXT NOT NULL REFERENCES machine_profiles(profile_id) ON DELETE CASCADE,\n  entry_id TEXT NOT NULL REFERENCES entries(entry_id) ON DELETE CASCADE,\n  PRIMARY KEY(profile_id, entry_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "machine_profiles",
+      "tbl_name": "machine_profiles",
+      "sql": "CREATE TABLE machine_profiles (\n  profile_id TEXT PRIMARY KEY,\n  creator_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),\n  mode TEXT NOT NULL CHECK (mode IN ('all','allow','deny')),\n  created_at INTEGER NOT NULL,\n  revoked_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "machine_tokens",
+      "tbl_name": "machine_tokens",
+      "sql": "CREATE TABLE machine_tokens (\n  token_id TEXT PRIMARY KEY,\n  token_digest BLOB NOT NULL CHECK (length(token_digest) = 32),\n  profile_id TEXT NOT NULL REFERENCES machine_profiles(profile_id) ON DELETE CASCADE,\n  created_at INTEGER NOT NULL,\n  -- NULL means the owner chose \"never expires\" (revocation still works).\n  expires_at INTEGER CHECK (expires_at IS NULL OR expires_at > created_at),\n  revoked_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "native_exchanges",
+      "tbl_name": "native_exchanges",
+      "sql": "CREATE TABLE native_exchanges (\n exchange_id TEXT PRIMARY KEY,\n secret_digest TEXT NOT NULL CHECK(length(secret_digest)=64),\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n credential_id TEXT REFERENCES passkey_credentials(credential_id) ON DELETE CASCADE,\n provider_identity_id TEXT REFERENCES provider_identities(identity_id) ON DELETE CASCADE,\n generation INTEGER NOT NULL,\n challenge TEXT NOT NULL CHECK(length(challenge)=43),\n redirect_uri TEXT NOT NULL,\n created_at INTEGER NOT NULL,\n expires_at INTEGER NOT NULL, carried_web_grant_id TEXT, client_kind TEXT NOT NULL DEFAULT 'android' CHECK(client_kind IN ('android','extension')), source_device_id TEXT,\n CHECK((credential_id IS NULL)<>(provider_identity_id IS NULL))\n)"
+    },
+    {
+      "type": "table",
+      "name": "pending_logins",
+      "tbl_name": "pending_logins",
+      "sql": "CREATE TABLE pending_logins (\n pending_id TEXT PRIMARY KEY,\n secret_digest TEXT NOT NULL CHECK(length(secret_digest)=64),\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n provider_identity_id TEXT NOT NULL REFERENCES provider_identities(identity_id) ON DELETE CASCADE,\n generation INTEGER NOT NULL,\n challenge TEXT NOT NULL CHECK(length(challenge)=43),\n browser_binding_digest TEXT NOT NULL CHECK(length(browser_binding_digest)=64),\n remember INTEGER NOT NULL CHECK(remember IN (0,1)),\n context TEXT NOT NULL CHECK(length(context)<=4096),\n created_at INTEGER NOT NULL,\n expires_at INTEGER NOT NULL CHECK(expires_at>created_at),\n approved_at INTEGER,\n approval_method TEXT CHECK(approval_method IN ('passkey','client')),\n approver_device_id TEXT,\n approver_credential_id TEXT,\n canceled_at INTEGER,\n consumed_at INTEGER, local_verified_at INTEGER,\n CHECK((approved_at IS NULL)=(approval_method IS NULL)),\n CHECK(approval_method IS NOT 'passkey' OR approver_credential_id IS NOT NULL),\n CHECK(approval_method IS NOT 'client' OR approver_device_id IS NOT NULL)\n)"
+    },
+    {
+      "type": "table",
+      "name": "provider_identities",
+      "tbl_name": "provider_identities",
+      "sql": "CREATE TABLE provider_identities (\n identity_id TEXT PRIMARY KEY,\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n provider TEXT NOT NULL CHECK(provider IN ('google')),\n issuer TEXT NOT NULL,\n subject TEXT NOT NULL,\n email TEXT NOT NULL COLLATE BINARY,\n created_at INTEGER NOT NULL,\n revoked_at INTEGER\n, picture TEXT, display_name TEXT)"
+    },
+    {
+      "type": "table",
+      "name": "recognized_browsers",
+      "tbl_name": "recognized_browsers",
+      "sql": "CREATE TABLE recognized_browsers (\n recognition_id TEXT PRIMARY KEY,\n secret_digest TEXT NOT NULL CHECK(length(secret_digest)=64),\n owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n provider_identity_id TEXT NOT NULL REFERENCES provider_identities(identity_id) ON DELETE CASCADE,\n generation INTEGER NOT NULL,\n created_at INTEGER NOT NULL,\n revoked_at INTEGER\n)"
+    },
+    {
+      "type": "table",
+      "name": "sharing_contacts",
+      "tbl_name": "sharing_contacts",
+      "sql": "CREATE TABLE sharing_contacts (\n  owner_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  contact_id TEXT NOT NULL REFERENCES accounts(owner_id) ON DELETE CASCADE,\n  -- Opaque handle the owner's clients use. The recipient's internal account id is never sent to the owner.\n  contact_ref TEXT NOT NULL UNIQUE,\n  created_at INTEGER NOT NULL CHECK (created_at >= 0),\n  -- Hidden from suggestions and from new shares. The row stays while a grant is live so it can still be revoked.\n  removed_at INTEGER,\n  PRIMARY KEY (owner_id, contact_id),\n  CHECK (owner_id <> contact_id)\n)"
+    },
+    {
+      "type": "table",
+      "name": "tx_assert",
+      "tbl_name": "tx_assert",
+      "sql": "CREATE TABLE tx_assert (ok INTEGER NOT NULL CHECK (ok = 1))"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_profile_entries_delete",
+      "tbl_name": "machine_profile_entries",
+      "sql": "CREATE TRIGGER audience_machine_profile_entries_delete AFTER DELETE ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_profile_entries_insert",
+      "tbl_name": "machine_profile_entries",
+      "sql": "CREATE TRIGGER audience_machine_profile_entries_insert AFTER INSERT ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_profile_entries_update",
+      "tbl_name": "machine_profile_entries",
+      "sql": "CREATE TRIGGER audience_machine_profile_entries_update AFTER UPDATE ON machine_profile_entries BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_profiles_delete",
+      "tbl_name": "machine_profiles",
+      "sql": "CREATE TRIGGER audience_machine_profiles_delete AFTER DELETE ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=OLD.creator_id UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=OLD.creator_id AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_profiles_insert",
+      "tbl_name": "machine_profiles",
+      "sql": "CREATE TRIGGER audience_machine_profiles_insert AFTER INSERT ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=NEW.creator_id UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=NEW.creator_id AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_profiles_update",
+      "tbl_name": "machine_profiles",
+      "sql": "CREATE TRIGGER audience_machine_profiles_update AFTER UPDATE ON machine_profiles BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=NEW.creator_id UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=NEW.creator_id AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_tokens_delete",
+      "tbl_name": "machine_tokens",
+      "sql": "CREATE TRIGGER audience_machine_tokens_delete AFTER DELETE ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=OLD.profile_id) AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_tokens_insert",
+      "tbl_name": "machine_tokens",
+      "sql": "CREATE TRIGGER audience_machine_tokens_insert AFTER INSERT ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "audience_machine_tokens_update",
+      "tbl_name": "machine_tokens",
+      "sql": "CREATE TRIGGER audience_machine_tokens_update AFTER UPDATE ON machine_tokens BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE entry_id IN (SELECT entry_id FROM entries WHERE owner_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) UNION SELECT r.entry_id FROM entry_readers r WHERE r.recipient_id=(SELECT creator_id FROM machine_profiles WHERE profile_id=NEW.profile_id) AND r.allow_automation=1); END"
+    },
+    {
+      "type": "trigger",
+      "name": "grant_assignment_delete",
+      "tbl_name": "access_grants",
+      "sql": "CREATE TRIGGER grant_assignment_delete AFTER DELETE ON access_grants BEGIN UPDATE entries SET mutation_revision=mutation_revision+1 WHERE owner_id=OLD.owner_id; END"
+    },
+    {
+      "type": "trigger",
+      "name": "grant_assignment_entries_delete",
+      "tbl_name": "access_grant_entries",
+      "sql": "CREATE TRIGGER grant_assignment_entries_delete AFTER DELETE ON access_grant_entries BEGIN\n  UPDATE entries SET mutation_revision=mutation_revision+1 WHERE owner_id=(SELECT owner_id FROM access_grants WHERE grant_id=OLD.grant_id);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "grant_assignment_entries_insert",
+      "tbl_name": "access_grant_entries",
+      "sql": "CREATE TRIGGER grant_assignment_entries_insert AFTER INSERT ON access_grant_entries BEGIN\n  UPDATE entries SET mutation_revision=mutation_revision+1 WHERE owner_id=(SELECT owner_id FROM access_grants WHERE grant_id=NEW.grant_id);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "grant_assignment_insert",
+      "tbl_name": "access_grants",
+      "sql": "CREATE TRIGGER grant_assignment_insert AFTER INSERT ON access_grants BEGIN\n  UPDATE entries SET mutation_revision=mutation_revision+1 WHERE owner_id=NEW.owner_id;\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "grant_assignment_update",
+      "tbl_name": "access_grants",
+      "sql": "CREATE TRIGGER grant_assignment_update AFTER UPDATE ON access_grants BEGIN\n  UPDATE entries SET mutation_revision=mutation_revision+1 WHERE owner_id=NEW.owner_id;\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_entry_grantees",
+      "tbl_name": "entries",
+      "sql": "CREATE TRIGGER realtime_entry_grantees AFTER INSERT ON entries BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', g.grantee_id, CAST(strftime('%s','now') AS INTEGER)*1000 FROM access_grants g\n  WHERE g.owner_id=NEW.owner_id AND g.revoked_at IS NULL AND g.mode<>'allow'\n  AND NOT EXISTS (SELECT 1 FROM realtime_outbox o WHERE o.claimed_at IS NULL AND o.cursor IS NULL AND o.kind='account' AND o.account_id=g.grantee_id);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_grant_entry_delete",
+      "tbl_name": "access_grant_entries",
+      "sql": "CREATE TRIGGER realtime_grant_entry_delete AFTER DELETE ON access_grant_entries BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', a, CAST(strftime('%s','now') AS INTEGER)*1000 FROM (SELECT grantee_id AS a FROM access_grants WHERE grant_id=OLD.grant_id UNION SELECT owner_id FROM access_grants WHERE grant_id=OLD.grant_id) t\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox o WHERE o.claimed_at IS NULL AND o.cursor IS NULL AND o.kind='account' AND o.account_id=t.a);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_grant_entry_insert",
+      "tbl_name": "access_grant_entries",
+      "sql": "CREATE TRIGGER realtime_grant_entry_insert AFTER INSERT ON access_grant_entries BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', a, CAST(strftime('%s','now') AS INTEGER)*1000 FROM (SELECT grantee_id AS a FROM access_grants WHERE grant_id=NEW.grant_id UNION SELECT owner_id FROM access_grants WHERE grant_id=NEW.grant_id) t\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox o WHERE o.claimed_at IS NULL AND o.cursor IS NULL AND o.kind='account' AND o.account_id=t.a);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_grant_insert",
+      "tbl_name": "access_grants",
+      "sql": "CREATE TRIGGER realtime_grant_insert AFTER INSERT ON access_grants BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', a, CAST(strftime('%s','now') AS INTEGER)*1000 FROM (SELECT NEW.grantee_id AS a UNION SELECT NEW.owner_id) t\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox o WHERE o.claimed_at IS NULL AND o.cursor IS NULL AND o.kind='account' AND o.account_id=t.a);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "realtime_grant_update",
+      "tbl_name": "access_grants",
+      "sql": "CREATE TRIGGER realtime_grant_update AFTER UPDATE ON access_grants BEGIN\n  INSERT INTO realtime_outbox(kind,account_id,created_at)\n  SELECT 'account', a, CAST(strftime('%s','now') AS INTEGER)*1000 FROM (SELECT NEW.grantee_id AS a UNION SELECT NEW.owner_id) t\n  WHERE NOT EXISTS (SELECT 1 FROM realtime_outbox o WHERE o.claimed_at IS NULL AND o.cursor IS NULL AND o.kind='account' AND o.account_id=t.a);\nEND"
+    },
+    {
+      "type": "trigger",
+      "name": "tx_assert_clear",
+      "tbl_name": "tx_assert",
+      "sql": "CREATE TRIGGER tx_assert_clear AFTER INSERT ON tx_assert BEGIN DELETE FROM tx_assert; END"
+    },
+    {
+      "type": "view",
+      "name": "entry_readers",
+      "tbl_name": "entry_readers",
+      "sql": "CREATE VIEW entry_readers AS\n  SELECT s.entry_id AS entry_id, s.recipient_id AS recipient_id, s.allow_automation AS allow_automation, s.created_at AS created_at, NULL AS revoked_at\n    FROM entry_shares s WHERE s.revoked_at IS NULL\n  UNION ALL\n  SELECT e.entry_id, g.grantee_id, g.can_delegate, g.granted_at, NULL\n    FROM access_grants g JOIN entries e ON e.owner_id = g.owner_id\n   WHERE g.revoked_at IS NULL AND (g.mode = 'all'\n     OR (g.mode = 'allow' AND EXISTS (SELECT 1 FROM access_grant_entries l WHERE l.grant_id = g.grant_id AND l.entry_id = e.entry_id))\n     OR (g.mode = 'deny' AND NOT EXISTS (SELECT 1 FROM access_grant_entries l WHERE l.grant_id = g.grant_id AND l.entry_id = e.entry_id)))"
+    }
+  ],
+  "columns": [
+    {
+      "table": "access_grants",
+      "name": "grant_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "access_grants",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "grantee_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "mode",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "can_delegate",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": "0",
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "granted_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "revoked_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grants",
+      "name": "write_nonce",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_grant_entries",
+      "name": "grant_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "access_grant_entries",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 2
+    },
+    {
+      "table": "access_invites",
+      "name": "invite_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "access_invites",
+      "name": "token_digest",
+      "type": "BLOB",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "mode",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "can_delegate",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": "0",
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "expires_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "revoked_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "accepted_by",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "accepted_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invites",
+      "name": "accept_nonce",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "access_invite_entries",
+      "name": "invite_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "access_invite_entries",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 2
+    },
+    {
+      "table": "sharing_contacts",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "sharing_contacts",
+      "name": "contact_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 2
+    },
+    {
+      "table": "sharing_contacts",
+      "name": "contact_ref",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "sharing_contacts",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "sharing_contacts",
+      "name": "removed_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_profiles",
+      "name": "profile_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "machine_profiles",
+      "name": "creator_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_profiles",
+      "name": "name",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_profiles",
+      "name": "mode",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_profiles",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_profiles",
+      "name": "revoked_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_profile_entries",
+      "name": "profile_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "machine_profile_entries",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 2
+    },
+    {
+      "table": "machine_tokens",
+      "name": "token_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "machine_tokens",
+      "name": "token_digest",
+      "type": "BLOB",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_tokens",
+      "name": "profile_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_tokens",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_tokens",
+      "name": "expires_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "machine_tokens",
+      "name": "revoked_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "tx_assert",
+      "name": "ok",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "entry_readers",
+      "name": "entry_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "entry_readers",
+      "name": "recipient_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "entry_readers",
+      "name": "allow_automation",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "entry_readers",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "entry_readers",
+      "name": "revoked_at",
+      "type": "",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "identity_id",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 1
+    },
+    {
+      "table": "provider_identities",
+      "name": "owner_id",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "provider",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "issuer",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "subject",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "email",
+      "type": "TEXT",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "created_at",
+      "type": "INTEGER",
+      "notnull": 1,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "revoked_at",
+      "type": "INTEGER",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "picture",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    },
+    {
+      "table": "provider_identities",
+      "name": "display_name",
+      "type": "TEXT",
+      "notnull": 0,
+      "dflt_value": null,
+      "pk": 0
+    }
+  ]
+}
