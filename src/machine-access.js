@@ -132,6 +132,12 @@ export class MachineAccess {
     if (open.n >= 20) return undefined;
     throw new TypeError('Entries must belong to the owner');
   }
+  async listInvites(viewer, now = Date.now()) {
+    const v=viewerOf(viewer),g=guardArgs(v,now);
+    const r=await this.db.prepare('SELECT invite_id AS inviteId,mode,can_delegate AS canDelegate,created_at AS createdAt,expires_at AS expiresAt FROM access_invites WHERE owner_id=?1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>?2 AND '+guarded(2,v.kind)+' ORDER BY created_at DESC,invite_id LIMIT 20').bind(v.ownerId,now,...g).all();
+    if(!await this.#live(v,now))return [];
+    return r.results.map(x=>({...x,canDelegate:Boolean(x.canDelegate)}));
+  }
   async revokeInvite(viewer, inviteId, now = Date.now()) {
     const v = viewerOf(viewer);
     const r = await this.db.prepare('UPDATE access_invites SET revoked_at=COALESCE(revoked_at,?3) WHERE invite_id=?1 AND owner_id=?2 AND accepted_at IS NULL AND ' + guarded(3, v.kind)).bind(id(inviteId), v.ownerId, now, ...guardArgs(v, now)).run();

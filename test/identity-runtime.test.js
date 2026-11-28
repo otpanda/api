@@ -39,3 +39,10 @@ test('first-use native and recovery lazy families preserve assetlinks fallback a
 const broken=createIdentityRuntime({...c,native:{enabled:true,assetFingerprints:['AB'.repeat(32)]},batch:{horizonPolicy:{entryCap:1,budget:32,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:60},ratePerMinute:24,minRemainingMs:1000}});const r=await broken.fetch(new Request(API+'/.well-known/assetlinks.json'));assert.equal(r.status,503);assert.deepEqual(await r.json(),{error:'unavailable'});for(const path of ['/v1/manage/session','/v1/manage/totp-codes?entry=a'])assert.equal((await broken.fetch(new Request(API+path,{headers:{Origin:APP}}))).status,401);
 }finally{c.db.sqlite.close();}});
 test('release batch configuration parser matches exact activated three-entry client bounds',async()=>{const {readFileSync}=await import('node:fs');const {batchConfiguration}=await import('../src/browser-worker-adapter.js');const env=JSON.parse(readFileSync('wrangler.jsonc','utf8')).vars;const config=batchConfiguration(env);assert.deepEqual(config,{horizonPolicy:{entryCap:3,budget:100,minPeriod:20,maxPeriod:86400,maxWindow:600,minUsefulWindow:60},ratePerMinute:24,minRemainingMs:1000});});
+
+test('sharing runtime composition is explicit default off',async()=>{const c=await config();try{
+ for(const path of ['/v1/manage/sharing/contacts/list','/v1/manage/machine/profiles/list','/v1/machine/code?entry=a&source=all']){
+ assert.equal((await createIdentityRuntime(c).fetch(new Request(API+path,{headers:{Origin:APP}}))).status,404);
+ assert.equal((await createIdentityRuntime({...c,sharing:{enabled:true}}).fetch(new Request(API+path,{method:path.startsWith('/v1/manage/')?'POST':'GET',headers:{Origin:APP,'Content-Type':'application/json'},...(path.startsWith('/v1/manage/')?{body:'{}'}:{})}))).status,401);
+ }
+}finally{c.db.sqlite.close();}});
