@@ -1,0 +1,40 @@
+name: Readonly D1 permission preflight
+# STAGED ONLY. Dispatch held pending exact source review and parent instruction.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        required: true
+        description: readonly-d1-permissions
+      expected_sha:
+        required: true
+        description: Exact externally reviewed source SHA
+permissions:
+  contents: read
+concurrency:
+  group: otpanda-rules-d1-readonly
+  cancel-in-progress: false
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Exactly three read requests, no follow-on resource test
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: a04834f19f0dfd5dc4eb47515d15478d
+          REVIEWED_SHA: ${{ inputs.expected_sha }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: node qualification/rules-d1-readonly.mjs
+      - name: Preserve boolean-only permission result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: rules-d1-readonly-result
+          path: qualification/rules-d1-readonly-result.json
