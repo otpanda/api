@@ -57,6 +57,15 @@ test('public auth-only Worker mounts rules and permits proof-free private Androi
    const r=new Request(API+'/v1/manage/'+path,{method:body?'POST':'GET',headers:{'CF-Connecting-IP':'192.0.2.51',Authorization:'Bearer '+f.android.access,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});Object.defineProperty(r,'cf',{value:{colo:'LHR',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'}});
    const out=await worker.fetch(r,env,{waitUntil(){}});assert.equal(out.status,200,path+': '+out.status+' '+await out.clone().text());return out.json();
   };
+  const probe=async({origin=null,token=f.android.access,method='GET'}={})=>{
+   const r=new Request(API+'/v1/manage/rules/capabilities',{method,headers:{'CF-Connecting-IP':'192.0.2.51',...(origin?{Origin:origin}:{}),...(token?{Authorization:'Bearer '+token}:{})}});Object.defineProperty(r,'cf',{value:{colo:'LHR',httpProtocol:'HTTP/2',tlsVersion:'TLSv1.3'}});return worker.fetch(r,env,{waitUntil(){}});
+  };
+  for(const [origin,token]of [[null,f.android.access],[APP,f.web.access]]){
+   const r=await probe({origin,token});assert.equal(r.status,200);assert.deepEqual(await r.json(),{version:1,rules:{available:true,managementAvailable:true,disconnectPolicy:true}});
+   assert.equal((await probe({origin,token:null})).status,401);assert.equal((await probe({origin,token,method:'POST'})).status,405);
+  }
+  assert.equal((await probe({origin:'https://foreign.invalid',token:f.web.access})).status,403);
+  assert.deepEqual(await call('rules/capabilities'),{version:1,rules:{available:true,managementAvailable:true,disconnectPolicy:true}});
   assert.equal((await call('entry/rules')).rules[0].status,'paused');
   const bg=await call('rule-intent/begin',{operation:'resume',entryId:f.entry,ruleId:'paused-native'});assert.equal(bg.proofRequired,false);
   assert.deepEqual(await call('rule-intent/finish',{intentId:bg.intentId,action:bg.action}),{status:'applied',rule:{status:'resumed'}});
