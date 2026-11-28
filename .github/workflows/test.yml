@@ -1,7 +1,7 @@
 name: API checks and deploy
 on:
   push:
-    branches: [main]
+    branches: [main, qualification/sharing-v11-trigger0067-ci]
   pull_request:
     branches: [main]
 permissions:

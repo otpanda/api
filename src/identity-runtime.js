@@ -1,3 +1,5 @@
+import {createSharingRoutesHttp} from './sharing-routes-http.js';
+import {MachineAccess,MachineReader} from './machine-access.js';
 import {lazyHttp} from './lazy-http.js';
 import {GoogleContinuation} from './google-continuation.js';
 import {createNativeGoogleLinkHttp} from './native-google-link-http.js';
@@ -59,7 +61,7 @@ import {createForegroundDrain} from './realtime-foreground.js';
 // Each unrelated HTTP service is built on its first route use. Configuration
 // gates that must fail during startup (extension/batch) remain eager below.
 
-export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,transfer,seedSync,clock=Date.now}={}) {
+export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestKey,loadCodeKeys,deliverRecoveryMail,realtime,native,extension,batch,transfer,seedSync,sharing,clock=Date.now}={}) {
  if(!rawDb||typeof trustedRequestKey!=='function')throw new TypeError('Trusted runtime configuration required');
  // With realtime configured every query of this isolate is counted, so a post-write drain can only spend what the request left of the
  // Free plan's 50 queries per invocation. Without realtime the database object is used untouched.
@@ -73,7 +75,7 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
   const configuration=loadCodeKeys?await loadCodeKeys():{keys,activeKeyId};
   const cipher=new CodeCipher(configuration),metadata=new ServiceMetadata(db),sources=new SourceEntryStore(db,cipher,{matcher:metadata});
   const access=new EntryAccess(db,sources),seedCipher=new SeedCipher(configuration),seeds=new TotpSeedStore(db,seedCipher);
-  return{cipher,sources,access,seedCipher,generator:new EntryTotpGenerator(db,seeds,access)};
+  return{cipher,sources,access,seeds,seedCipher,generator:new EntryTotpGenerator(db,seeds,access)};
  });
  const sources={
   unassignedForOwner:async(...args)=>(await encrypted()).sources.unassignedForOwner(...args),
@@ -121,6 +123,10 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
  const approvalPaths=new Set(APPROVAL_PATHS);
  const deviceKeyPaths=new Set(['enroll-begin','enroll-finish','enroll-status','adopt-begin','adopt-finish'].map(p=>'/v1/manage/device-key/'+p));
  const assignmentPaths=new Set(['begin','finish','status'].map(p=>'/v1/manage/assignment/'+p));
+ const sharingHttp=sharing?.enabled===true?lazyHttp(()=>{
+  const access=new MachineAccess(db),reader={async read(...args){const e=await encrypted();return new MachineReader({access,sources:e.sources,seeds:e.seeds,clock}).read(...args);}};
+  return createSharingRoutesHttp({db,access,reader,sessions,clock,native:nativeOn});
+ }):undefined;
  const readPaths=new Set(['/v1/manage/session','/v1/manage/entries','/v1/manage/active-codes','/v1/manage/unassigned','/v1/manage/sources']);
  const loginPaths=new Set(['/auth/login/start','/auth/login/verify','/auth/login/complete']);
  const inner=async(request,{waitUntil}={})=>{
@@ -128,7 +134,8 @@ export function createIdentityRuntime({db:rawDb,keys,activeKeyId,trustedRequestK
    const url=new URL(request.url);
    if(url.origin!=='https://otpanda-api.abrahammurciano.workers.dev')return json({error:'not_found'},404);
    let handler;
-   if(['/auth/extension/realtime/ticket','/auth/extension/realtime'].includes(url.pathname)){handler=realtimeExtensionHttp;if(!handler)return json({error:'not_found'},404);}
+   if(url.pathname.startsWith('/v1/manage/sharing/')||url.pathname.startsWith('/v1/manage/machine/')||url.pathname==='/v1/machine/code'){handler=sharingHttp;if(!handler)return json({error:'not_found'},404);}
+   else if(['/auth/extension/realtime/ticket','/auth/extension/realtime'].includes(url.pathname)){handler=realtimeExtensionHttp;if(!handler)return json({error:'not_found'},404);}
    else if(url.pathname.startsWith('/auth/extension/')){handler=extensionHttp;if(!handler)return json({error:'not_found'},404);}
    else if(nativePaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=nativeHttp;}
    else if(approvalPaths.has(url.pathname)){if(!nativeOn)return json({error:'not_found'},404);handler=approvals;}

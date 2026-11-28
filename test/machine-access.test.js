@@ -553,3 +553,19 @@ test('owner metadata lists: profiles and tokens without secrets, delegated entri
   assert.equal(db.sqlite.prepare('SELECT revoked_at FROM machine_profiles').get().revoked_at, null);
   db.sqlite.close();
 });
+
+test('lost create reply recovered as metadata only, cap released by owner revoke, foreign refusal',async()=>{
+ const {db,access}=await setup();try{
+  for(let i=0;i<20;i++)await access.createInvite(V.own,{mode:'all',entryIds:[],canDelegate:false},86400000,NOW);
+  const pending=await access.listInvites(V.own,NOW);assert.equal(pending.length,20);
+  assert.deepEqual(Object.keys(pending[0]).sort(),['canDelegate','createdAt','expiresAt','inviteId','mode']);
+  assert.equal(await access.createInvite(V.own,{mode:'all',entryIds:[],canDelegate:false},86400000,NOW),undefined);
+  assert.deepEqual(await access.listInvites(V.own2,NOW),[]);
+  assert.equal(await access.revokeInvite(V.own2,pending[0].inviteId,NOW),false);
+  assert.equal(await access.revokeInvite(V.own,pending[0].inviteId,NOW),true);
+  assert.equal((await access.listInvites(V.own,NOW)).length,19);
+  assert.ok(await access.createInvite(V.own,{mode:'all',entryIds:[],canDelegate:false},86400000,NOW));
+  await db.prepare('UPDATE device_sessions SET revoked_at=? WHERE device_id=?').bind(NOW,V.own.deviceId).run();
+  assert.deepEqual(await access.listInvites(V.own,NOW),[]);
+ }finally{db.sqlite.close();}
+});

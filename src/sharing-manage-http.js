@@ -9,6 +9,7 @@ const TERMS = b => MODES.includes(b.mode) && IDS(b.entryIds) && typeof b.canDele
 // raw machine and invite tokens are returned once, in a no-store response body.
 const ROUTES = {
   '/v1/manage/sharing/invite/create': { keys: 'canDelegate,entryIds,mode,ttlSeconds', ok: b => TERMS(b) && Number.isSafeInteger(b.ttlSeconds) },
+  '/v1/manage/sharing/invite/list': {keys:'',ok:()=>true},
   '/v1/manage/sharing/invite/revoke': { keys: 'inviteId', ok: b => ID.test(b.inviteId ?? '') },
   '/v1/manage/sharing/invite/accept': { keys: 'token', ok: b => TOKEN.test(b.token ?? '') },
   '/v1/manage/sharing/grant/update': { keys: 'canDelegate,contactRef,entryIds,mode', ok: b => TERMS(b) && /^[0-9a-f]{32}$/.test(b.contactRef ?? '') },
@@ -23,6 +24,7 @@ const ROUTES = {
   '/v1/manage/machine/profile/revoke': { keys: 'profileId', ok: b => ID.test(b.profileId ?? '') },
   '/v1/manage/machine/token/create': { keys: 'profileId,ttlSeconds', ok: b => ID.test(b.profileId ?? '') && (b.ttlSeconds === null || Number.isSafeInteger(b.ttlSeconds)) },
 };
+export const sharingManagementPaths=Object.freeze(Object.keys(ROUTES));
 // Same transport rules as entry-manage-http: web bearer with Origin = app, or (native) Android bearer with no
 // Origin and exact application/json. POST only, no query string, 4096-byte body, exact key sets, 30/min per owner.
 export function createSharingManageHttp({ db, access, sessions, clock = Date.now, native = false } = {}) {
@@ -58,6 +60,7 @@ export function createSharingManageHttp({ db, access, sessions, clock = Date.now
           const r = await access.createInvite(viewer, { mode: body.mode, entryIds: body.entryIds, canDelegate: body.canDelegate }, body.ttlSeconds * 1000, now);
           return r ? reply(r) : notFound();
         }
+        case '/v1/manage/sharing/invite/list': return reply({invites:await access.listInvites(viewer,now)});
         case '/v1/manage/sharing/invite/revoke': return (await access.revokeInvite(viewer, body.inviteId, now)) ? reply({ ok: true }) : notFound();
         case '/v1/manage/sharing/invite/accept': { const r = await access.acceptInvite(viewer, body.token, now); return r ? reply({ ok: true, mode: r.mode, canDelegate: r.canDelegate }) : notFound(); }
         case '/v1/manage/sharing/grant/update': return (await access.updateGrantForContact(viewer, body.contactRef, { mode: body.mode, entryIds: body.entryIds, canDelegate: body.canDelegate }, now)) ? reply({ ok: true }) : notFound();
