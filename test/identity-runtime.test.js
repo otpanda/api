@@ -46,3 +46,11 @@ test('sharing runtime composition is explicit default off',async()=>{const c=awa
  assert.equal((await createIdentityRuntime({...c,sharing:{enabled:true}}).fetch(new Request(API+path,{method:path.startsWith('/v1/manage/')?'POST':'GET',headers:{Origin:APP,'Content-Type':'application/json'},...(path.startsWith('/v1/manage/')?{body:'{}'}:{})}))).status,401);
  }
 }finally{c.db.sqlite.close();}});
+
+test('recover real dispatcher default off and enabled auth-only; adapter gate precedes db',async()=>{const c=await config();try{
+ const request=()=>new Request(API+'/v1/manage/totp/batch-recover',{method:'POST',headers:{Origin:APP,'Content-Type':'application/json'},body:JSON.stringify({protocol:2,admissionId:'Z'.repeat(32),batchNonce:'v2:'+'A'.repeat(22),recover:true})});
+ assert.equal((await createIdentityRuntime(c).fetch(request())).status,404);
+ assert.equal((await createIdentityRuntime({...c,transfer:{batchImport:true}}).fetch(request())).status,401);
+ const {createBrowserWorkerAdapter}=await import('../src/browser-worker-adapter.js');
+ assert.equal((await createBrowserWorkerAdapter().fetch(request(),{DB:new Proxy({},{get(){throw Error('must not access db');}})})).status,404);
+}finally{c.db.sqlite.close();}});

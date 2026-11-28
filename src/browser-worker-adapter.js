@@ -40,7 +40,7 @@ export function createBrowserWorkerAdapter({resolveTrustedIngress,fetchImpl=(...
   if(nativePaths.has(u.pathname)&&env?.NATIVE_AUTH_ENABLED!=='1')return json({error:'not_found'},404);
   if(u.pathname.startsWith('/auth/native/signup/')&&env?.NATIVE_AUTH_ENABLED!=='1')return json({error:'not_found'},404);
   // Transfer and seed-sync routes: default OFF, 404 before any setup, limiter or database access. Transfer flags do not depend on seed-sync.
-  if(/^\/v1\/manage\/totp\/batch-(begin|finish|outcome)$/.test(u.pathname)&&env?.TOTP_BATCH_IMPORT_ENABLED!=='1')return json({error:'not_found'},404);
+  if(/^\/v1\/manage\/totp\/batch-(begin|finish|outcome|recover)$/.test(u.pathname)&&env?.TOTP_BATCH_IMPORT_ENABLED!=='1')return json({error:'not_found'},404);
   if(/^\/v1\/manage\/totp\/export-(begin|finish)$/.test(u.pathname)&&env?.TOTP_EXPORT_ENABLED!=='1')return json({error:'not_found'},404);
   if(u.pathname.startsWith('/v1/manage/seed-sync/')&&(env?.SEED_SYNC_ENABLED!=='1'||env?.NATIVE_AUTH_ENABLED!=='1'))return json({error:'not_found'},404);
   if(signupPaths.has(u.pathname))return signup.fetch(request,env,ctx);

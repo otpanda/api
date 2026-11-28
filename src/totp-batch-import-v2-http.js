@@ -44,7 +44,7 @@ export function createTotpBatchImportV2Http({db,sessions,getSeedCipher,clock=Dat
  return{async fetch(request,{clientAddress}={}){
   const u=new URL(request.url),reply=(v,status=200)=>json(v,status,{...cors,'Cache-Control':'no-store'});
   const step=u.pathname.startsWith(BASE)?u.pathname.slice(BASE.length):'';
-  if(u.origin!==API||!['batch-begin','batch-finish','batch-outcome'].includes(step)||u.search)return json({error:'not_found'},404);
+  if(u.origin!==API||!['batch-begin','batch-finish','batch-outcome','batch-recover'].includes(step)||u.search)return json({error:'not_found'},404);
   if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   if(request.method==='OPTIONS'){
    const h=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
@@ -59,13 +59,31 @@ export function createTotpBatchImportV2Http({db,sessions,getSeedCipher,clock=Dat
    let value,digest;
    try{
     value=await bodyOf(request);
-    if(step==='batch-outcome'){if(!exactKeys(value,'admissionId,batchNonce,fence,protocol')||value.protocol!==2||value.fence!==true||typeof value.admissionId!=='string'||!/^[-A-Za-z0-9_]{22,64}$/.test(value.admissionId)||typeof value.batchNonce!=='string'||!NONCE.test(value.batchNonce))throw Error();}
+    if(step==='batch-outcome'||step==='batch-recover'){if(!exactKeys(value,step==='batch-recover'?'admissionId,batchNonce,protocol,recover':'admissionId,batchNonce,fence,protocol')||value.protocol!==2||(step==='batch-recover'?value.recover!==true:value.fence!==true)||typeof value.admissionId!=='string'||!/^[-A-Za-z0-9_]{22,64}$/.test(value.admissionId)||typeof value.batchNonce!=='string'||!NONCE.test(value.batchNonce))throw Error();}
     else{
      if(!exactKeys(value,step==='batch-begin'?'batchNonce,items,protocol':'admissionId,batchNonce,items,protocol,response,token')||value.protocol!==2||typeof value.batchNonce!=='string'||!NONCE.test(value.batchNonce)||!Array.isArray(value.items)||value.items.length<1||value.items.length>MAX_BATCH_ITEMS)throw Error();
      for(const v of value.items)items.push(parseItem(v));// any invalid item rejects the whole batch; no index or secret is echoed
      digest=await digestOf(user,value.batchNonce,value.items);
     }
    }catch{wipe(items);return reply({error:'invalid_request'},400);}
+   if(step==='batch-recover'){
+    // One read-only snapshot. Session eligibility is deliberately NOT a
+    // terminal condition: renewal may extend it. Admission time is immutable.
+    const row=await db.prepare(`SELECT unixepoch()*1000 AS now,
+      r.batch_nonce AS receipt_nonce,r.import_admission_id AS receipt_admission,r.entry_ids,
+      a.admission_id AS known_id,a.batch_nonce AS known_nonce,a.fenced,a.expires_at
+      FROM (SELECT 1) anchor
+      LEFT JOIN totp_batch_imports r ON r.owner_id=?1 AND r.batch_nonce=?2
+      LEFT JOIN totp_import_admissions a ON a.owner_id=?1 AND a.admission_id=?3
+    `).bind(user.ownerId,value.batchNonce,value.admissionId).first();
+    if(row.receipt_nonce!==null){
+     if(row.receipt_admission!==value.admissionId)return reply({error:'identity_conflict'},409);
+     return reply({status:'saved',entryIds:JSON.parse(row.entry_ids)});
+    }
+    if(row.known_id!==null&&row.known_nonce!==value.batchNonce)return reply({error:'identity_conflict'},409);
+    if(row.known_id===null||row.fenced===1||row.expires_at<=row.now)return reply({status:'not_saved'});
+    return reply({status:'pending',retryAfterMs:row.expires_at-row.now});
+   }
    if(step==='batch-outcome'){
     // Never allocate recovery storage. Absent admission is terminal for THIS
     // identity only; a later begin gets a new, proof-bound admission identity.

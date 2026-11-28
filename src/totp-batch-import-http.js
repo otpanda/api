@@ -46,7 +46,7 @@ export function createTotpBatchImportHttp({db,sessions,getSeedCipher,clock=Date.
  return{async fetch(request,{clientAddress}={}){
   const u=new URL(request.url),reply=(v,status=200)=>json(v,status,{...cors,'Cache-Control':'no-store'});
   const step=u.pathname.startsWith(BASE)?u.pathname.slice(BASE.length):'';
-  if(u.origin!==API||!['batch-begin','batch-finish','batch-outcome'].includes(step)||u.search)return json({error:'not_found'},404);
+  if(u.origin!==API||!['batch-begin','batch-finish','batch-outcome','batch-recover'].includes(step)||u.search)return json({error:'not_found'},404);
   if(!auth.originAllowed(request))return json({error:'forbidden'},403);
   if(request.method==='OPTIONS'){
    const h=(request.headers.get('access-control-request-headers')??'').toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
@@ -56,7 +56,7 @@ export function createTotpBatchImportHttp({db,sessions,getSeedCipher,clock=Date.
   if(!clientAddress)return reply({error:'unavailable'},503);
   let items=[];
   try{
-   const rate=await takeRateLimit(db,'totp-batch-'+step+':'+clientAddress,{now:clock(),limit:step==='batch-outcome'?30:10});if(!rate.allowed)return reply({error:'rate_limited'},429);
+   const rate=await takeRateLimit(db,'totp-batch-'+step+':'+clientAddress,{now:clock(),limit:['batch-outcome','batch-recover'].includes(step)?30:10});if(!rate.allowed)return reply({error:'rate_limited'},429);
    const user=await auth.authenticate(request);if(!user)return reply({error:'unauthorized'},401);
    let value,digest;
    try{
